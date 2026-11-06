@@ -1,0 +1,366 @@
+//! The kanban_* tools, for card sessions (over MCP) and `kb` (over the REST route).
+
+use crate::{dispatch, sessions::Sessions, Board};
+use kanban_store::{Card, Patch, Store};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Fields a session may set with kanban_update_card. The column, ship and plan
+/// states and the number belong to moves, ship results and the board.
+const UPDATABLE: &[&str] = &[
+    "title", "summary", "nextStep", "blockedReason", "repo", "issue", "pr", "branch", "worktreePath",
+    "devStack", "persona", "logins", "links", "dryRun", "choices", "labels",
+];
+
+pub fn schemas() -> Value {
+    let card = json!({ "type": "integer", "description": "The card's number. Leave it out for your own card." });
+    json!([
+        { "name": "kanban_get_card", "description": "Read a card: your own, or one by number.",
+          "inputSchema": { "type": "object", "properties": { "card": card } } },
+        { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, and for stacks: stack, stackOf, passed).",
+          "inputSchema": { "type": "object", "properties": { "column": { "type": "string" }, "include_archived": { "type": "boolean" } } } },
+        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. Pass if_version to refuse the write if the card changed since you read it.", UPDATABLE.join(", ")),
+          "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
+        { "name": "kanban_add_log", "description": "Add a line to a card's log.",
+          "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
+        { "name": "kanban_move_card", "description": "Move a card to another column, with a one-line reason. A move of your own card waits until your turn ends. Never Ship it. A stack's lead goes to Human test only when its children are ready; the app moves it then.",
+          "inputSchema": { "type": "object", "properties": { "card": card, "column": { "type": "string", "enum": kanban_store::COLUMNS }, "reason": { "type": "string" } }, "required": ["column"] } },
+        { "name": "kanban_create_card", "description": "Add a card. It gets the next number. Pass `stack` (a lead card's number) to create it straight into that stack.",
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "column": { "type": "string" }, "repo": { "type": "string" }, "summary": { "type": "string" }, "issue": { "type": "object" }, "labels": { "type": "array", "items": { "type": "string" }, "description": "Short labels, like [\"BUG\", \"RCS\"]." }, "stack": { "type": "integer", "description": "The lead card's number: the new card joins its stack, at the end." }, "template": { "type": "string", "description": "A card template's id (e.g. kanban-app, bug): its starting prompt opens the card's first session." }, "to": { "type": "string", "enum": ["Planning", "Human test"], "description": "Only for Hugh's own sessions, when he asked: start the card now (it goes into Planning and its session starts). \"Human test\" also sets it to go on by itself to Human test. A card's own session can't use it." } }, "required": ["title"] } },
+        { "name": "kanban_stack_list", "description": "A stack: its lead card (number, title, column, branch, pr, devStack, logins) and its children in order (number, title, column, passed, nextStep, blockedReason, choices), plus the board's rule for when the stack goes to Human test (\"all\" or \"first\") and whether it is ready.",
+          "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number. Leave it out for your own card's stack (the one it leads or is in)." } } } },
+        { "name": "kanban_stack_add", "description": "Put a card into a stack (at the end), making the lead a stack if it isn't one. A card is in at most one stack, and a stack is one repo; a lead can't be a child; a card in Ship it or archived can't join, and nothing joins a stack in Ship it (only Hugh does that, by dropping a card on it in the app).",
+          "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number." }, "card": { "type": "integer", "description": "The card to add." } }, "required": ["stack", "card"] } },
+        { "name": "kanban_stack_remove", "description": "Take a card out of a stack: it goes back on the board as an ordinary card in its own column.",
+          "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number." }, "card": { "type": "integer", "description": "The card to take out." } }, "required": ["stack", "card"] } },
+        { "name": "kanban_stack_join", "description": "Join a card to a stack the way Hugh's drag does (making the lead a stack if it isn't one), and brief the stack's session (started if need be): a card not built yet is to be planned and built on the stack's branch; a built one (Human test or later, or with a PR) has its branch merged into the stack's and its PR closed in favour of the stack's. Its own session, if any, is told to stand down. The same limits as kanban_stack_add: joining a stack in Ship it, taking a card out of Ship it or putting a whole stack into another is Hugh's drop in the app only.",
+          "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number (any card: it becomes a stack)." }, "card": { "type": "integer", "description": "The card to join." } }, "required": ["stack", "card"] } },
+        { "name": "kanban_stack_detach", "description": "Detach a card from its stack the way Hugh's Detach button does: the stack's session is told to stop building it and log what it already did; the card becomes its own card and goes to Planning, where its own session starts (a card already shipping or shipped just leaves the stack).",
+          "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number." }, "card": { "type": "integer", "description": "The card to detach." } }, "required": ["stack", "card"] } },
+        { "name": "kanban_set_passed", "description": "Mark a stack's child as passed (Hugh tested it), or take that back with passed: false. A passed child stays in Human test until the stack ships.",
+          "inputSchema": { "type": "object", "properties": { "card": { "type": "integer", "description": "The child card's number." }, "passed": { "type": "boolean", "default": true } }, "required": ["card"] } },
+        { "name": "kanban_ship_result", "description": "Report a ship's progress: shipping, shipped, failed or needs-hugh, with detail.",
+          "inputSchema": { "type": "object", "properties": { "card": card, "state": { "type": "string", "enum": ["shipping", "shipped", "failed", "needs-hugh"] }, "detail": { "type": "string" } }, "required": ["state"] } },
+        { "name": "kanban_notify", "description": "Tell Hugh something about a card (a Windows notification and a log line).",
+          "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
+    ])
+}
+
+/// Tools only `kb` reaches (over /tool), never listed for or callable by a card session's MCP.
+pub const CLI_ONLY: &[&str] = &["kanban_request_ship"];
+
+/// `kb ship <n> --asked-by-hugh`: refused without the flag, and from a card's own session.
+pub fn ship_request_allowed(own: Option<&str>, args: &Value) -> Result<(), String> {
+    if own.is_some() {
+        return Err("a card's session can't ask for a ship; only Hugh moves a card into Ship it, in the app".into());
+    }
+    if args.get("asked_by_hugh").and_then(Value::as_bool) != Some(true) {
+        return Err("refused: a ship needs Hugh. Run `kb ship <n> --asked-by-hugh` only when Hugh asked for it".into());
+    }
+    if args.get("card").and_then(Value::as_i64).is_none() {
+        return Err("say which card: pass its number as `card`".into());
+    }
+    Ok(())
+}
+
+fn caller_card(app: &AppHandle, store: &Store, caller: Option<&str>) -> Option<String> {
+    let row = caller?;
+    app.state::<Arc<Sessions>>().card_of_row(row).or_else(|| store.session_card(row).ok().flatten())
+}
+
+fn target(store: &Store, own: Option<&str>, args: &Value) -> Result<Card, String> {
+    match args.get("card").and_then(Value::as_i64) {
+        Some(n) => store.get_by_number(n).map_err(|e| e.to_string()),
+        None => match own {
+            Some(id) => store.get(id).map_err(|e| e.to_string()),
+            None => Err("say which card: pass its number as `card`".into()),
+        },
+    }
+}
+
+fn doc(store: &Store, c: &Card) -> Value {
+    let mut log = store.log(&c.id).unwrap_or_default();
+    log.truncate(20);
+    let mut d = c.to_document(&log);
+    d["id"] = json!(c.id);
+    d["version"] = json!(c.version);
+    d
+}
+
+/// A stack as kanban_stack_list shows it.
+fn stack_json(store: &Store, lead: &Card) -> Result<Value, String> {
+    let f = |c: &Card, k: &str| c.fields.get(k).cloned().unwrap_or(Value::Null);
+    let kids = store.stack_children(lead).map_err(|e| e.to_string())?;
+    let children: Vec<Value> = kids
+        .iter()
+        .map(|k| json!({ "number": k.number, "title": k.title(), "column": k.column, "archived": k.archived, "passed": k.passed(),
+                         "nextStep": f(k, "nextStep"), "blockedReason": f(k, "blockedReason"), "choices": f(k, "choices") }))
+        .collect();
+    let rule = store.stack_rule();
+    Ok(json!({
+        "lead": { "number": lead.number, "title": lead.title(), "column": lead.column, "branch": f(lead, "branch"), "pr": f(lead, "pr"),
+                  "devStack": f(lead, "devStack"), "logins": f(lead, "logins") },
+        "children": children,
+        "rule": rule,
+        "ready": kanban_store::stack_ready(&kids, &rule),
+    }))
+}
+
+pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> Result<Value, String> {
+    let board = app.state::<Board>();
+    let mut store = board.0.lock().map_err(|e| e.to_string())?;
+    let own = caller_card(app, &store, caller);
+    let by = match own.as_ref().and_then(|id| store.get(id).ok()) {
+        Some(c) => format!("card #{}'s session", c.number),
+        None => "a session outside the app".to_string(),
+    };
+    let out = match name {
+        "kanban_get_card" => doc(&store, &target(&store, own.as_deref(), args)?),
+        "kanban_list_cards" => {
+            let all = args.get("include_archived").and_then(Value::as_bool).unwrap_or(false);
+            let col = args.get("column").and_then(Value::as_str);
+            let cards = store.list(all).map_err(|e| e.to_string())?;
+            Value::Array(
+                cards
+                    .iter()
+                    .filter(|c| col.map_or(true, |x| c.column == x))
+                    .map(|c| json!({ "card": c.number, "id": c.id, "title": c.title(), "column": c.column, "archived": c.archived,
+                                     "summary": c.fields.get("summary"), "nextStep": c.fields.get("nextStep"), "labels": c.fields.get("labels"),
+                                     "stack": c.fields.get("stack"), "stackOf": c.fields.get("stackOf"), "passed": c.passed() }))
+                    .collect(),
+            )
+        }
+        "kanban_update_card" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let fields = args.get("fields").and_then(Value::as_object).ok_or("pass the fields to change as `fields`")?;
+            if let Some(bad) = fields.keys().find(|k| !UPDATABLE.contains(&k.as_str())) {
+                return Err(format!("\"{bad}\" can't be set this way (allowed: {})", UPDATABLE.join(", ")));
+            }
+            if let Some(ch) = fields.get("choices") {
+                let ok = ch.is_null() || ch.as_array().map_or(false, |a| a.iter().all(|v| v.as_str().map_or(false, |t| !t.trim().is_empty())));
+                if !ok {
+                    return Err("choices is a list of answer strings (or null to clear it)".into());
+                }
+            }
+            let version = args.get("if_version").and_then(Value::as_i64).unwrap_or(c.version);
+            let card = store.update(&c.id, version, &fields.clone(), &by).map_err(|e| e.to_string())?;
+            doc(&store, &card)
+        }
+        "kanban_add_log" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let text = args.get("text").and_then(Value::as_str).ok_or("pass the line as `text`")?;
+            store.add_log(&c.id, text, &by).map_err(|e| e.to_string())?;
+            json!("Logged.")
+        }
+        "kanban_move_card" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let to = args.get("column").and_then(Value::as_str).ok_or("pass the column")?;
+            let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
+            if to == "Ship it" {
+                return Err("only Hugh moves a card into Ship it; say in nextStep that it is ready".into());
+            }
+            if c.column == to {
+                return Ok(json!(format!("Card #{} is already in {to}.", c.number)));
+            }
+            if let Some(why) = dispatch::stack_move_refused(&store, &c, to) {
+                return Err(format!("refused: {why}"));
+            }
+            // Hugh's rule holds card sessions to the subagent test; his own sessions' moves aren't.
+            if let Some(why) = own.as_ref().and_then(|_| crate::tester::move_refused(&store, &c, to)) {
+                let _ = store.add_log(&c.id, &format!("Refused a move to {to} by {by}: it hasn't passed a subagent test"), "the app");
+                return Err(format!("refused: {why}"));
+            }
+            if own.as_deref() == Some(c.id.as_str()) {
+                store
+                    .queue(&c.id, "move", &json!({ "column": to, "reason": reason }).to_string())
+                    .map_err(|e| e.to_string())?;
+                json!(format!("Queued: card #{} moves to {to} when your turn ends. Finish your turn as normal.", c.number))
+            } else {
+                dispatch::session_move(app, &mut store, &c, to, reason, &by)?;
+                json!(format!("Moved card #{} to {to}.", c.number))
+            }
+        }
+        "kanban_create_card" => {
+            let title = args.get("title").and_then(Value::as_str).ok_or("pass a title")?;
+            let mut fields = Patch::new();
+            fields.insert("title".into(), json!(title));
+            for k in ["column", "repo", "summary", "issue", "labels"] {
+                if let Some(v) = args.get(k) {
+                    fields.insert(k.into(), v.clone());
+                }
+            }
+            if fields.get("column").and_then(Value::as_str) == Some("Ship it") {
+                return Err("only Hugh moves a card into Ship it".into());
+            }
+            // Starting it (card #76): `to`, or a column that starts a session, from Hugh's own
+            // session only; a card's session only places cards.
+            let to = args.get("to").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty());
+            let start = match to {
+                Some(_) if own.is_some() => return Err("a card's session can't start a card; leave out `to`".into()),
+                Some("Deploy complete") => return Err("only Hugh sets a card to ship by itself, in the app (Add card's Take it to)".into()),
+                Some("Planning") => Some(("Planning".to_string(), None)),
+                Some("Human test") => Some(("Planning".to_string(), Some("Human test"))),
+                Some(t) => return Err(format!("`to` is Planning or Human test, not {t}")),
+                None if own.is_none() && args.get("stack").map_or(true, Value::is_null) => fields
+                    .get("column")
+                    .and_then(Value::as_str)
+                    .filter(|c| ["Planning", "In progress"].contains(c))
+                    .map(|c| (c.to_string(), None)),
+                None => None,
+            };
+            if let Some((_, auto)) = &start {
+                fields.remove("column");
+                if let Some(t) = auto {
+                    fields.insert(kanban_store::AUTO_KEY.into(), json!(t));
+                }
+            }
+            if let Some(t) = args.get("template").and_then(Value::as_str) {
+                match store.template(t) {
+                    Ok(Some(_)) => {
+                        fields.insert("templateId".into(), json!(t));
+                    }
+                    _ => return Err(format!("no card template called \"{t}\"")),
+                }
+            }
+            let id = args.get("id").and_then(Value::as_str);
+            let card = match args.get("stack").filter(|v| !v.is_null()) {
+                Some(v) => {
+                    if id.is_some() {
+                        return Err("a card made into a stack gets its id from the board; leave out `id`".into());
+                    }
+                    let lead = v.as_i64().ok_or("stack is the lead card's number")?;
+                    store.create_in_stack(fields, lead, &by).map_err(|e| e.to_string())?
+                }
+                None => store.create(id, fields, &by).map_err(|e| e.to_string())?,
+            };
+            store.add_log(&card.id, &format!("Created by {by}"), &by).map_err(|e| e.to_string())?;
+            let mut card = store.get(&card.id).map_err(|e| e.to_string())?;
+            if let Some((col, auto)) = start {
+                let why = match auto {
+                    Some(t) => format!("he asked {by} to add it to go on by itself to {t}"),
+                    None => format!("he asked {by} to add it to start in {col}"),
+                };
+                match dispatch::start_new(app, &mut store, &card, &col, &why) {
+                    Ok(c) => card = c,
+                    Err(e) => {
+                        let _ = store.add_log(&card.id, &format!("Made, but couldn't start it in {col}: {e}. It waits in Backlog."), "the app");
+                    }
+                }
+            }
+            doc(&store, &card)
+        }
+        "kanban_stack_list" => {
+            let c = target(&store, own.as_deref(), &json!({ "card": args.get("stack") }))?;
+            let lead = match c.stack_of() {
+                Some(n) if args.get("stack").and_then(Value::as_i64).is_none() => store.get_by_number(n).map_err(|e| e.to_string())?,
+                Some(n) => return Err(format!("#{} is in stack #{n}; it doesn't lead one", c.number)),
+                None => c,
+            };
+            if !lead.is_lead() {
+                return Err(format!("#{} isn't a stack (it has no cards in it)", lead.number));
+            }
+            stack_json(&store, &lead)?
+        }
+        "kanban_stack_add" | "kanban_stack_remove" => {
+            let lead = args.get("stack").and_then(Value::as_i64).ok_or("pass the lead card's number as `stack`")?;
+            let child = args.get("card").and_then(Value::as_i64).ok_or("pass the card's number as `card`")?;
+            let l = if name == "kanban_stack_add" {
+                store.stack_add(lead, child, &by)
+            } else {
+                store.stack_remove(lead, child, &by)
+            }
+            .map_err(|e| e.to_string())?;
+            stack_json(&store, &l)?
+        }
+        "kanban_stack_join" | "kanban_stack_detach" => {
+            let lead = args.get("stack").and_then(Value::as_i64).ok_or("pass the lead card's number as `stack`")?;
+            let child = args.get("card").and_then(Value::as_i64).ok_or("pass the card's number as `card`")?;
+            if name == "kanban_stack_join" {
+                let l = crate::stack_join_op(app, &mut store, lead, child, &by, false)?;
+                stack_json(&store, &l)?
+            } else {
+                let (c, from) = crate::stack_detach_op(app, &mut store, lead, child, &by)?;
+                if let Some(from) = from {
+                    // Starts its own session once this call lets go of the board.
+                    let (a, id) = (app.clone(), c.id.clone());
+                    std::thread::spawn(move || dispatch::after_move(&a, &id, &from));
+                }
+                json!(format!("Detached #{child} from stack #{lead}; it is its own card in {} now.", c.column))
+            }
+        }
+        "kanban_set_passed" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let on = args.get("passed").and_then(Value::as_bool).unwrap_or(true);
+            let card = store.set_passed(&c.id, on, &by).map_err(|e| e.to_string())?;
+            doc(&store, &card)
+        }
+        "kanban_ship_result" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let state = args.get("state").and_then(Value::as_str).ok_or("pass the state")?;
+            let detail = args.get("detail").and_then(Value::as_str).unwrap_or("");
+            dispatch::ship_result(app, &mut store, &c, state, detail, &by)?
+        }
+        "kanban_request_ship" => {
+            ship_request_allowed(own.as_deref(), args)?;
+            let c = target(&store, None, args)?;
+            if c.archived {
+                return Err(format!("card #{} is archived", c.number));
+            }
+            if c.column == "Ship it" {
+                return Ok(json!(format!("Card #{} is already in Ship it.", c.number)));
+            }
+            store
+                .add_log(&c.id, "A session outside the app asked to ship this card: waiting for Hugh to confirm in the app", &by)
+                .map_err(|e| e.to_string())?;
+            // Never moved here: the app shows a banner, and only Hugh's click ships it.
+            let _ = app.emit("ship-request", json!({ "card": c.id, "number": c.number, "title": c.title() }));
+            json!(format!("Asked Hugh to confirm \"Ship #{}?\" in the app. It ships only when he clicks Ship.", c.number))
+        }
+        "kanban_notify" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let text = args.get("text").and_then(Value::as_str).ok_or("pass the text")?;
+            store.add_log(&c.id, &format!("Told Hugh: {text}"), &by).map_err(|e| e.to_string())?;
+            let _ = app.emit("notify", json!({ "card": c.id, "number": c.number, "text": text }));
+            json!("Hugh has been told.")
+        }
+        _ => return Err(format!("no tool called {name}")),
+    };
+    drop(store);
+    let _ = app.emit("cards-changed", ());
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t4_6_ship_request_needs_the_flag_and_an_outside_session() {
+        assert!(ship_request_allowed(None, &json!({ "card": 34 })).unwrap_err().starts_with("refused"));
+        assert!(ship_request_allowed(None, &json!({ "card": 34, "asked_by_hugh": false })).is_err());
+        assert!(ship_request_allowed(Some("card-id"), &json!({ "card": 34, "asked_by_hugh": true })).is_err());
+        assert!(ship_request_allowed(None, &json!({ "asked_by_hugh": true })).is_err());
+        assert!(ship_request_allowed(None, &json!({ "card": 34, "asked_by_hugh": true })).is_ok());
+    }
+
+    #[test]
+    fn stack_tools_are_listed() {
+        let names: Vec<String> = schemas().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+        for t in ["kanban_stack_list", "kanban_stack_add", "kanban_stack_remove", "kanban_stack_join", "kanban_stack_detach", "kanban_set_passed"] {
+            assert!(names.iter().any(|n| n == t), "{t}");
+        }
+        assert!(UPDATABLE.contains(&"choices"));
+        assert!(UPDATABLE.contains(&"labels"));
+        let create = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_create_card").cloned().unwrap();
+        assert!(create["inputSchema"]["properties"].get("stack").is_some());
+    }
+
+    #[test]
+    fn t4_6_card_sessions_are_not_offered_the_ship_request() {
+        let names: Vec<String> = schemas().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+        for t in CLI_ONLY {
+            assert!(!names.iter().any(|n| n == t));
+        }
+    }
+}

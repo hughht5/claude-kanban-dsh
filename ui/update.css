@@ -1,0 +1,24 @@
+/* The update banner (update.js), the resume offer (resume.js) and the dev-stack health line on login buttons (stack.js). */
+.updatebar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;border:1px solid var(--accent);background:var(--accent-soft);color:var(--fg);
+  border-radius:6px;padding:7px 12px;font-size:13.5px;line-height:1.4}
+.updatebar[hidden]{display:none}
+.updatebar b{font-weight:600}
+.updatebar .ua{display:flex;gap:6px}
+.updatebar .msg{flex-basis:100%}
+.updatebar .msg:empty{display:none}
+/* The resume offer (resume.js) shares the banner's look; its card names open the card. */
+.resumebar .rnames a{color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.resumebar .rnames a:hover{color:var(--accent)}
+
+.stackhealth{font-size:12.5px;line-height:1.5;display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.stackhealth[hidden]{display:none}
+.stackhealth .up{color:var(--ok);font-weight:500}
+.stackhealth .down{color:var(--bad);font-weight:500}
+.stackhealth .warn{color:var(--warn)}
+.stackhealth code,.restartcmd .cmd{font-family:var(--mono);font-size:12px}
+.btn.sm{padding:3px 9px;font-size:12px}
+.restartcmd{flex-basis:100%;display:flex;flex-direction:column;gap:4px}
+.restartcmd[hidden]{display:none}
+.restartcmd .note{margin:0;color:var(--muted)}
+.restartcmd .cmdrow{display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap}
+.restartcmd .cmd{flex:1 1 240px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 8px;overflow-wrap:anywhere;user-select:all}

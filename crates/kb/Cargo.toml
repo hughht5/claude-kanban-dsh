@@ -1,0 +1,13 @@
+[package]
+name = "kb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kb"
+path = "src/main.rs"
+
+[dependencies]
+kanban-store = { path = "../store" }
+serde_json.workspace = true

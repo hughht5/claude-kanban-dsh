@@ -1,0 +1,45 @@
+/* Settings: a full overlay above the board and the card panel (settings.js). A section list on
+   the left, the section on the right; one column at phone width. Uses board.css's tokens. */
+.gear{margin-left:4px}
+.st-back{position:fixed;inset:0;background:rgba(12,14,24,.5);z-index:30}
+.st{position:fixed;inset:14px;z-index:31;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 18px 48px rgba(0,0,0,.28);display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}
+.st-head{display:flex;align-items:baseline;gap:12px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line);min-width:0}
+.st-head h2{margin:0;font-size:17px;font-weight:600}
+.st-head .meta{flex:1;min-width:0}
+.st-head .ibtn{align-self:center}
+.st-body{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:0}
+.st-nav{display:flex;flex-direction:column;gap:2px;padding:12px 8px;border-right:1px solid var(--line);overflow-y:auto}
+.st-nav button{background:none;border:0;border-radius:6px;padding:8px 10px;text-align:left;cursor:pointer;color:var(--fg);font-size:13.5px}
+.st-nav button:hover{background:var(--accent-soft)}
+.st-nav button[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.st-main{overflow-y:auto;min-height:0;padding:16px 22px 28px;display:flex;flex-direction:column;gap:14px;outline:none}
+.st-main > .note{max-width:820px}
+.st-box{border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;max-width:980px}
+.st-box.st-arch{opacity:.7}
+.st-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.st-row > .f{min-width:180px}
+.st-grow{flex:1}
+.st-name{font-size:14px;align-self:center}
+.st-row .tag,.st-row .meta{align-self:center}
+.st-prompt,.st-tstart{font-family:var(--mono);font-size:12.5px;line-height:1.5;min-height:120px}
+.st-num{width:120px}
+#st-tlist{display:flex;flex-direction:column;gap:12px}
+.st-table{display:flex;flex-direction:column;gap:6px;max-width:980px}
+.st-tr{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.3fr) minmax(0,.8fr) 32px;gap:8px;align-items:center}
+.st-th{font-size:12px;color:var(--muted)}
+#st-prows{display:flex;flex-direction:column;gap:6px}
+@media (max-width:640px){
+  .st{inset:0;border:0;border-radius:0}
+  .st-head{flex-wrap:wrap;padding-left:16px}
+  .st-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .st-nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .st-nav button{white-space:nowrap}
+  .st-main{padding:14px 16px 24px}
+  .st-tr{grid-template-columns:minmax(0,1fr) 32px}
+  .st-tr > input:not(:first-child){grid-column:1}
+  .st-th{display:none}
+}
+.st-set{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.st-set legend{font-size:13.5px;font-weight:600;margin-bottom:4px;padding:0}
+.st-radio{display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer}

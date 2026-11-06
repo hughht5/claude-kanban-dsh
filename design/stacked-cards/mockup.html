@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stacked cards mockup</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+:root{--surface-0:#f5f4ef;--surface-1:#faf9f5;--surface-2:#ffffff;--border:rgba(0,0,0,.12);--text-primary:#1f1e1d;--text-secondary:#5f5e5a;--text-muted:#8f8d86;--text-accent:#185fa5;--text-danger:#a32d2d;--border-accent:#378add;--fill-accent:#378add;--fill-warning:#ef9f27;--fill-success:#639922;--fill-danger:#e24b4a}
+@media (prefers-color-scheme:dark){:root{--surface-0:#1c1c1b;--surface-1:#262624;--surface-2:#30302e;--border:rgba(255,255,255,.14);--text-primary:#f1efe8;--text-secondary:#b4b2a9;--text-muted:#888780;--text-accent:#85b7eb;--text-danger:#f09595}}
+body{margin:0;padding:24px 16px;background:var(--surface-0);color:var(--text-primary);font:14px/1.5 system-ui,sans-serif}
+button{font:inherit;color:inherit;background:none;border:0.5px solid var(--border);border-radius:8px;padding:4px 10px;cursor:pointer}
+a{color:var(--text-accent)}
+.bd{font-size:13px;max-width:1100px;margin:0 auto}
+.grid{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.6fr) minmax(0,.8fr);gap:10px}
+@media (max-width:760px){.grid{grid-template-columns:1fr}}
+.col{background:var(--surface-1);border-radius:12px;padding:10px;min-width:0}
+.colh{font-size:12px;color:var(--text-secondary);margin:0 0 8px;display:flex;justify-content:space-between}
+.card{background:var(--surface-2);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px}
+.stk{border-left:3px solid var(--border-accent);border-radius:0 8px 8px 0}
+.num{color:var(--text-muted);margin-right:4px}
+.seg{flex:1;height:6px;border-radius:3px}
+.tog{color:var(--text-secondary);display:flex;align-items:center;gap:4px;font-size:12px;margin-top:6px;border:0;padding:0}
+.ch{border-top:0.5px solid var(--border);padding:5px 0}
+.chh{display:flex;justify-content:space-between;align-items:center;gap:8px;border:0;padding:0;width:100%;text-align:left}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.meta{color:var(--text-muted);font-size:12px;white-space:nowrap}
+.steps{margin:6px 0 2px 12px;padding:8px 10px;background:var(--surface-1);border-radius:8px;font-size:12px;line-height:1.6}
+.steps ol{margin:4px 0;padding-left:18px}
+.steps button{font-size:11px;padding:2px 8px}
+.lk{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="bd">
+<div class="grid">
+<div class="col"><p class="colh"><span>Planning</span><span>3</span></p>
+<div class="card"><span class="num">#34</span>Export a report as PDF</div>
+<div class="card"><span class="num">#41</span>Faster search results</div>
+<div class="card"><span class="num">#37</span>Upload a file</div>
+</div>
+
+<div class="col"><p class="colh"><span>In progress</span><span>2 stacks · 13 cards</span></p>
+<div class="card stk">
+<div style="display:flex;justify-content:space-between;gap:8px"><span><i class="ti ti-stack-2" style="color:var(--text-accent)"></i> <span class="num">#44</span>Feedback round · stack A</span><span class="meta">3 of 8 ready</span></div>
+<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Reports and layout · <code>feedback-a</code> · stack up</div>
+<div style="display:flex;gap:3px;margin-top:8px" title="2 to test, 1 passed, 4 building, 1 needs you">
+<span class="seg" style="background:var(--fill-warning)"></span><span class="seg" style="background:var(--fill-warning)"></span><span class="seg" style="background:var(--fill-success)"></span><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-danger)"></span><span class="seg" style="background:var(--fill-accent)"></span>
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:var(--text-secondary)"><span><span class="dot" style="background:var(--fill-warning)"></span>2 to test</span><span><span class="dot" style="background:var(--fill-success)"></span>1 passed</span><span><span class="dot" style="background:var(--fill-accent)"></span>4 building</span><span><span class="dot" style="background:var(--fill-danger)"></span>1 needs you</span></div>
+<div class="lk"><a href="#"><i class="ti ti-login"></i> Sign in as admin</a><a href="#"><i class="ti ti-user"></i> Sign in as user</a><a href="#"><i class="ti ti-git-pull-request"></i> PR</a><a href="#"><i class="ti ti-terminal-2"></i> Open session</a></div>
+<button class="tog" data-t="sa"><i class="ti ti-chevron-down"></i><span>Hide 8 cards</span></button>
+<div id="sa" style="margin-top:4px">
+<div class="ch"><button class="chh" data-t="c45"><span><span class="dot" style="background:var(--fill-warning)"></span><span class="num">#45</span>Uses the dates asked for</span><span class="meta">Test · 3 steps <i class="ti ti-chevron-down"></i></span></button>
+<div class="steps" id="c45"><span style="color:var(--text-secondary)">Admin login · demo data</span><ol><li>Open Reports, New report.</li><li>Ask for "an 18-month report on orders".</li><li>The page says May 2025 – Oct 2026 and every chart's dates match. Save it, open it again: same dates.</li></ol><span style="color:var(--text-danger)">Broken if:</span> charts show 2020 onwards. <button>Passed</button> <button>Found a problem</button></div></div>
+<div class="ch"><button class="chh" data-t="c54"><span><span class="dot" style="background:var(--fill-warning)"></span><span class="num">#54</span>Text follows what was asked</span><span class="meta">Test · 3 steps <i class="ti ti-chevron-right"></i></span></button><div class="steps" id="c54" style="display:none"><span style="color:var(--text-secondary)">Admin login · demo data</span><ol><li>New report: "a short summary of orders". Sections: a line or two.</li><li>New report: "a deep dive on orders". Sections: several paragraphs.</li><li>"Titles only" gives headings only.</li></ol></div></div>
+<div class="ch"><button class="chh" data-t="c50"><span><span class="dot" style="background:var(--fill-success)"></span><span class="num">#50</span>A list goes on the page</span><span class="meta">Passed</span></button><div id="c50" style="display:none"></div></div>
+<div class="ch"><button class="chh" data-t="c53"><span><span class="dot" style="background:var(--fill-danger)"></span><span class="num">#53</span>Edit a saved report</span><span class="meta" style="color:var(--text-danger)">Needs you <i class="ti ti-chevron-right"></i></span></button><div class="steps" id="c53" style="display:none">Question: should a change to a report others can see save straight away, or come back as a draft you keep?<div style="display:flex;gap:6px;margin-top:6px"><button>Draft</button><button>Save straight away</button></div></div></div>
+<div class="ch" style="color:var(--text-muted)"><span class="dot" style="background:var(--fill-accent)"></span>#44, #49, #52, #55 building</div>
+</div>
+</div>
+
+<div class="card stk">
+<div style="display:flex;justify-content:space-between;gap:8px"><span><i class="ti ti-stack-2" style="color:var(--text-accent)"></i> <span class="num">#46</span>Feedback round · stack B</span><span class="meta">0 of 5 ready</span></div>
+<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Chart controls and search · <code>feedback-b</code> · stack not up yet</div>
+<div style="display:flex;gap:3px;margin-top:8px"><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-accent)"></span><span class="seg" style="background:var(--fill-accent)"></span></div>
+<button class="tog" data-t="sb"><i class="ti ti-chevron-right"></i><span>Show 5 cards</span></button>
+<div id="sb" style="display:none;margin-top:4px"><div class="ch" style="color:var(--text-muted)">#46, #47, #48, #51, #56 building</div></div>
+</div>
+</div>
+
+<div class="col"><p class="colh"><span>Human test</span><span>1</span></p>
+<div class="card"><span class="num">#43</span>Chart settings toggles</div>
+<p style="color:var(--text-muted);font-size:12px;margin:6px 2px">A stack moves here as one card once all its children are ready.</p>
+</div>
+</div>
+</div>
+<script>
+document.querySelectorAll('[data-t]').forEach(function(t){t.onclick=function(){var el=document.getElementById(t.dataset.t);if(!el)return;var open=el.style.display==='none';el.style.display=open?'block':'none';var i=t.querySelector('i.ti-chevron-down,i.ti-chevron-right');if(i)i.className='ti '+(open?'ti-chevron-down':'ti-chevron-right');var s=t.querySelector('span');if(s&&/^(Show|Hide) /.test(s.textContent))s.textContent=s.textContent.replace(/^(Show|Hide)/,open?'Hide':'Show');};});
+</script>
+</body>
+</html>

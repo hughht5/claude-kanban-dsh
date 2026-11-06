@@ -1,0 +1,853 @@
+<title>Claude Kanban DSH Rust Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: a sticky contents rail beside one reading column; the decisions table is the one set-off block. Tokens match the Work Board page. */
+:root{
+  --bg:#f3f4f7; --panel:#ffffff; --fg:#1b1f2a; --muted:#5f6677; --line:#d9dce5;
+  --accent:#3a4fd9; --accent-soft:#e6e9fc; --code:#eceef4;
+  --c0:#8a90a2; --c1:#7a5cd6; --c2:#3a4fd9; --c3:#b4232c; --c4:#a15c00; --c5:#1f7a4d; --c6:#5f6677;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --display:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12141b; --panel:#1b1e28; --fg:#e6e8ef; --muted:#9aa1b3; --line:#2c3040;
+  --accent:#8b9bff; --accent-soft:#262c4f; --code:#232736;
+  --c0:#8a90a2; --c1:#a58cf0; --c2:#8b9bff; --c3:#f07178; --c4:#e2a54a; --c5:#5cc690; --c6:#9aa1b3; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12141b; --panel:#1b1e28; --fg:#e6e8ef; --muted:#9aa1b3; --line:#2c3040;
+  --accent:#8b9bff; --accent-soft:#262c4f; --code:#232736;
+  --c0:#8a90a2; --c1:#a58cf0; --c2:#8b9bff; --c3:#f07178; --c4:#e2a54a; --c5:#5cc690; --c6:#9aa1b3; color-scheme:dark}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--sans);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;padding-block:40px 80px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px}
+header.hero{grid-column:1/-1;display:grid;gap:14px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font:600 clamp(30px,4.4vw,46px)/1.08 var(--display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+.intro{color:var(--muted);margin:0;max-width:62ch}
+.cols{list-style:none;padding:0;margin:6px 0 0;display:flex;flex-wrap:wrap;gap:6px}
+.cols li{display:flex;align-items:center;gap:6px;font:500 12px/1 var(--sans);background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px 9px}
+.cols li span{width:8px;height:8px;border-radius:50%}
+.c0 span{background:var(--c0)}.c1 span{background:var(--c1)}.c2 span{background:var(--c2)}.c3 span{background:var(--c3)}.c4 span{background:var(--c4)}.c5 span{background:var(--c5)}.c6 span{background:var(--c6)}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;max-height:calc(100vh - 48px);overflow:auto}
+nav.toc h2{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px;border-left:1px solid var(--line)}
+nav.toc a{display:block;padding:4px 0 4px 12px;margin-left:-1px;border-left:2px solid transparent;color:var(--muted);text-decoration:none;font-size:13.5px;line-height:1.35}
+nav.toc a:hover,nav.toc a.on{color:var(--fg);border-left-color:var(--accent)}
+main{min-width:0;max-width:820px}
+main h2{font:600 26px/1.2 var(--display);margin:56px 0 14px;text-wrap:balance;scroll-margin-top:20px}
+main h3{font:600 17px/1.3 var(--sans);margin:30px 0 8px;scroll-margin-top:20px}
+main p,main li{max-width:70ch}
+main ul,main ol{padding-left:22px;display:grid;gap:4px}
+main a{color:var(--accent)}
+main strong{font-weight:600}
+code{font:13px/1.4 var(--mono);background:var(--code);border-radius:3px;padding:1px 4px;overflow-wrap:anywhere}
+.pre{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px;margin:16px 0}
+.pre pre{margin:0;padding:16px}
+.pre code{background:none;padding:0;font-size:12.5px;line-height:1.45;overflow-wrap:normal;white-space:pre}
+.tbl{overflow-x:auto;margin:14px 0 18px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.45}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{font:600 12px/1.3 var(--sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg)}
+td{font-variant-numeric:tabular-nums}
+.decisions{background:var(--accent-soft);border-radius:10px;padding:4px 22px 10px;margin-top:40px}
+.decisions h2{margin-top:22px}
+.decisions .tbl{background:var(--panel)}
+.decisions td:first-child{font:600 13px var(--mono);color:var(--accent);width:28px}
+.decisions td:nth-child(2){font-weight:600}
+@media (max-width:860px){
+  .wrap{grid-template-columns:minmax(0,1fr);gap:24px;padding-block:24px 60px}
+  nav.toc{position:static;max-height:none}
+  nav.toc ol{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+  .decisions{padding:2px 14px 8px}
+  .decisions td:nth-child(2){white-space:normal}
+}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+</style>
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">Build plan · 3 Nov 2026 · revised after review</div>
+    <h1>Claude Kanban DSH: build plan for a Rust desktop app</h1>
+    <p class="intro">Written 3 Nov 2026 for Hugh. Revised the same day after the manager session&#39;s review, which also settled the decisions.</p>
+    <ul class="cols" aria-label="The board's seven columns"><li class="c0"><span></span>Backlog</li><li class="c1"><span></span>Planning</li><li class="c2"><span></span>In progress</li><li class="c3"><span></span>Blocked</li><li class="c4"><span></span>Human test</li><li class="c5"><span></span>Ship it</li><li class="c6"><span></span>Done</li></ul>
+  </header>
+  <nav class="toc" aria-label="Contents"><h2>Contents</h2><ol><li><a href="#what-it-is">What it is</a></li><li><a href="#decisions">Decisions</a></li><li><a href="#stack">Stack</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#terminal">Terminal</a></li><li><a href="#process-lifecycle">Process lifecycle</a></li><li><a href="#the-two-accounts">The two accounts</a></li><li><a href="#storage-and-migration">Storage and migration</a></li><li><a href="#columns-prompts-model-and-effort">Columns, prompts, model and effort</a></li><li><a href="#moves-edits-and-the-held-move">Moves, edits and the held move</a></li><li><a href="#shipping">Shipping</a></li><li><a href="#logins">Logins</a></li><li><a href="#sessions-outside-the-app">Sessions outside the app</a></li><li><a href="#notifications-packaging-and-install">Notifications, packaging and install</a></li><li><a href="#what-to-port-from-kangentic-and-what-to-drop">What to port from Kangentic, and what to drop</a></li><li><a href="#phases">Phases</a></li><li><a href="#deferred">Deferred</a></li><li><a href="#risks">Risks</a></li><li><a href="#what-can-be-undone">What can be undone</a></li></ol></nav>
+  <main><p><strong>Change, 3 Nov 2026 (Hugh): no cut-over.</strong> The app runs entirely separately, as its own board with its own cards in its own SQLite store. The Work Board artifact and the <code>kanban</code> skill carry on as they are: nothing is frozen, exported again or switched over, and Phase 5 is cancelled. The cards imported on 3 Nov stay in the app as its starting set. Sessions the app starts use its <code>kanban_*</code> MCP tools (wired per session) or <code>kb</code>. Where this plan talks about cut-over, closing the artifact&#39;s writes, skill v3 or the user-scope <code>kanban</code> MCP entry, read it as not happening.</p>
+<h2 id="what-it-is">What it is</h2>
+<p>A desktop app that replaces the Work Board artifact. It shows the same seven columns: Backlog, Planning, In progress, Blocked, Human test, Ship it and Done. It keeps card numbers, manual order, archive and restore, Add card, the detail dialog with logins, and the ship and plan states. <strong>Each card owns a live Claude Code session in an embedded terminal.</strong> You click a card, its session appears beside the board, you type to it, and you switch cards in the same window, as in Kangentic.</p>
+<p>The app is the dispatcher. A drag is handled by the process that saw it, within a second, so these problems go away:</p>
+<div class="tbl"><table><thead><tr>
+<th>Problem today</th>
+<th>Why it can&#39;t happen in the app</th>
+</tr>
+</thead><tbody><tr>
+<td>Drags reach a session only through delayed comment wake-ups, or not at all after a restart</td>
+<td>The drag handler writes the card and types into the card&#39;s terminal directly. There is no watching session, comment or scheduled task.</td>
+</tr>
+<tr>
+<td>Card sessions started by scheduled tasks are hidden under Routines</td>
+<td>The app starts the sessions itself, and each one is shown on its card.</td>
+</tr>
+<tr>
+<td>Sessions can&#39;t be started while you use Remote Control</td>
+<td>Starting a session is a process spawn by the app. No Claude desktop rule is involved.</td>
+</tr>
+<tr>
+<td>Saves aren&#39;t version-pinned, so concurrent edits are lost</td>
+<td>One Rust process owns the database. Every write is a transaction that checks the card&#39;s <code>version</code>.</td>
+</tr>
+<tr>
+<td>A card&#39;s session isn&#39;t told when you move its card</td>
+<td>Every move and every edit you make is typed into that card&#39;s session once its turn ends (see <em>Moves, edits and the held move</em>).</td>
+</tr>
+</tbody></table></div>
+<section class="decisions"><h2 id="decisions">Decisions</h2>
+<p>Settled by the manager&#39;s review on 3 Nov 2026.</p>
+<div class="tbl"><table><thead><tr>
+<th>#</th>
+<th>Decision</th>
+<th>Settled</th>
+</tr>
+</thead><tbody><tr>
+<td>1</td>
+<td>Stack</td>
+<td>Tauri 2, xterm.js and <code>portable-pty</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Where cards live</td>
+<td>Local SQLite, imported once. <strong>After cut-over, the artifact refuses writes</strong> (not just a banner), so a session still on the old skill gets an error instead of losing its write.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Phone</td>
+<td>No phone support in v1</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Desktop sidebar sessions</td>
+<td>Resumed in the app only when you ask. Running sidebar sessions finish where they are.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Model, effort, account</td>
+<td>The model and effort table in <em>Columns</em>. The account of a new session is the one with the <strong>lower 7-day usage</strong> (your rule), with a per-card override.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>A ship from outside the app</td>
+<td>Keeps a one-click confirm in the app</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Closing the window</td>
+<td>The app keeps running in the tray</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Updates</td>
+<td>No updater in v1: <code>tauri build</code> plus an install script</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Repo</td>
+<td>A GitHub repo of its own, private to start with</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Permission mode</td>
+<td>Card sessions run in <code>bypassPermissions</code></td>
+</tr>
+</tbody></table></div>
+</section><h2 id="stack">Stack</h2>
+<p><strong>Tauri 2</strong> with a Rust backend and a web UI in the system WebView (WebView2 on Windows 11, which is Chromium).</p>
+<ul>
+<li><strong>The board is already a web page.</strong> Its CSS tokens, card layout, drag and drop, and detail dialog port nearly as they are. The <code>ArtifactData</code> calls become Tauri <code>invoke</code> calls into Rust.</li>
+<li><strong>The terminal is xterm.js.</strong> Kangentic proves xterm.js renders Claude Code&#39;s TUI well in Chromium. A pure-Rust UI would need a terminal renderer written from scratch, which is the biggest risk such a build would carry, and it buys nothing you would see.</li>
+<li><strong>Rust owns the difficult parts:</strong> PTYs, Job Objects, process lifecycle, SQLite, the hook receiver, the MCP server and notifications. That is where Electron and node-pty hurt in Kangentic (ConPTY double-kill heap corruption, native-module rebuilds, bridge scripts that need an external <code>node</code>).</li>
+<li><strong>The installer is small</strong> (about 10 MB, against Electron&#39;s 150 MB or more).</li>
+</ul>
+<p><strong>Front end:</strong> plain JavaScript with no build step in Phase 1 (the board page&#39;s own script, with its data calls moved to Rust). A bundler comes in only if Phase 2&#39;s xterm.js needs one. No framework. The board is about 450 lines of plain JavaScript today, and keeping it close to that makes the port a copy rather than a rewrite. It keeps the board&#39;s fonts and colour tokens (IBM Plex, the accent blue, both themes).</p>
+<p><strong>Main crates:</strong> <code>tauri</code> 2, <code>portable-pty</code> (ConPTY), <code>windows</code> (Job Objects), <code>rusqlite</code> (bundled, WAL), <code>rmcp</code> (MCP server, streamable HTTP), <code>axum</code> (localhost HTTP for hooks, MCP and <code>kb.exe</code>), <code>tokio</code>, <code>serde</code>, <code>notify</code> plus polling (file watching), <code>tauri-plugin-notification</code>, <code>tauri-plugin-single-instance</code>, and the tray support built into Tauri.</p>
+<p><strong>Toolchain:</strong> Rust isn&#39;t installed on this machine. Phase 1 installs <code>rustup</code>, the MSVC build tools and the Tauri CLI, <strong>only once you have said so in the build session</strong> (the manager has passed on your permission, but it has to come from you there). Everything installed is listed in <code>INSTALLED.md</code>, with how to uninstall it.</p>
+<h2 id="architecture">Architecture</h2>
+<div class="pre"><pre><code>+---------------------------- Tauri window ----------------------------+
+|  Board (7 columns, drag, Add card, search, archive)  |  Card pane     |
+|  ported from current-board-page.html                 |  xterm.js      |
+|                                                      |  + card detail |
++-------------------- invoke / events (Tauri IPC) ---------------------+
+|                           Rust core                                  |
+|  store      SQLite, append-only logs, version-pinned card writes     |
+|  sessions   one PTY per card, all in one kill-on-close Job Object    |
+|  activity   hook events -> idle / thinking / permission / ended      |
+|  dispatch   column rules, moves and edits typed in, held moves       |
+|  api        127.0.0.1: MCP for sessions, REST for kb.exe, hooks      |
+|  notify     Windows toasts, tray, focus card on click                |
++----------------------------------------------------------------------+
+     ^ spawns claude.exe in a PTY     ^ hooks POST here (type "http")
+                                      ^ kb.exe (CLI) calls the REST API</code></pre></div>
+<p><strong>Hooks use Claude Code&#39;s <code>http</code> hook type</strong> (as built in Phase 3: <code>UserPromptSubmit</code>, <code>Stop</code>, <code>StopFailure</code>, <code>Notification</code> and <code>SessionEnd</code> arrive this way, but <code>SessionStart</code> does not, so the statusLine&#39;s first report marks a session ready). That type is in the changelog of the installed Claude Code, and it POSTs the hook&#39;s JSON to a URL, so no sidecar exe is needed for hooks. Phase 3 confirms it against the Claude version found on the machine before relying on it. The statusLine still has to be a command, so it runs <code>kb.exe status</code>, which sends the status JSON to the app and also writes it to the session&#39;s <code>status.json</code>.</p>
+<p><strong><code>kb.exe</code></strong> is a small CLI that ships with the app. It is how a session reaches the board when it has no MCP tools: a session started while the app was down, or one outside the app (see <em>Sessions outside the app</em>).</p>
+<h2 id="terminal">Terminal</h2>
+<ul>
+<li><strong>One PTY per card session</strong>, opened with <code>portable-pty</code> (ConPTY) as <code>xterm-256color</code>. The first size is the pane&#39;s fitted size when the pane is open, otherwise a fixed 210x48 &quot;resting grid&quot;, as in Kangentic.</li>
+<li><strong>Output:</strong> each session&#39;s bytes go into a 512 KB ring buffer in Rust, and to the front end at about 60 Hz, but only for the session on screen. Hidden sessions keep buffering and are never rendered.</li>
+<li><strong>Switching cards:</strong> fit xterm.js to the pane, send the resize, wait for the TUI&#39;s full repaint (<code>ESC[2J</code>, at most 500 ms), then replay the buffer and restore the DEC private modes. This is Kangentic&#39;s sequence, and it avoids the half-drawn frame.</li>
+<li><strong>Input:</strong> keystrokes are batched into one IPC call per animation frame. Paste uses bracketed paste.</li>
+<li><strong>Resize:</strong> debounced at 100 ms and clamped. Output that arrives in the 1.5 s after a resize doesn&#39;t count as activity.</li>
+<li><strong>xterm.js addons:</strong> fit, WebGL (falling back to canvas if the context is lost), unicode11, web-links and search.</li>
+<li><strong>Claude TUI settings:</strong> the session&#39;s settings set <code>tui: &quot;fullscreen&quot;</code>, and the environment sets <code>CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT=1</code> (both are Kangentic workarounds for TUI redraw bugs).</li>
+</ul>
+<h2 id="process-lifecycle">Process lifecycle</h2>
+<h3 id="spawning">Spawning</h3>
+<p>The app runs <code>claude.exe</code> <strong>directly</strong> in the PTY, with no shell in between. That removes Kangentic&#39;s PowerShell <code>&amp; </code> prefix, its quote swapping and its cwd hacks. The binary is found the way <code>~\bin\claude.cmd</code> finds it: the newest <code>%APPDATA%\Claude\claude-code\&lt;version&gt;\claude.exe</code>, then <code>~\bin\claude.exe</code>. You can pin a path in Settings.</p>
+<div class="tbl"><table><thead><tr>
+<th>Flag</th>
+<th>Value</th>
+</tr>
+</thead><tbody><tr>
+<td><code>--session-id &lt;uuid&gt;</code> on a fresh start, or <code>--resume &lt;uuid&gt;</code></td>
+<td>The app makes the UUID and stores it as the card&#39;s <code>claudeSessionId</code></td>
+</tr>
+<tr>
+<td><code>--model</code>, <code>--effort</code></td>
+<td>On every spawn, because Claude doesn&#39;t remember them</td>
+</tr>
+<tr>
+<td><code>--permission-mode bypassPermissions</code></td>
+<td>From the column, or the card&#39;s override</td>
+</tr>
+<tr>
+<td><code>--settings &lt;session dir&gt;\settings.json</code></td>
+<td>The project&#39;s settings, merged with the app&#39;s hooks, statusLine and <code>tui: &quot;fullscreen&quot;</code></td>
+</tr>
+<tr>
+<td><code>--mcp-config &lt;session dir&gt;\mcp.json</code></td>
+<td>The app&#39;s MCP server, with this session&#39;s caller URL and token. No <code>--strict-mcp-config</code>, so your own MCP servers still load</td>
+</tr>
+<tr>
+<td><code>-- &quot;&lt;first prompt&gt;&quot;</code></td>
+<td>The column prompt, wrapped as <code>&lt;task&gt;…&lt;/task&gt;</code></td>
+</tr>
+</tbody></table></div>
+<ul>
+<li><strong>Environment:</strong> the app removes <code>CLAUDECODE</code> and every inherited <code>CLAUDE_CODE_*</code> variable (otherwise <code>--resume</code> fails with &quot;No conversation found&quot;). It sets <code>TERM=xterm-256color</code>, <code>KANBAN_CARD=&lt;number&gt;</code> and <code>KANBAN_SESSION=&lt;uuid&gt;</code>, and sets <code>CLAUDE_CONFIG_DIR</code> for Account 2 (see <em>The two accounts</em>).</li>
+<li><strong>Session files:</strong> <code>%LOCALAPPDATA%\claude-kanban-dsh\sessions\&lt;uuid&gt;\</code> holds <code>settings.json</code>, <code>mcp.json</code> and <code>status.json</code>.</li>
+<li><strong>Working folder:</strong> the repo&#39;s folder, from a map of repos to folders, otherwise a folder you choose once per repo. The session may make its own worktree, as it does today. The app doesn&#39;t create worktrees in v1. Once a card has a <code>worktreePath</code>, a resume starts there.</li>
+<li><strong>Folder trust:</strong> the app <strong>never writes <code>~\.claude.json</code></strong> (or Account 2&#39;s copy). It only reads them to check whether a folder is trusted. Every folder in the repo map is one you already use, so it is trusted. For a new folder, the trust question appears in the card&#39;s terminal and you answer it once.</li>
+</ul>
+<h3 id="job-object">Job Object</h3>
+<p>Every <code>claude.exe</code> the app starts goes into <strong>one Windows Job Object set to kill on close</strong> (<code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code>). The app holds the only handle. If the app crashes or is killed, Windows closes the handle and kills every card session and its child processes. So no session is left behind, and a later <code>--resume</code> can never open a conversation that is still running. Two more guards back this up:</p>
+<ul>
+<li>A <strong>resume lock:</strong> the app refuses to start a session for a <code>claudeSessionId</code> that already has a live process in the job.</li>
+<li><strong>WSL processes are outside the job.</strong> A dev stack a session started inside WSL keeps running after the app dies. That is intended, because the stack belongs to the card, and the ship session stops it.</li>
+</ul>
+<h3 id="stopping">Stopping</h3>
+<ul>
+<li><strong>Suspend</strong> (Done, Quit): send <code>Ctrl+C</code>, then <code>/exit</code> and Enter, wait 1.5 s, then kill. Wait another 1.5 s so ConPTY releases its file handles.</li>
+<li><strong>Kill</strong> clears the PTY handle <em>before</em> killing, so a second kill can&#39;t happen (the ConPTY heap-corruption lesson). An exit wait has a 10 s safety timeout, because ConPTY sometimes never reports the exit.</li>
+<li>A session that exits on its own is marked <code>exited</code>. The card shows a Resume button, and nothing respawns it automatically.</li>
+</ul>
+<h3 id="app-restart">App restart</h3>
+<ul>
+<li><strong>On Quit:</strong> suspend every session in parallel, recording the state each was in (idle, or mid-turn).</li>
+<li><strong>On start after a crash:</strong> the Job Object has already killed the sessions. Sessions last recorded as <code>running</code> get a new <code>orphaned</code> event, and the latest session per card is kept.</li>
+<li><strong>Mid-turn sessions</strong> resume straight away with <code>--resume &lt;uuid&gt;</code>. After their first <code>SessionStart</code>, they get &quot;The kanban app restarted while you were working. Carry on from where you were.&quot;</li>
+<li><strong>Idle sessions</strong> resume the first time you open their card, or when a move needs them.</li>
+<li><strong><code>/clear</code> changes the conversation id.</strong> The app reads the current id from <code>status.json</code> (via the statusLine), so a resume uses the right conversation.</li>
+</ul>
+<h2 id="the-two-accounts">The two accounts</h2>
+<ul>
+<li>A session&#39;s account is <code>main</code> (no <code>CLAUDE_CONFIG_DIR</code>) or <code>account2</code> (<code>CLAUDE_CONFIG_DIR=~\.claude-max2</code>). <strong>It is stored on the session&#39;s row</strong> and never changes for that session.</li>
+<li><strong>A new session takes the account with the lower 7-day usage</strong>, as your rule says (<code>kangentic-pick-account-with-most-weekly-tokens</code>). The app reads the newest <code>rate_limits</code> (5-hour and 7-day <code>used_percentage</code>) that each account&#39;s statusLine reported. It falls back to <code>python ~/.claude/scripts/kangentic_account_pick.py</code> until each account has reported once, and to <code>main</code> if neither has. The card log says which account it chose and both 7-day percentages.</li>
+<li>A card can pin an account in its detail. A pin applies to the next new session; it never moves a running one.</li>
+<li><strong>A resume always uses the session row&#39;s account.</strong> If you choose another account for a card that has a session, the app starts a new session there, because a transcript can&#39;t move between accounts. The app refuses a <code>--resume</code> whose account doesn&#39;t match the row.</li>
+<li>The card pane shows an &quot;Account 2&quot; chip.</li>
+</ul>
+<h2 id="storage-and-migration">Storage and migration</h2>
+<p><strong>SQLite</strong> (<code>rusqlite</code>, WAL, <code>busy_timeout</code> 5 s, foreign keys on) at <code>%LOCALAPPDATA%\claude-kanban-dsh\board.db</code>. Only the Rust core writes to it.</p>
+<div class="pre"><pre><code>meta            key, value                  next_number, schema_version, imported_from
+cards           id TEXT PK, number INT UNIQUE, title, column, ord REAL, ord_column,
+                repo, issue_number, issue_url, pr, branch, worktree_path, dev_stack, persona,
+                account_pin, model_override, effort_override, permission_override,
+                summary, next_step, blocked_reason, moved_by_hand INT,
+                ship JSON, plan JSON, ship_requested_at, plan_requested_at, dry_run INT,
+                logins JSON, links JSON, archived INT, archived_at, archived_by,
+                legacy JSON, created_at, created_by, updated_at, updated_by, version INT
+card_log        card_id, at, text, by                    INSERT only
+card_revisions  card_id, version, at, by, changed JSON   INSERT only (every card write)
+sessions        id, card_id, claude_session_id, account, cwd, model, effort, started_at
+                                                         INSERT only
+session_events  session_id, at, status (queued|running|suspended|exited|orphaned),
+                state (idle|thinking|permission|failed), detail
+                                                         INSERT only
+pending         id, card_id, session_id, kind (move|message), payload, created_at,
+                done_at                                  INSERT, then done_at set once
+columns         name PK, position, prompt_file, prompt_text, mode, model, effort,
+                permission_mode, auto_spawn, on_enter
+settings        key, value</code></pre></div>
+<ul>
+<li><strong>As built in Phase 1:</strong> <code>cards</code> holds <code>number</code>, <code>column</code>, the order, <code>archived</code> and <code>version</code> as columns, and every other field in a <code>fields</code> JSON column under the artifact&#39;s own camelCase names. So an imported card reads back exactly as it was exported, and fields the app doesn&#39;t use (<code>watcherNotifiedAt</code>, the old session fields) are kept as they were.</li>
+<li><strong>Append-only.</strong> <code>card_log</code>, <code>card_revisions</code>, <code>sessions</code> and <code>session_events</code> take inserts only. A session&#39;s current status is its latest event. There is <strong>no <code>DELETE</code> anywhere in the code</strong>: archiving is a flag, and a unit test greps the Rust and SQL sources for <code>DELETE</code> and fails if it finds one. <code>cards</code> rows are updated, but every update also writes a <code>card_revisions</code> row with the fields it changed, so any earlier state can be rebuilt.</li>
+<li><strong>Version pinning:</strong> every card write is <code>UPDATE … WHERE id=? AND version=?</code>, then <code>version+1</code>. A stale save from the UI is <strong>rejected, and your typed text is kept</strong>. The dialog shows the card as it is now next to what you typed, with <strong>Re-apply my text</strong> and <strong>Discard</strong>. The MCP tools and <code>kb.exe</code> take an optional <code>if_version</code> that works the same way.</li>
+<li><strong>Card numbers</strong> come from <code>meta.next_number</code>, taken and incremented in the same transaction that creates the card. It is seeded from the highest number the artifact ever gave out, archived cards included. A number is never reused, even if a card is lost.</li>
+<li><strong>The secret filter</strong> from the page (<code>ct=</code>, <code>customtoken</code>, <code>idtoken</code>, JWTs, Stripe keys, <code>password</code>) is applied in Rust to every string written, by the UI, the MCP tools and <code>kb.exe</code> alike.</li>
+<li><strong>Backups:</strong> a copy of <code>board.db</code> every night and before every migration, in <code>%LOCALAPPDATA%\claude-kanban-dsh\backups\</code>, keeping 30.</li>
+<li><strong>Schema changes</strong> are numbered migrations recorded in <code>meta.schema_version</code>.</li>
+</ul>
+<h3 id="migration">Migration</h3>
+<p>The importer is built and tested in Phase 1, against a copy.</p>
+<ol>
+<li><p><strong>Export:</strong> a Claude session runs <code>ArtifactData list</code> on <code>cards</code> (every page) and saves every document with its <code>version</code> to <code>~\Documents\kanban-backups\&lt;date&gt;-app-copy\cards.json</code>. The artifact is not changed.</p>
+</li>
+<li><p><strong>Import:</strong> <code>kb.exe import &lt;cards.json&gt;</code> maps the fields one to one (<code>order</code>/<code>orderCol</code> to <code>ord</code>/<code>ord_column</code>, <code>log</code> to <code>card_log</code>, the old <code>sessionId</code>, <code>sessionLink</code>, <code>sessionTitle</code>, <code>claudeSessionId</code> and <code>account</code> into <code>legacy</code>). It keeps ids, numbers and archived cards, and seeds <code>next_number</code>.</p>
+</li>
+<li><p><strong>Diff:</strong> <code>kb.exe import --check</code> reads both sides back and compares counts per column and archived, then every field of every card. It must report zero differences. Anything it can&#39;t map fails the import; it isn&#39;t skipped.</p>
+</li>
+<li><p><strong>Cut-over (Phase 5)</strong> happens in this order:</p>
+<ol>
+<li><strong>Close the artifact&#39;s writes first.</strong> Republish the board page with its <code>db</code> capability rules set to refuse every write to <code>cards</code>, then check that a test <code>update</code> is refused.</li>
+<li>Re-export and re-import, and diff again.</li>
+<li>Make skill v3 live.</li>
+</ol>
+<p>This order means no write can land on the artifact after the final export.</p>
+</li>
+</ol>
+<h2 id="columns-prompts-model-and-effort">Columns, prompts, model and effort</h2>
+<p>Each column has a row in <code>columns</code>, edited in Settings &gt; Columns. A column can:</p>
+<ul>
+<li>run a <strong>prompt</strong> on entry: a file path (the playbooks stay where they are, and the app reads them when it runs them) or inline text;</li>
+<li>use a <strong>mode:</strong> <code>immediate</code> (start the session with the prompt, or type it now), <code>deferred</code> (type it when the current turn ends), or <code>none</code>;</li>
+<li>set the <strong>model, effort and permission mode</strong> for sessions in it;</li>
+<li><strong>auto-spawn</strong> a session when a card enters with none;</li>
+<li><strong>suspend</strong> the card&#39;s session when the card enters (Done).</li>
+</ul>
+<div class="tbl"><table><thead><tr>
+<th>Column</th>
+<th>Prompt on entry</th>
+<th>Mode</th>
+<th>Model</th>
+<th>Effort</th>
+<th>Session</th>
+</tr>
+</thead><tbody><tr>
+<td>Backlog</td>
+<td>none</td>
+<td>none</td>
+<td>—</td>
+<td>—</td>
+<td>none started</td>
+</tr>
+<tr>
+<td>Planning</td>
+<td>the start-card brief (from <code>work-board-start-card\SKILL.md</code> steps 2 to 5): claim, read the issue, plan, write the approach to <code>summary</code> and <code>nextStep</code></td>
+<td>immediate</td>
+<td>Opus 5.5</td>
+<td>high</td>
+<td>auto-spawn</td>
+</tr>
+<tr>
+<td>In progress</td>
+<td>the repo&#39;s build playbook</td>
+<td>deferred</td>
+<td>Opus 5.5</td>
+<td>high</td>
+<td>auto-spawn</td>
+</tr>
+<tr>
+<td>Blocked</td>
+<td>&quot;Hugh moved this card to Blocked: &lt;reason, if given&gt;. Wait for his answer.&quot;</td>
+<td>deferred</td>
+<td>Sonnet 5.5</td>
+<td>medium</td>
+<td>kept</td>
+</tr>
+<tr>
+<td>Human test</td>
+<td>none (the build playbook says Human test has no agent of its own)</td>
+<td>none</td>
+<td>—</td>
+<td>—</td>
+<td>kept, idle</td>
+</tr>
+<tr>
+<td>Ship it</td>
+<td><code>ship-it.md</code>, with the Work Board changes from the skill&#39;s <em>Shipping</em> section. After a successful ship, the same session follows <code>deploy-complete.md</code>.</td>
+<td>immediate</td>
+<td>Opus 5.5</td>
+<td>medium</td>
+<td>auto-spawn or resume</td>
+</tr>
+<tr>
+<td>Done</td>
+<td>none</td>
+<td>none</td>
+<td>—</td>
+<td>—</td>
+<td>suspended</td>
+</tr>
+</tbody></table></div>
+<p><strong>Per-card overrides:</strong> the card detail gets Model, Effort, Permission and Account. They are blank by default, meaning the column&#39;s setting is used.</p>
+<ul>
+<li><strong>Changing the effort</strong> of a running session types <code>/effort &lt;level&gt;</code> when its turn ends.</li>
+<li><strong>Changing the model</strong> suspends the session and resumes it with <code>--resume &lt;uuid&gt; --model &lt;new&gt;</code>.</li>
+<li>The pane shows the model and effort each session really started with (from <code>sessions</code>).</li>
+</ul>
+<h2 id="moves-edits-and-the-held-move">Moves, edits and the held move</h2>
+<h3 id="when-you-move-a-card">When you move a card</h3>
+<ol>
+<li><strong>One transaction:</strong> the column, <code>movedByHand</code>, a log line, the order, and the ship and plan states (the page&#39;s <code>moveExtras</code> rules).</li>
+<li><strong>The session:</strong> the card&#39;s running session, or its latest session resumed, or a new one if the column auto-spawns.</li>
+<li><strong>A message</strong>, always: &quot;Hugh moved this card from X to Y.&quot;, followed by the column&#39;s prompt if the column has one.</li>
+</ol>
+<h3 id="when-you-edit-a-card">When you edit a card</h3>
+<p>Saving <code>summary</code>, <code>nextStep</code>, <code>blockedReason</code> or an override sends &quot;Hugh edited <fields> on this card:&quot; followed by the new values, over the same deferred path. Several edits made before the session is idle are merged into one message. Order changes and archive or restore don&#39;t send anything.</p>
+<h3 id="how-text-is-typed">How text is typed</h3>
+<p>The steps follow Kangentic&#39;s tested sequence:</p>
+<ol>
+<li><code>Ctrl+U</code> clears the prompt line.</li>
+<li>The text goes in as a bracketed paste, in 1 KB pieces.</li>
+<li>The app waits for the output to settle.</li>
+<li><code>Enter</code> is sent as a separate write, because Ink misreads it when it arrives in the same read.</li>
+<li>The app confirms the prompt arrived through the <code>UserPromptSubmit</code> hook. If it didn&#39;t, it retries <code>Enter</code> once. As a last resort it restarts the session with the text as its first prompt.</li>
+</ol>
+<h3 id="when-text-is-typed">When text is typed</h3>
+<ul>
+<li><strong>A new session</strong> gets nothing until its first <code>SessionStart</code>.</li>
+<li><strong>A deferred message</strong> waits for <code>idle</code> plus 1.5 s of silence. Until then it stays in <code>pending</code>, and the card shows &quot;Message queued&quot;.</li>
+<li><strong>No text is ever typed during a permission prompt</strong>, because it would answer the prompt.</li>
+<li><strong>An immediate prompt on a busy session</strong> queues behind the current turn.</li>
+</ul>
+<p>A card moved with no session, into a column that doesn&#39;t auto-spawn, is only moved.</p>
+<h3 id="the-held-move">The held move</h3>
+<p><code>kanban_move_card</code> (or <code>kb.exe move</code>) called by the card&#39;s own session answers &quot;Queued: this card moves to X when your turn ends&quot;. The app stores one pending move per session, and a later one replaces it. It applies the move at the session&#39;s next <code>Stop</code> (idle, not in a permission prompt) or exit. A move of a different card, or your drag, happens at once. A session can never move a card into Ship it: the tool refuses.</p>
+<h3 id="activity-from-hooks">Activity, from hooks</h3>
+<p>The settings file registers only <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>Stop</code>, <code>StopFailure</code>, <code>Notification</code> and <code>SessionEnd</code>, each as an <code>http</code> hook to <code>http://127.0.0.1:&lt;port&gt;/hook/&lt;sessionId&gt;</code>. None fires on every tool call, which keeps a slow start-up (an unsigned exe checked by Defender) off the tool path.</p>
+<div class="tbl"><table><thead><tr>
+<th>Event</th>
+<th>State</th>
+</tr>
+</thead><tbody><tr>
+<td><code>UserPromptSubmit</code></td>
+<td>thinking</td>
+</tr>
+<tr>
+<td><code>Stop</code></td>
+<td>idle</td>
+</tr>
+<tr>
+<td><code>StopFailure</code></td>
+<td>failed, or retrying for overloaded and rate-limit errors</td>
+</tr>
+<tr>
+<td><code>Notification</code>: permission</td>
+<td>permission (needs you)</td>
+</tr>
+<tr>
+<td><code>Notification</code>: waiting for input</td>
+<td>idle hint (covers a <code>Stop</code> that goes missing when a subagent did the work)</td>
+</tr>
+<tr>
+<td><code>SessionEnd</code></td>
+<td>ended</td>
+</tr>
+</tbody></table></div>
+<p>There is a 400 ms stability window, and a 180 s watchdog clears a &quot;thinking&quot; state that has gone stale when the PTY is silent. Without tool hooks, a long silent tool call can trip that watchdog. So the watchdog only marks the card &quot;quiet&quot;, never idle, and nothing is typed until a real <code>Stop</code> arrives.</p>
+<h3 id="the-mcp-tools-and-the-cli">The MCP tools and the CLI</h3>
+<p>The MCP server runs as <code>rmcp</code> streamable HTTP on <code>127.0.0.1:&lt;port&gt;/mcp/&lt;sessionId&gt;</code>. Each session&#39;s <code>mcp.json</code> sends a random token as a header, rotated each launch. The session settings allow <code>mcp__kanban</code> and add an <code>autoMode.allow</code> rule. The server&#39;s instructions say what the card is and how the flow works.</p>
+<div class="tbl"><table><thead><tr>
+<th>MCP tool</th>
+<th><code>kb.exe</code></th>
+<th>What it does</th>
+</tr>
+</thead><tbody><tr>
+<td><code>kanban_get_card</code></td>
+<td><code>kb card [&lt;n&gt;]</code></td>
+<td>This session&#39;s card, or one by number</td>
+</tr>
+<tr>
+<td><code>kanban_list_cards</code></td>
+<td><code>kb list</code></td>
+<td>Every card, with filters</td>
+</tr>
+<tr>
+<td><code>kanban_update_card</code></td>
+<td><code>kb update &lt;n&gt; --field value</code></td>
+<td><code>summary</code>, <code>nextStep</code>, <code>pr</code>, <code>branch</code>, <code>issue</code>, <code>devStack</code>, <code>persona</code>, <code>logins</code>, <code>links</code>, <code>blockedReason</code>, <code>worktreePath</code>; optional <code>if_version</code></td>
+</tr>
+<tr>
+<td><code>kanban_add_log</code></td>
+<td><code>kb log &lt;n&gt; &quot;&lt;text&gt;&quot;</code></td>
+<td>Add a log line</td>
+</tr>
+<tr>
+<td><code>kanban_move_card</code></td>
+<td><code>kb move &lt;n&gt; &quot;&lt;column&gt;&quot;</code></td>
+<td>Move a card; held for its own card, refused into Ship it</td>
+</tr>
+<tr>
+<td><code>kanban_create_card</code></td>
+<td><code>kb create --title …</code></td>
+<td>New card with the next number</td>
+</tr>
+<tr>
+<td><code>kanban_ship_result</code></td>
+<td><code>kb ship-result &lt;n&gt; &lt;state&gt;</code></td>
+<td><code>shipping</code>, <code>shipped</code>, <code>failed</code> (with retries) or <code>needs-hugh</code>, with detail</td>
+</tr>
+<tr>
+<td><code>kanban_notify</code></td>
+<td><code>kb notify &lt;n&gt; &quot;&lt;text&gt;&quot;</code></td>
+<td>A Windows notification on the card</td>
+</tr>
+</tbody></table></div>
+<p><code>kb.exe</code> reaches the app through the REST API on the same port, with the token from <code>%LOCALAPPDATA%\claude-kanban-dsh\token</code>. <code>KANBAN_SESSION</code> in the environment tells the app which session is calling. If the app isn&#39;t running, <code>kb.exe</code> says so and exits non-zero. It never writes the database itself, so the app stays the only writer.</p>
+<h2 id="shipping">Shipping</h2>
+<p>It stays your decision. A card gets into Ship it only through:</p>
+<ul>
+<li><strong>your drag;</strong></li>
+<li><strong>the app&#39;s command bar</strong> (<code>Ctrl+K</code>): <code>34 ship it</code>, <code>12 plan it</code>, <code>7 to Blocked</code>, or just <code>9</code>. This is <code>/kanban &lt;n&gt; …</code> inside the app, and it ships straight away;</li>
+<li><strong><code>/kanban 34 ship it</code> in a Claude session outside the app.</strong> The skill runs <code>kb ship 34 --asked-by-hugh</code>, and the app asks you to confirm &quot;Ship #34?&quot; in a banner and a notification. Without your click it doesn&#39;t ship.</li>
+</ul>
+<p><strong>Then:</strong></p>
+<ol>
+<li>The app sets <code>ship: {state: &quot;requested&quot;, retries}</code>, clears <code>logins</code> and <code>devStack</code>, and types the ship prompt into the card&#39;s own session, resuming it, or starting one in the card&#39;s worktree.</li>
+<li><strong>The ship session stops the card&#39;s dev stack</strong> (with the repo&#39;s own stop command), as the first step of its prompt. <strong>The app never runs WSL or dev-stack commands.</strong></li>
+<li>The session reports through <code>kanban_ship_result</code>:<ul>
+<li><strong>Failed, with fewer than 3 retries:</strong> the card moves to In progress with <code>retries+1</code>, and the message tells the session to fix that failure first.</li>
+<li><strong>Failed, with 3 or more retries:</strong> <code>needs-hugh</code>, and the card stays in Ship it.</li>
+<li><strong>Shipped:</strong> the session runs <code>deploy-complete.md</code>, adds the Production login and moves the card to Done.</li>
+</ul>
+</li>
+<li>Moving the card out before the session starts sets <code>cancelled</code>, and the pending prompt is dropped.</li>
+<li><code>dryRun</code> cards get &quot;Dry run: say what you would do and change nothing.&quot;</li>
+</ol>
+<h2 id="logins">Logins</h2>
+<p>The detail dialog keeps the logins box: persona, browser, link, Open and Copy. <strong>Open now opens the right Chrome profile</strong>, which a web page couldn&#39;t do. Settings maps each browser label to a launch command:</p>
+<div class="tbl"><table><thead><tr>
+<th>Browser label</th>
+<th>Command</th>
+</tr>
+</thead><tbody><tr>
+<td>Chrome · work (Profile 1)</td>
+<td><code>chrome.exe --profile-directory=&quot;Profile 1&quot; &lt;url&gt;</code></td>
+</tr>
+<tr>
+<td>Chrome · Default (personal)</td>
+<td><code>chrome.exe --profile-directory=&quot;Default&quot; &lt;url&gt;</code></td>
+</tr>
+<tr>
+<td>Built-in browser</td>
+<td>the system default browser</td>
+</tr>
+</tbody></table></div>
+<ul>
+<li>Links are tokenless local dev-stack sign-in links (<code>http://127.0.0.1:&lt;port&gt;/...</code>, naming the role and the page, never a token). The secret filter refuses anything that carries one.</li>
+<li>Before showing a login as live, the app checks that the dev stack answers its local sign-in endpoint. It reads the status code only; the token is never read or stored. A login whose stack doesn&#39;t answer is greyed out with &quot;stack down&quot;.</li>
+</ul>
+<h2 id="sessions-outside-the-app">Sessions outside the app</h2>
+<p>Sessions in the desktop sidebar or the CLI will still add and update cards, but only after cut-over. Until then the artifact is the real board, and the app works on a copy.</p>
+<ul>
+<li><strong>At install during cut-over,</strong> the install script runs <code>claude mcp add --scope user kanban …</code> once per account, using Claude&#39;s own command, never by editing the file. After that, the app only checks that the entry is there. It never writes <code>~\.claude.json</code>.</li>
+<li><strong>Skill v3</strong> uses the <code>kanban_*</code> tools when they are loaded, and otherwise falls back to <code>kb.exe</code> through Bash (for a session started while the app was down). It keeps the hard rules, freedoms, logins and the GitHub Project sync, and drops <em>Dispatch</em>, the pool and the watcher. The old skill stays as <code>SKILL.md.pre-app</code>.</li>
+<li><strong>The SessionStart hook</strong> (<code>work-board-session-start.ps1</code>) changes its line to point at the app.</li>
+</ul>
+<h2 id="notifications-packaging-and-install">Notifications, packaging and install</h2>
+<p><strong>Notifications</strong> are Windows toasts. Clicking one focuses the app on that card&#39;s terminal. Nothing fires for the card you are looking at in a focused window.</p>
+<div class="tbl"><table><thead><tr>
+<th>Event</th>
+<th>Toast</th>
+</tr>
+</thead><tbody><tr>
+<td>Needs you</td>
+<td>&quot;#34 needs you: permission prompt&quot;</td>
+</tr>
+<tr>
+<td>Finished its turn in In progress or Planning</td>
+<td>&quot;#34 finished its turn&quot;</td>
+</tr>
+<tr>
+<td>Blocked</td>
+<td>&quot;#34 is blocked: <reason>&quot;</td>
+</tr>
+<tr>
+<td>Ready to test</td>
+<td>&quot;#34 is ready to test&quot;</td>
+</tr>
+<tr>
+<td>Ship</td>
+<td>&quot;#34 shipped (<tag>)&quot;, &quot;Ship failed (retry 1 of 3)&quot;, &quot;Ship needs you&quot;</td>
+</tr>
+<tr>
+<td>Crash</td>
+<td>&quot;#34&#39;s session crashed&quot; (not shown for exits the app started)</td>
+</tr>
+<tr>
+<td>Ship request from outside</td>
+<td>&quot;Ship #34?&quot; with a Ship button</td>
+</tr>
+</tbody></table></div>
+<p>The tray icon shows how many sessions need you. The <code>/notify</code> voice skill keeps working, since sessions call it themselves.</p>
+<p><strong>Packaging:</strong> <code>cargo tauri build</code> produces an NSIS installer for a per-user install (no admin) into <code>%LOCALAPPDATA%\Programs\Claude Kanban DSH</code>. <code>scripts\install.ps1</code> then:</p>
+<ol>
+<li>quits the running app cleanly, which suspends its sessions;</li>
+<li>runs the installer silently;</li>
+<li>at cut-over only, adds the <code>kanban</code> MCP entry;</li>
+<li>starts the app, which resumes its sessions.</li>
+</ol>
+<p>Only one copy runs at a time (<code>tauri-plugin-single-instance</code>). <code>kb.exe</code> is installed next to the app, and its folder is put on your user <code>PATH</code>.</p>
+<h2 id="what-to-port-from-kangentic-and-what-to-drop">What to port from Kangentic, and what to drop</h2>
+<p>Kangentic is AGPL-3.0. The Rust app reimplements its ideas and copies no code. Read Kangentic&#39;s <code>docs\session-lifecycle.md</code>, <code>activity-detection.md</code> and <code>command-injection.md</code> while building Phases 2 and 3.</p>
+<p><strong>Port:</strong></p>
+<div class="tbl"><table><thead><tr>
+<th>Idea</th>
+<th>Where it is in Kangentic</th>
+</tr>
+</thead><tbody><tr>
+<td>Fresh vs resume, with the app owning the UUID</td>
+<td><code>transition-engine\spawn-intent.ts</code></td>
+</tr>
+<tr>
+<td>Correcting the resume id after <code>/clear</code></td>
+<td><code>resume-id-reconcile.ts</code></td>
+</tr>
+<tr>
+<td>Removing inherited <code>CLAUDECODE</code> and <code>CLAUDE_CODE_*</code></td>
+<td><code>pty\spawn\pty-spawn.ts</code></td>
+</tr>
+<tr>
+<td><code>--model</code> and <code>--effort</code> on every spawn; merged per-session settings and <code>mcp.json</code></td>
+<td><code>command-builder.ts</code>, <code>hook-manager.ts</code></td>
+</tr>
+<tr>
+<td>Hook events driving activity: the stability window, the stale watchdog, <code>idle_hint</code></td>
+<td><code>activity-engine\engine\activity-engine.ts</code></td>
+</tr>
+<tr>
+<td>File watching plus 1 s polling, because fs.watch goes silent on Windows</td>
+<td><code>pty\readers\file-watcher.ts</code></td>
+</tr>
+<tr>
+<td>The typing sequence: Ctrl+U, bracketed paste, a separate Enter, confirm, retry</td>
+<td><code>pty\paste-engine.ts</code>, <code>terminal-submit.ts</code></td>
+</tr>
+<tr>
+<td>Waiting for the turn to end, and never typing during a permission prompt</td>
+<td><code>turn-completion.ts</code></td>
+</tr>
+<tr>
+<td>The held self-move</td>
+<td><code>agent\mcp-http\self-move-deferral.ts</code></td>
+</tr>
+<tr>
+<td>Graceful suspend, and clearing the handle before a kill</td>
+<td><code>pty\shutdown\session-suspend.ts</code>, <code>pty\lifecycle\pty-kill.ts</code></td>
+</tr>
+<tr>
+<td>Ring buffer, repaint-then-replay, the resting grid, ignoring output after a resize</td>
+<td><code>pty-buffer-manager.ts</code>, <code>resize-manager.ts</code>, <code>useTerminal.ts</code></td>
+</tr>
+<tr>
+<td>A localhost MCP server with a rotated token and a caller URL per session</td>
+<td><code>agent\mcp-http-server.ts</code>, <code>caller-url.ts</code></td>
+</tr>
+<tr>
+<td>The fullscreen TUI and the Windows full-repaint variable</td>
+<td><code>command-builder.ts</code>, <code>pty-spawn.ts</code></td>
+</tr>
+</tbody></table></div>
+<p><strong>Drop:</strong></p>
+<ul>
+<li>Spawning through a shell, and its quoting and cwd workarounds.</li>
+<li>The Node bridge scripts, replaced by <code>http</code> hooks and <code>kb.exe status</code>.</li>
+<li>Hooks on every tool call.</li>
+<li>Kangentic&#39;s writes to <code>.claude.json</code> for trust.</li>
+<li>Multiple agents and multiple projects.</li>
+<li>Board profiles, and transition graphs with webhooks and scripts.</li>
+<li>The embedded browser, analytics, handoffs, the mobile bridge, and PR integration.</li>
+<li>Worktree creation in v1.</li>
+<li>The packed <code>?ct=as-…</code> login links, which carry a token.</li>
+</ul>
+<h2 id="phases">Phases</h2>
+<p>The first usable release is Phase 4. It has the board, a terminal per card, moves and edits typed into sessions, the <code>kanban_*</code> tools with <code>kb.exe</code>, and restart recovery, <strong>all running on a copy of the cards</strong>. You use it alongside the artifact for a few days. Cut-over (Phase 5) only comes after that, and restart recovery is already in place by then.</p>
+<p><strong>Before each phase starts,</strong> its acceptance tests go into <code>ACCEPTANCE.md</code> and its undo steps go into <code>UNDO.md</code>. The phase is done when every test passes. The build session reports to the manager after each phase in five lines or fewer.</p>
+<div class="tbl"><table><thead><tr>
+<th>Phase</th>
+<th>What you get at the end</th>
+<th>Size</th>
+</tr>
+</thead><tbody><tr>
+<td><strong>0. Skeleton</strong> (no installs)</td>
+<td>Git repo, this plan, <code>ACCEPTANCE.md</code> and <code>UNDO.md</code> for Phase 1, <code>INSTALLED.md</code>, the folder layout, the board page as the port source, and a read-only export of today&#39;s cards for the importer tests</td>
+<td>0.25 day</td>
+</tr>
+<tr>
+<td><strong>1. Toolchain, store, board on a copy</strong></td>
+<td>After your go-ahead: Rust, the MSVC build tools and the Tauri CLI. Then the Tauri app with the append-only store, <code>next_number</code>, version pinning that keeps your text, the secret filter, the importer with its diff, and every board feature (drag and order, Add card, archive and restore, search, the detail dialog, logins opening the right Chrome profile, both themes), all on the imported copy</td>
+<td>1.5 days</td>
+</tr>
+<tr>
+<td><strong>2. The card panel, a terminal per card, both accounts</strong></td>
+<td>Clicking a card opens a panel over the board, after Kangentic&#39;s card view: the card&#39;s conversation read from Claude&#39;s transcript (Hugh&#39;s messages, Claude&#39;s replies as markdown, tool runs folded into &quot;Ran N tools&quot;), a box that types a message into the session, a Terminal toggle with the live xterm.js terminal, and a footer with account, model, effort and Claude Code version. It is in the first usable release, because it is how Hugh talks to a card. Then the session itself: start, resume, suspend, type, switch, resize, scrollback. Every session in the kill-on-close Job Object, with the resume lock. <strong>The account test:</strong> four concurrent sessions on each account, each resume on its row&#39;s account, a wrong-account resume refused, a token refresh on one session not signing others out. &quot;Resume this desktop session in the app&quot;, when you ask for it.</td>
+<td>2.5 days</td>
+</tr>
+<tr>
+<td><strong>3. Hooks, tools and the dispatcher</strong></td>
+<td><code>http</code> hooks confirmed, state dots, the MCP tools and <code>kb.exe</code>, the held move, column settings with model, effort and permission, per-card overrides, the 7-day account pick, moves and edits typed into sessions, Planning and Ship it handled, Done suspends, the command bar</td>
+<td>2.5 days</td>
+</tr>
+<tr>
+<td><strong>4. First usable release</strong> (on the copy)</td>
+<td>Restart recovery (mid-turn sessions resume with the &quot;carry on&quot; message), tray, toasts, the outside-ship confirm, nightly backups, <code>install.ps1</code>. <strong>You use it for a few days</strong>, on cards copied from the artifact.</td>
+<td>1 day</td>
+</tr>
+<tr>
+<td><strong>5. Cut-over (cancelled 3 Nov 2026: the app runs separately)</strong></td>
+<td>Artifact writes closed and checked, final export, import and diff, the <code>kanban</code> MCP entry added in both accounts, skill v3 and the SessionStart line live, the pool tasks and ship watcher switched off (not deleted), the manager session retired</td>
+<td>0.5 day</td>
+</tr>
+</tbody></table></div>
+<p><strong>Total: about 8 working days, plus 2 days of slack for ConPTY and TUI surprises, so plan on 10.</strong></p>
+<p><strong>Testing:</strong></p>
+<ul>
+<li><strong>Rust unit tests:</strong> the store (version conflicts, numbering, the secret filter, the no-<code>DELETE</code> grep), command building, the account choice and the typing sequence.</li>
+<li><strong>A fake <code>claude</code>:</strong> a small exe that draws a TUI-like screen and POSTs hook events. It is used for spawn, Job Object, resume, typing and held-move tests, which then cost nothing and need no account.</li>
+<li><strong>A manual run</strong> of each phase on a <code>dryRun</code> card with a real <code>claude</code>.</li>
+</ul>
+<h2 id="deferred">Deferred</h2>
+<p>These are not in v1. Each can be added later without changing the design:</p>
+<ul>
+<li>the <code>vt100</code> screen snapshot (only if switching cards still shows artefacts);</li>
+<li>a cap on concurrent sessions and its queue;</li>
+<li>toast cooldowns;</li>
+<li>an &quot;Interrupt and send&quot; button;</li>
+<li>CI;</li>
+<li>the signed updater;</li>
+<li>start on login;</li>
+<li>a check of Remote Control for card sessions;</li>
+<li>phone access.</li>
+</ul>
+<h2 id="risks">Risks</h2>
+<div class="tbl"><table><thead><tr>
+<th>Risk</th>
+<th>Likelihood</th>
+<th>What we do</th>
+</tr>
+</thead><tbody><tr>
+<td>ConPTY quirks: exits not reported, handles held, a double kill</td>
+<td>Medium</td>
+<td>Kangentic&#39;s timeouts and handle-clearing from day one, the Job Object as the backstop, the fake-claude kill tests in Phase 2, and slack in the estimate</td>
+</tr>
+<tr>
+<td>Typed text lands wrong (startup banner, a permission prompt, Enter swallowed)</td>
+<td>Medium</td>
+<td>Wait for <code>SessionStart</code>; never type during a permission prompt; send Enter separately; confirm via <code>UserPromptSubmit</code>; as a last resort restart with the text as the first prompt</td>
+</tr>
+<tr>
+<td>Without tool hooks, a long tool call looks like a stale turn</td>
+<td>Medium</td>
+<td>The watchdog marks the card &quot;quiet&quot;, never idle, and only a real <code>Stop</code> lets text be typed</td>
+</tr>
+<tr>
+<td>The <code>http</code> hook type behaves differently from the changelog</td>
+<td>Low</td>
+<td>Phase 3 tests it first. If it falls short, a tiny <code>kb.exe hook</code> command replaces it (one process per hook, still only six events).</td>
+</tr>
+<tr>
+<td>The Claude TUI draws badly in xterm.js after a resize or switch</td>
+<td>Medium</td>
+<td>The fullscreen TUI, the repaint variable, repaint-then-replay; the <code>vt100</code> snapshot is deferred, not dropped</td>
+</tr>
+<tr>
+<td>Two accounts interfere (token refresh, the wrong account on resume)</td>
+<td>Low to medium</td>
+<td>The account on the session row, the resume check, and the Phase 2 account test</td>
+</tr>
+<tr>
+<td>Claude Code changes a flag, hook or settings key</td>
+<td>Low to medium</td>
+<td>Command building and the settings merge in one tested module; the app shows the Claude version it found and warns on an untested one</td>
+</tr>
+<tr>
+<td>A session still on the old skill writes to the artifact after cut-over</td>
+<td>Medium</td>
+<td>Artifact writes are refused before the final export, so the session gets an error it can see</td>
+</tr>
+<tr>
+<td>Losing the board&#39;s data</td>
+<td>Low</td>
+<td>The artifact is untouched until cut-over; append-only logs and revisions; no <code>DELETE</code>; nightly backups; the export JSON is kept</td>
+</tr>
+<tr>
+<td>The MSVC build tools need an admin install</td>
+<td>Low</td>
+<td>Phase 1 checks first. If they do, you run that one installer yourself.</td>
+</tr>
+</tbody></table></div>
+<h2 id="what-can-be-undone">What can be undone</h2>
+<p>Nothing before Phase 5 touches the live setup. The app runs on a copy of the cards, keeps its own session folders, writes hooks only into its per-session <code>--settings</code> files, and never writes <code>~\.claude.json</code>.</p>
+<div class="tbl"><table><thead><tr>
+<th>Change</th>
+<th>Phase</th>
+<th>Undo</th>
+</tr>
+</thead><tbody><tr>
+<td>Toolchain installs</td>
+<td>1</td>
+<td>Each one&#39;s uninstall step in <code>INSTALLED.md</code></td>
+</tr>
+<tr>
+<td>The app</td>
+<td>1</td>
+<td>Uninstall it from Windows Settings, and delete <code>%LOCALAPPDATA%\claude-kanban-dsh</code></td>
+</tr>
+<tr>
+<td><code>kb.exe</code> folder on the user <code>PATH</code></td>
+<td>4</td>
+<td>Remove that one entry from the user <code>PATH</code></td>
+</tr>
+<tr>
+<td>A desktop session resumed in the app</td>
+<td>2</td>
+<td>It is still a transcript in <code>~\.claude\projects</code>. Reopen it in the desktop app, or run <code>claude --resume &lt;id&gt;</code>.</td>
+</tr>
+<tr>
+<td>The artifact&#39;s writes closed</td>
+<td>5</td>
+<td>Republish the board page with its earlier capabilities (<code>page-versions\</code>)</td>
+</tr>
+<tr>
+<td>The <code>kanban</code> MCP entry in both accounts</td>
+<td>5</td>
+<td><code>claude mcp remove kanban --scope user</code>, once with <code>CLAUDE_CONFIG_DIR=~\.claude-max2</code></td>
+</tr>
+<tr>
+<td>Skill v3 and the SessionStart line</td>
+<td>5</td>
+<td>Copy back <code>SKILL.md.pre-app</code> and <code>work-board-session-start.ps1.pre-app</code></td>
+</tr>
+<tr>
+<td>Pool tasks and ship watcher switched off</td>
+<td>5</td>
+<td>Switch them back on in Scheduled tasks. They are disabled, not deleted, because deleting a task archives its runs.</td>
+</tr>
+<tr>
+<td>Cards changed in the app after cut-over</td>
+<td>5</td>
+<td><code>kb.exe export</code> writes the cards back out as JSON in the artifact&#39;s shape, for a session to restore with <code>ArtifactData</code></td>
+</tr>
+</tbody></table></div>
+<p>Every change is recorded in <code>UNDO.md</code> as it is made.</p>
+</main>
+</div>
+<script>
+// Highlight the section in view in the contents rail.
+(()=>{const links=[...document.querySelectorAll("nav.toc a")];const map=new Map(links.map(a=>[a.getAttribute("href").slice(1),a]));
+try{const io=new IntersectionObserver(es=>{for(const e of es)if(e.isIntersecting){links.forEach(a=>a.classList.remove("on"));const a=map.get(e.target.id);if(a)a.classList.add("on")}},{rootMargin:"0px 0px -70% 0px"});
+document.querySelectorAll("main h2[id]").forEach(h=>io.observe(h))}catch(e){}})();
+</script>

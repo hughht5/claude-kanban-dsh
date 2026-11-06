@@ -1,0 +1,21 @@
+/* Labels on cards (labels.js). Filled and square-cornered, in the label's own hue (--h), so they sit
+   beside the round outlined state chips without being taken for one. */
+.lbl{--h:212;display:inline-flex;align-items:center;gap:3px;border:0;border-radius:3px;padding:0 6px;
+  font-family:var(--mono);font-size:11px;font-weight:600;line-height:17px;letter-spacing:.02em;
+  color:hsl(var(--h) 62% 32%);background:hsl(var(--h) 72% 92%);box-shadow:inset 3px 0 0 hsl(var(--h) 60% 48%);padding-left:8px;
+  white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+button.lbl{cursor:pointer;margin:0}
+button.lbl:hover{background:hsl(var(--h) 72% 86%)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .lbl{color:hsl(var(--h) 80% 80%);background:hsl(var(--h) 38% 21%);box-shadow:inset 3px 0 0 hsl(var(--h) 65% 62%)}
+  :root:not([data-theme="light"]) button.lbl:hover{background:hsl(var(--h) 38% 27%)}}
+:root[data-theme="dark"] .lbl{color:hsl(var(--h) 80% 80%);background:hsl(var(--h) 38% 21%);box-shadow:inset 3px 0 0 hsl(var(--h) 65% 62%)}
+:root[data-theme="dark"] button.lbl:hover{background:hsl(var(--h) 38% 27%)}
+/* The card panel's row: the labels, each removable, and the add box. */
+.lbl-row{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0}
+.lbl-h{font-size:12px;color:var(--muted);margin-right:3px}
+.lbl-x{border:0;background:none;color:inherit;font:inherit;font-size:10px;line-height:1;padding:1px 0 1px 3px;cursor:pointer;opacity:.6}
+.lbl-x:hover,.lbl-x:focus-visible{opacity:1}
+.lbl-in{background:var(--bg);border:1px dashed var(--line);border-radius:3px;color:var(--fg);font-family:var(--mono);font-size:11px;
+  line-height:17px;padding:0 6px;width:110px;min-width:0}
+.lbl-in:focus{border-style:solid;border-color:var(--accent)}
+.lbl-row .msg{font-size:12px}

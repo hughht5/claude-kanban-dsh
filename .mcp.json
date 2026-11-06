@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kanban-app": {
+      "command": "kb",
+      "args": ["mcp"]
+    }
+  }
+}

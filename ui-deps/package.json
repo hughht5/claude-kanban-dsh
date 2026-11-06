@@ -1,0 +1,12 @@
+{
+  "name": "claude-kanban-dsh-ui",
+  "private": true,
+  "description": "Front-end libraries for the card panel, copied into vendor/ by vendor.mjs",
+  "scripts": { "vendor": "node vendor.mjs" },
+  "dependencies": {
+    "@xterm/xterm": "5.5.0",
+    "@xterm/addon-fit": "0.10.0",
+    "marked": "12.0.2",
+    "dompurify": "3.1.6"
+  }
+}

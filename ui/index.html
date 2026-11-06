@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Kanban DSH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="theme.js"></script>
+<link rel="stylesheet" href="board.css">
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="panel.css">
+<link rel="stylesheet" href="update.css">
+<link rel="stylesheet" href="settings.css">
+<link rel="stylesheet" href="stacks.css">
+<link rel="stylesheet" href="labels.css">
+</head>
+<body>
+<div id="testBar" class="testbar" role="status" hidden><b>TEST VERSION:</b> a copy of your board for trying changes. Work done here stays here; the live app is separate.</div>
+<header>
+  <h1>Claude Kanban DSH</h1>
+  <span class="status" id="status">Loading cards…</span>
+  <button class="btn addbtn" id="addBtn" type="button" hidden>Add card</button>
+  <button class="ibtn gear" id="settingsBtn" type="button" title="Settings" aria-label="Settings" hidden>⚙ Settings</button>
+  <div class="filter"><input type="search" id="q" placeholder="Filter, or a card number…" aria-label="Filter cards"></div>
+</header>
+<div id="emptyNote" class="empty" hidden>
+  <h2>No cards yet</h2>
+  Use <b>Add card</b> to add a task.
+</div>
+<main class="board" id="board" aria-label="Board columns"></main>
+<dialog id="addDlg" aria-label="Add card"></dialog>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="labels.js"></script>
+<script src="board.js"></script>
+<script src="panel.js"></script>
+<script src="paste.js"></script>
+<script src="needs.js"></script>
+<script src="stack.js"></script>
+<script src="stacks.js"></script>
+<script src="update.js"></script>
+<script src="resume.js"></script>
+<script src="live-switch.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

@@ -1,0 +1,1149 @@
+//! The app as the dispatcher: what Hugh's moves and edits send to a card's session, when
+//! queued text is typed, held moves, ship results, and the 7-day account choice.
+
+use crate::{sessions::Sessions, Board};
+use kanban_store::{Card, Patch, Store};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Fields whose edit by Hugh is passed on to the card's session.
+pub const TOLD: &[&str] = &["summary", "nextStep", "blockedReason", "modelOverride", "effortOverride", "permissionOverride", "accountPin", "autoTo"];
+
+fn fill(template: &str, card: &Card, from: &str, reason: &str) -> String {
+    let issue = card
+        .fields
+        .get("issue")
+        .and_then(|i| i.get("number").or(Some(i)))
+        .and_then(|n| n.as_i64())
+        .map(|n| format!(", issue {n}"))
+        .unwrap_or_default();
+    let repo = card.fields.get("repo").and_then(Value::as_str).unwrap_or("no repo");
+    let reason = if reason.is_empty() { String::new() } else { format!(": {reason}") };
+    template
+        .replace("{n}", &card.number.to_string())
+        .replace("{title}", card.title())
+        .replace("{repo}", repo)
+        .replace("{issue}", &issue)
+        .replace("{from}", from)
+        .replace("{reason}", &reason)
+        .replace("{prompts}", &crate::private::prompts_dir().to_string_lossy())
+}
+
+/// Who the session is, for a session that doesn't know its card yet.
+pub fn header(card: &Card) -> String {
+    fill(
+        "You are the session for card #{n}, \"{title}\" ({repo}{issue}). Read and update your card with the kanban_* tools (or `kb` in Bash). Never move a card into Ship it, never merge, never push to main.",
+        card,
+        "",
+        "",
+    )
+}
+
+pub fn dry(card: &Card, text: String) -> String {
+    if card.fields.get("dryRun").and_then(Value::as_bool) == Some(true) {
+        format!("Dry run: say what you would do and change nothing.\n\n{text}")
+    } else {
+        text
+    }
+}
+
+/// Did the app move the card into its column for Hugh (card #76): a plan or ship it asked for
+/// because he set the card to go on by itself, or to start when he added it.
+fn auto_moved(card: &Card) -> bool {
+    let req = |k: &str| {
+        card.fields.get(k).map_or(false, |o| o.get("auto") == Some(&json!(true)) && matches!(o.get("state").and_then(Value::as_str), Some("requested" | "started" | "queued")))
+    };
+    (card.column == "Planning" && req("plan")) || (card.column == "Ship it" && req("ship"))
+}
+
+/// What a card that goes on by itself (`autoTo`, Hugh's "Take it to") tells its session in the
+/// column it is in. None for any other card, a stack's child, or a column with nothing to say.
+pub fn auto_note(card: &Card) -> Option<String> {
+    let t = card.auto_to()?;
+    if card.stack_of().is_some() || card.archived {
+        return None;
+    }
+    Some(match card.column.as_str() {
+        "Planning" => format!("Hugh set this card to go on by itself to {t} (Take it to). When your plan is ready and nothing in it is his to decide, move this card to In progress yourself (kanban_move_card) as the last thing in your turn, instead of waiting for him: the app then sends you the In progress prompt. If something is his to decide, ask it and leave the card in Planning: it waits for him."),
+        "In progress" if t == "Human test" => "Hugh set this card to go on by itself to Human test: hand it over there as usual (after its subagent test passes), and it stops there for him.".into(),
+        "In progress" => "Hugh set this card to go on by itself to Deploy complete. Once you move it to Human test (after its subagent test passes, with the hand-over as usual), the app moves it into Ship it for him and sends you the Ship it prompt. That is his approval to ship it with no human test, so make your own testing count.".into(),
+        "Ship it" if auto_moved(card) => "This is Hugh's approval to ship it with no human test: he set the card to go on by itself to Deploy complete. Ship it as the Ship it prompt says, then move it to Deploy complete.".into(),
+        _ => return None,
+    })
+}
+
+/// The message for Hugh's move of `card` (already moved) from `from`, or the app's move for him.
+pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -> String {
+    let to = &card.column;
+    let mut text = if auto_moved(card) {
+        let why = match card.auto_to() {
+            Some(t) => format!("he set it to go on by itself to {t}"),
+            None => format!("he asked for it to start in {to} when he added it"),
+        };
+        format!("The app moved this card from {from} to {to} for Hugh: {why}.")
+    } else {
+        format!("Hugh moved this card from {from} to {to}.")
+    };
+    let cfg = store.column(to).ok().flatten();
+    if let Some(p) = cfg.as_ref().filter(|c| c.mode != "none").and_then(|c| c.prompt_text.clone()) {
+        let reason = card.fields.get("blockedReason").and_then(Value::as_str).unwrap_or("");
+        let prompt = fill(&p, card, from, reason);
+        if new_session && !prompt.starts_with("You are the session") {
+            text = format!("{}\n\n{text}", header(card));
+        }
+        text = format!("{text}\n\n{prompt}");
+    } else if new_session {
+        text = format!("{}\n\n{text}", header(card));
+    }
+    if from == "Human test" && to == "In progress" {
+        text = format!("{text}\n\n{}", back_from_test());
+    }
+    if let Some(note) = auto_note(card) {
+        text = format!("{text}\n\n{note}");
+    }
+    dry(card, text)
+}
+
+/// What a card back in In progress from Human test is to do (card #93).
+fn back_from_test() -> String {
+    BACK_FROM_TEST.replace("{prompts}", &crate::private::prompts_dir().to_string_lossy())
+}
+
+const BACK_FROM_TEST: &str = "It came back from Human test, so something Hugh tested needs more work: his latest messages and the card's latest log lines say what. Fix that through the build-and-verify loop ({prompts}\\in-progress.md), run a fresh card-tester (the move to Human test needs a new pass), write a new hand-over into nextStep, and move the card back to Human test. If his message needs no change (a question, say), answer it, then still run the card-tester and move it back.";
+
+/// Does Hugh's message from the chat take `card` back to In progress first (card #93)? Only a
+/// card in Human test that is not in a stack: a stack's cards move by the stack's rules (and
+/// its children by Hugh's "Found a problem").
+pub fn message_moves_back(card: &Card) -> bool {
+    card.column == "Human test" && !card.archived && card.stack_of().is_none() && !card.is_lead()
+}
+
+/// Hugh's message `text` to a card his message just moved from Human test to In progress, with
+/// a note that tells its session why the card moved and what to do.
+pub fn moved_back_message(card: &Card, text: &str) -> String {
+    let note = format!("Hugh's message below moved this card from Human test back to In progress (the app does that when he writes to a card in Human test). {}", back_from_test());
+    dry(card, format!("{note}\n\nHugh's message:\n\n{text}"))
+}
+
+/// The starting prompt of the template the card was made from (`templateId`), sent once, in a
+/// new session's first message (see `opening`), ahead of the column prompt that a move adds.
+/// An archived template still counts for the cards made from it.
+pub fn template_prompt(store: &Store, card: &Card) -> Option<String> {
+    let id = card.fields.get("templateId").and_then(Value::as_str)?;
+    let t = store.template(id).ok().flatten()?;
+    let p = t.start_prompt.trim();
+    if p.is_empty() {
+        return None;
+    }
+    Some(format!("This card was made from the \"{}\" template. {}", t.name, fill(p, card, "", "")))
+}
+
+/// A new session's first message: who it is, then its card's template starting prompt.
+pub fn opening(store: &Store, card: &Card) -> String {
+    match template_prompt(store, card) {
+        Some(start) => format!("{}\n\n{start}", header(card)),
+        None => header(card),
+    }
+}
+
+/// The message for a session's own held move of `card` (already moved), when the column it
+/// went into runs its prompt at once, or it is In progress on a card that goes on by itself
+/// (card #76: its session moved it there from Planning). None for any other column.
+pub fn held_move_message(store: &Store, card: &Card) -> Option<String> {
+    let cfg = store.column(&card.column).ok().flatten()?;
+    let auto = card.column == "In progress" && auto_note(card).is_some() && cfg.mode != "none";
+    if cfg.mode != "immediate" && !auto {
+        return None;
+    }
+    let reason = card.fields.get("blockedReason").and_then(Value::as_str).unwrap_or("");
+    let prompt = fill(cfg.prompt_text.as_deref()?, card, "", reason);
+    let mut text = format!("Your move of this card to {} is done.
+
+{prompt}", card.column);
+    if let Some(note) = auto_note(card) {
+        text = format!("{text}\n\n{note}");
+    }
+    Some(dry(card, text))
+}
+
+/// After a card moved by a session or the stack rules, or Hugh changed where it goes (card
+/// #76): a card that reached the column Hugh set it to go on to stops going on; one that goes
+/// to Deploy complete and is now in Human test is moved into Ship it for him, and its session
+/// is sent the Ship it prompt (or it waits its turn behind another ship of its repo). A stack's
+/// child never goes on by itself; its stack does.
+pub fn auto_progress(app: &AppHandle, store: &mut Store, card_id: &str) {
+    let Ok(card) = store.get(card_id) else { return };
+    let Some(t) = card.auto_to().map(str::to_string) else { return };
+    if card.archived || card.stack_of().is_some() {
+        return;
+    }
+    let by = kanban_store::AUTO_BY;
+    if card.column == t {
+        let mut patch = Patch::new();
+        patch.insert(kanban_store::AUTO_KEY.into(), Value::Null);
+        if store.update(&card.id, card.version, &patch, by).is_ok() {
+            let _ = store.add_log(&card.id, &format!("Auto-progress done: it reached {t}, where Hugh set it to go"), by);
+        }
+        return;
+    }
+    if t != "Deploy complete" || card.column != "Human test" {
+        return;
+    }
+    // A stack ships whole: only once every card in it is ready (in Human test or later, each
+    // through its own subagent test), whatever the board's rule for moving the stack.
+    if card.is_lead() {
+        let kids = store.stack_children(&card).unwrap_or_default();
+        if !kanban_store::stack_ready(&kids, "all") {
+            return;
+        }
+    }
+    let why = "he set it to go on by itself to Deploy complete, which is his approval to ship it with no human test";
+    match store.move_for_hugh(&card.id, card.version, "Ship it", why) {
+        Ok(_) => {
+            after_stack_move(app, store, &card.id, by);
+            let (a, id) = (app.clone(), card.id.clone());
+            std::thread::spawn(move || after_move(&a, &id, "Human test"));
+        }
+        Err(e) => {
+            let _ = store.add_log(&card.id, &format!("Couldn't move it on into Ship it for Hugh: {e}"), by);
+        }
+    }
+}
+
+/// A card made into Planning or In progress by Hugh (the Add card form's "Take it to", or his
+/// own session's `kb create`): the app moves it there for him from Backlog, so it starts as his
+/// move would (a plan request, the column's session), with `why` in the log. The session
+/// starts once the caller lets go of the board.
+pub fn start_new(app: &AppHandle, store: &mut Store, card: &Card, column: &str, why: &str) -> Result<Card, String> {
+    let m = store.move_for_hugh(&card.id, card.version, column, why).map_err(|e| e.to_string())?;
+    let (a, id) = (app.clone(), card.id.clone());
+    std::thread::spawn(move || after_move(&a, &id, "Backlog"));
+    Ok(m.card)
+}
+
+/// The message for Hugh's edit of `changed` fields.
+pub fn edit_message(card: &Card, changed: &[&str]) -> Option<String> {
+    let told: Vec<&str> = changed.iter().copied().filter(|k| TOLD.contains(k)).collect();
+    if told.is_empty() {
+        return None;
+    }
+    let mut lines = vec![format!("Hugh edited {} on this card:", told.join(", "))];
+    for k in &told {
+        if *k == "autoTo" {
+            lines.push(match card.auto_to() {
+                Some(t) => format!("- autoTo: {t}. The card now goes on by itself to {t}: in Planning, once your plan is ready and nothing in it is his to decide, move it to In progress yourself; {}", if t == "Deploy complete" { "from Human test the app moves it into Ship it for him, which is his approval to ship it with no human test." } else { "it stops in Human test for him." }),
+                None => "- autoTo: (cleared). The card no longer goes on by itself: wait for Hugh at each step as usual.".into(),
+            });
+            continue;
+        }
+        let v = card.fields.get(*k).map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()));
+        lines.push(format!("- {k}: {}", v.unwrap_or_else(|| "(cleared)".into())));
+        if k.ends_with("Override") || *k == "accountPin" {
+            lines.push("  (this applies when the session next starts)".into());
+        }
+    }
+    Some(lines.join("\n"))
+}
+
+/// After Hugh moved a card: stop it (Done), queue the message, or start a session.
+pub fn after_move(app: &AppHandle, card_id: &str, from: &str) {
+    let live = app.state::<Arc<Sessions>>().inner().clone();
+    let board = app.state::<Board>();
+    let Ok(mut store) = board.0.lock() else { return };
+    let Ok(card) = store.get(card_id) else { return };
+    let cfg = store.column(&card.column).ok().flatten();
+    if cfg.as_ref().map(|c| c.on_enter.as_str()) == Some("suspend") {
+        if let Ok(Some(_)) = store.unqueue_start(card_id) {
+            let _ = store.add_log(card_id, "Took the waiting start out of the queue: the card's column stops sessions", "the app");
+            let running = live.running_count();
+            let _ = app.emit("session-queue", crate::queue_json(&store, running));
+        }
+        drop(store);
+        if live.is_live(card_id).is_some() {
+            let (app, id) = (app.clone(), card_id.to_string());
+            std::thread::spawn(move || {
+                let _ = app.state::<Arc<Sessions>>().stop(&app, &id);
+            });
+        }
+        return;
+    }
+    if left_ship_for_stack(&card) {
+        return;
+    }
+    // One ship at a time per repo (card #79): behind another card's ship, it waits in the
+    // queue and its session hears nothing until `pump_ships` releases it.
+    // `move_card` usually queued it already; this catches any other way into Ship it.
+    if card.column == "Ship it" {
+        let state = card.fields.get("ship").and_then(|s| s.get("state")).and_then(Value::as_str);
+        if state == Some(kanban_store::SHIP_QUEUED) {
+            return;
+        }
+        if state == Some("requested") {
+            if let Ok(Some(b)) = store.ship_blocker(&card) {
+                let _ = store.ship_wait(card_id, &b, from);
+                drop(store);
+                let _ = app.emit("cards-changed", ());
+                return;
+            }
+        }
+    }
+    if live.is_live(card_id).is_some() {
+        let text = move_message(&store, &card, from, false);
+        let _ = store.queue(card_id, "message", &text);
+        mark_handed(&mut store, &card);
+        return;
+    }
+    if !cfg.as_ref().map_or(false, |c| c.auto_spawn) {
+        return;
+    }
+    // A conversation that lives in the desktop app is resumed only when Hugh asks.
+    let app_convo = store.latest_session(card_id).ok().flatten();
+    if app_convo.is_none() && card.fields.get("claudeSessionId").is_some() {
+        let _ = store.add_log(
+            card_id,
+            "Not started: this card's conversation is in the Claude desktop app. Open the card and choose Resume in the app, or Start a new session.",
+            "the app",
+        );
+        drop(store);
+        let _ = app.emit("cards-changed", ());
+        return;
+    }
+    let mode = if app_convo.is_some() { "resume" } else { "new" };
+    // Over the cap it waits in the queue; the message waits too, and is typed once it starts.
+    match crate::begin_session(app, &mut store, &card, mode, "move") {
+        Ok(begun) => {
+            // A new session that started now has already been sent its header (start_session's
+            // opening message), so the move's message leaves it out. A queued one gets it here,
+            // since its message is waiting before it starts.
+            let started = matches!(begun, crate::Begun::Started(_));
+            let text = move_message(&store, &card, from, mode == "new" && !started);
+            let _ = store.queue(card_id, "message", &text);
+            mark_handed(&mut store, &card);
+        }
+        Err(e) => {
+            let _ = store.add_log(card_id, &format!("Couldn't start a session: {e}"), "the app");
+        }
+    }
+    drop(store);
+    let _ = app.emit("cards-changed", ());
+}
+
+/// A plan or ship request that now has a session on it.
+fn mark_handed(store: &mut Store, card: &Card) {
+    let mut patch = Patch::new();
+    for key in ["plan", "ship"] {
+        if let Some(obj) = card.fields.get(key).and_then(Value::as_object) {
+            if obj.get("state").and_then(Value::as_str) == Some("requested") {
+                let mut o = obj.clone();
+                if key == "plan" {
+                    o.insert("state".into(), json!("started"));
+                }
+                o.insert("detail".into(), json!("Handed to the card's session in the app"));
+                if key == "ship" {
+                    // From now it holds its repo's place in the ship queue (card #79).
+                    o.insert("handedAt".into(), json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
+                }
+                patch.insert(key.into(), Value::Object(o));
+            }
+        }
+    }
+    if !patch.is_empty() {
+        let _ = store.update(&card.id, card.version, &patch, "the app");
+    }
+}
+
+pub fn after_edit(app: &AppHandle, card_id: &str, changed: &[&str]) {
+    let board = app.state::<Board>();
+    let Ok(mut store) = board.0.lock() else { return };
+    // Hugh set where it goes: a card already there stops going on, and one waiting in Human
+    // test to ship moves on. First, so the session is told how it stands after that.
+    let auto = changed.contains(&kanban_store::AUTO_KEY);
+    if auto {
+        auto_progress(app, &mut store, card_id);
+    }
+    let Ok(card) = store.get(card_id) else { return };
+    let has_session = app.state::<Arc<Sessions>>().is_live(card_id).is_some() || store.latest_session(card_id).ok().flatten().is_some();
+    if let (true, Some(text)) = (has_session, edit_message(&card, changed)) {
+        let _ = store.queue(card_id, "message", &text);
+    }
+    if auto {
+        drop(store);
+        let _ = app.emit("cards-changed", ());
+    }
+}
+
+/// Why a session may not move `card` to `to`, if it may not: a stack's lead goes to Human test
+/// only when its children are ready (by the board's rule); the app moves it then.
+pub fn stack_move_refused(store: &Store, card: &Card, to: &str) -> Option<String> {
+    if to != "Human test" || !card.is_lead() {
+        return None;
+    }
+    let rule = store.stack_rule();
+    let kids = store.stack_children(card).ok()?;
+    if kanban_store::stack_ready(&kids, &rule) {
+        return None;
+    }
+    let waiting: Vec<String> = kids
+        .iter()
+        .filter(|k| !k.archived && !kanban_store::STACK_READY.contains(&k.column.as_str()))
+        .map(|k| format!("#{} ({})", k.number, k.column))
+        .collect();
+    let need = if rule == "first" { "at least one card in it is" } else { "every card in it is" };
+    Some(format!(
+        "card #{} leads a stack, and a stack goes to Human test only when {need} ready (in Human test or later). Not ready yet: {}. Move each child to Human test when it is ready; the app then moves the stack itself.",
+        card.number,
+        if waiting.is_empty() { "no cards in the stack".to_string() } else { waiting.join(", ") }
+    ))
+}
+
+/// A move made by a session: of another card (at once), or its own (held, applied here). The
+/// stack rules follow it.
+pub fn session_move(app: &AppHandle, store: &mut Store, card: &Card, to: &str, reason: &str, by: &str) -> Result<(), String> {
+    if let Some(why) = stack_move_refused(store, card, to) {
+        let _ = store.add_log(&card.id, &format!("Refused a move to {to} by {by}: {why}"), "the app");
+        return Err(why);
+    }
+    let mut patch = Patch::new();
+    patch.insert("column".into(), json!(to));
+    store.update(&card.id, card.version, &patch, by).map_err(|e| e.to_string())?;
+    let why = if reason.is_empty() { String::new() } else { format!(": {reason}") };
+    store.add_log(&card.id, &format!("Moved from {} to {to} by {by}{why}", card.column), by).map_err(|e| e.to_string())?;
+    after_stack_move(app, store, &card.id, by);
+    auto_progress(app, store, &card.id);
+    Ok(())
+}
+
+/// Is `card` built, for a join: in Human test or later, or with a PR.
+pub fn built(card: &Card) -> bool {
+    kanban_store::STACK_READY.contains(&card.column.as_str()) || card.fields.get("pr").map_or(false, |v| !v.is_null() && v != "")
+}
+
+/// The message to a stack's session when card `c` joined it. `l` and `c` are the two cards as
+/// they were before the join; `kids` are the cards that came with `c`, when it led a stack of
+/// its own. A stack in Ship it ships the card in the same merge (card #89).
+pub fn join_message(l: &Card, c: &Card, kids: &[Card], j: &kanban_store::Joined, by: &str) -> String {
+    let (n, t) = (c.number, c.title());
+    let field = |card: &Card, k: &str| card.fields.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let (lb, cb) = (field(l, "branch"), field(c, "branch"));
+    let lb_text = lb.as_ref().map(|b| format!("this stack's branch {b}")).unwrap_or_else(|| "this stack's branch".into());
+    let prompts = crate::private::prompts_dir().display().to_string();
+    let plan_it = |m: i64| {
+        format!(
+            "read it (kanban_get_card {m}), plan it first ({prompts}\\planning.md:the approach in its summary, the first step in its nextStep, ask Hugh anything that's his to decide by putting the question on #{m} as blockedReason with `choices`), then build it on {lb_text} ({prompts}\\in-progress.md), and move #{m} to Human test with its own how-to-test once it works"
+        )
+    };
+    let mut parts = vec![if kids.is_empty() {
+        format!("#{n} \"{t}\" joined this stack ({by}).")
+    } else {
+        let list: Vec<String> = kids.iter().map(|k| format!("#{}", k.number)).collect();
+        format!("Stack #{n} \"{t}\" joined this stack ({by}), with its cards {}: you own them all now, each with its own nextStep.", list.join(", "))
+    }];
+    if !built(c) {
+        parts.push(format!("It isn't built yet, so take it through planning and building like any card: {}.", plan_it(n)));
+        return parts.join(" ");
+    }
+    let same = matches!((&cb, &lb), (Some(c), Some(l)) if c == l);
+    let in_ship = l.column == "Ship it";
+    // A stack built on main itself: merging into its branch is merging to main, which only its ship does.
+    let on_main = matches!(lb.as_deref(), Some("main" | "master"));
+    parts.push(if same {
+        format!("It is on {} already, so there is nothing to merge.", lb.as_deref().unwrap_or_default())
+    } else {
+        let on = match &cb {
+            Some(b) if kids.is_empty() => format!("branch {b}"),
+            Some(b) => format!("branch {b}, which holds its cards' work so far"),
+            None => "its own branch (see the card)".into(),
+        };
+        let pr = field(c, "pr").map(|p| format!(", PR {p}")).unwrap_or_default();
+        if in_ship && on_main {
+            format!("It is already built, on {on}{pr}. This stack's branch is {}, so that branch goes in with this stack's ship: merge it as part of the ship (resolve any conflicts and run the checks again), then close its PR in favour of this stack's, saying so on it.", lb.as_deref().unwrap_or_default())
+        } else {
+            format!("It is already built, on {on}{pr}. Merge that branch into {lb_text} (resolve any conflicts and run the checks again), then close its PR in favour of this stack's PR, saying so on it.")
+        }
+    });
+    // A stack that joined while some of its cards were still being built (the "first" rule).
+    let unbuilt: Vec<&Card> = kids.iter().filter(|k| !k.archived && !built(k)).collect();
+    for k in &unbuilt {
+        parts.push(format!("#{} isn't built yet: take it through planning and building like any card: {}.", k.number, plan_it(k.number)));
+    }
+    if in_ship {
+        parts.push(if j.unshipped.contains(&n) {
+            format!("#{n} was waiting in Ship it itself. Hugh dropped it on this stack, which is his approval to ship it with the rest: its own ship request is cancelled, it is marked Passed, and it waits in Human test until this stack ships.")
+        } else {
+            format!("This stack is in Ship it, and Hugh dropped #{n} on it: that is his approval to ship it with the rest, so it is marked Passed and waits in Human test until the stack ships.")
+        });
+        let early = !same && !on_main;
+        parts.push(if early {
+            "Merge it in before this stack's PR is merged, so it all ships as one merge: one push to main and one deploy.".to_string()
+        } else {
+            "It all ships as one merge: one push to main and one deploy.".to_string()
+        });
+        let queued = l.fields.get("ship").and_then(|s| s.get("state")).and_then(Value::as_str) == Some(kanban_store::SHIP_QUEUED);
+        parts.push(match (queued, early) {
+            (true, false) => "The stack is waiting its turn in the ship queue: don't merge anything to main or ship until the app sends you the Ship it prompt.".to_string(),
+            (true, true) => "The stack is waiting its turn in the ship queue: do the merge into the stack's branch now, but don't merge to main or ship until the app sends you the Ship it prompt.".to_string(),
+            (false, _) => "If you already have the Ship it prompt, ship it with the rest; otherwise wait for it: the app sends it when the stack's turn to ship comes.".to_string(),
+        });
+        parts.push("Just before you merge, check kanban_stack_list: every card in the stack must be on your branch.".to_string());
+    } else {
+        parts.push(if kids.is_empty() {
+            format!("Keep #{n} in Human test with its own how-to-test in its nextStep, and update this stack's dev stack so Hugh tests it with the rest.")
+        } else {
+            format!("Keep #{n} and its built cards in Human test, each with its own how-to-test in its nextStep, and update this stack's dev stack so Hugh tests them with the rest.")
+        });
+        if j.unshipped.contains(&n) {
+            parts.push(format!("#{n} was in Ship it, which is Hugh's approval to ship it: its own ship request is cancelled, it is marked Passed, and it ships with this stack when Hugh moves the stack to Ship it."));
+        }
+    }
+    parts.join(" ")
+}
+
+/// The message to the own session of card `c` (as it was before it joined stack `lead`).
+pub fn stand_down_message(c: &Card, lead: i64, j: &kanban_store::Joined) -> String {
+    let mut t = if c.is_lead() {
+        format!("This card's stack joined stack #{lead}: that stack's session owns this card and its cards now. Stop work on them here; log anything its new owner should know with kanban_add_log.")
+    } else {
+        format!("This card joined stack #{lead}: that stack's session owns it now. Stop work on it here; log anything its new owner should know with kanban_add_log.")
+    };
+    if j.unshipped.contains(&c.number) {
+        t.push_str(&format!(" Its own ship is cancelled: it ships with stack #{lead}, so don't ship it from here."));
+    }
+    t
+}
+
+/// Did `card` leave Ship it to ship with its stack (card #89)? Hugh can drop a card he just
+/// moved into Ship it on a stack before the app has handed that move on; then the stack's
+/// session owns it, and `after_move` has nothing to start or tell.
+pub fn left_ship_for_stack(card: &Card) -> bool {
+    let Some(lead) = card.stack_of() else { return false };
+    let ship = card.fields.get("ship");
+    card.column != "Ship it"
+        && ship.and_then(|s| s.get("state")).and_then(Value::as_str) == Some("cancelled")
+        && ship.and_then(|s| s.get("with")).and_then(Value::as_i64) == Some(lead)
+}
+
+/// Does the card have a session to tell (live now, or one that resumes)?
+pub fn has_session(app: &AppHandle, store: &Store, card_id: &str) -> bool {
+    app.state::<Arc<Sessions>>().is_live(card_id).is_some() || store.latest_session(card_id).ok().flatten().is_some()
+}
+
+/// The message to a lead's session when the stack rules moved its stack.
+pub fn stack_move_message(store: &Store, m: &kanban_store::StackMove, trigger: Option<&Card>) -> String {
+    let because = match (m.to.as_str(), trigger) {
+        ("Human test", _) if store.stack_rule() == "first" => "a card in it is ready to test".to_string(),
+        ("Human test", _) => "every card in it is ready to test".to_string(),
+        (_, Some(t)) => format!("#{} \"{}\" went back to {}", t.number, t.title(), t.column),
+        _ => "a card in it is no longer ready".to_string(),
+    };
+    let next = if m.to == "Human test" {
+        "Hugh tests the stack now: each card's nextStep is its how-to-test, and the stack's branch, PR, dev stack and logins are on this card. Keep the dev stack up. Never move a card into Ship it."
+    } else {
+        "Finish the card that went back, then move it to Human test; the app moves the stack again once it is ready."
+    };
+    format!("Stack #{}: the app moved this stack from {} to {} because {because}. {next}", m.number, m.from, m.to)
+}
+
+/// After `card_id` moved (by anyone): applies the stack rules. A lead the rules moved hears
+/// why in its session; a child carried into a column that stops sessions (Done) has its
+/// session stopped. Children moved by the rules never get `after_move` (no session per child).
+pub fn after_stack_move(app: &AppHandle, store: &mut Store, card_id: &str, by: &str) -> Vec<kanban_store::StackMove> {
+    let moves = match store.stack_after_move(card_id, by) {
+        Ok(m) => m,
+        Err(e) => {
+            let _ = store.add_log(card_id, &format!("Couldn't apply the stack rules: {e}"), "the app");
+            return vec![];
+        }
+    };
+    // A stack set to go on by itself to Deploy complete ships once every card in it is ready,
+    // which can be a later child's move after the stack is already in Human test (the "first"
+    // rule): so each child's move looks at its lead again.
+    let lead_of_moved = store.get(card_id).ok().and_then(|c| c.stack_of()).and_then(|n| store.get_by_number(n).ok()).map(|l| l.id);
+    if moves.is_empty() {
+        if let Some(l) = &lead_of_moved {
+            auto_progress(app, store, l);
+        }
+        return moves;
+    }
+    let trigger = store.get(card_id).ok();
+    let live = app.state::<Arc<Sessions>>().inner().clone();
+    for m in &moves {
+        if m.lead {
+            if has_session(app, store, &m.id) {
+                let text = stack_move_message(store, m, trigger.as_ref());
+                let _ = store.queue(&m.id, "message", &text);
+            }
+            if m.to == "Human test" {
+                auto_progress(app, store, &m.id);
+            }
+        } else {
+            let suspend = store.column(&m.to).ok().flatten().map_or(false, |c| c.on_enter == "suspend");
+            if suspend && live.is_live(&m.id).is_some() {
+                let (a, id) = (app.clone(), m.id.clone());
+                std::thread::spawn(move || {
+                    let _ = a.state::<Arc<Sessions>>().stop(&a, &id);
+                });
+            }
+        }
+    }
+    if let Some(l) = &lead_of_moved {
+        auto_progress(app, store, l);
+    }
+    let _ = app.emit("cards-changed", ());
+    moves
+}
+
+pub fn ship_result(app: &AppHandle, store: &mut Store, card: &Card, state: &str, detail: &str, by: &str) -> Result<Value, String> {
+    // Only a card Hugh put into Ship it is being shipped; a result for any other is a mistake.
+    if card.column != "Ship it" {
+        return Err(format!("card #{} isn't in Ship it (it's in {}), so there is no ship to report on", card.number, card.column));
+    }
+    let mut ship = card.fields.get("ship").and_then(Value::as_object).cloned().unwrap_or_default();
+    let retries = ship.get("retries").and_then(Value::as_i64).unwrap_or(0);
+    ship.insert("detail".into(), json!(detail));
+    let mut patch = Patch::new();
+    let reply;
+    match state {
+        "shipping" | "shipped" | "needs-hugh" => {
+            ship.insert("state".into(), json!(state));
+            ship.insert("retries".into(), json!(retries));
+            reply = format!("Recorded: {state}.");
+        }
+        "failed" => {
+            let n = retries + 1;
+            ship.insert("retries".into(), json!(n));
+            if n < 3 {
+                ship.insert("state".into(), json!("failed"));
+                patch.insert("column".into(), json!("In progress"));
+                let _ = store.queue(
+                    &card.id,
+                    "message",
+                    &format!("The ship failed (try {n} of 3): {detail}. Fix that failure first, then hand the card back for testing."),
+                );
+                reply = format!("Recorded the failure (try {n} of 3). The card is back in In progress.");
+            } else {
+                ship.insert("state".into(), json!("needs-hugh"));
+                reply = "That is the third failure: the card stays in Ship it and waits for Hugh.".into();
+            }
+        }
+        other => return Err(format!("unknown ship state {other}")),
+    }
+    let patch_moved = patch.contains_key("column");
+    let recorded = ship.get("state").cloned().unwrap_or(json!(state));
+    let tries = ship.get("retries").cloned().unwrap_or(json!(0));
+    patch.insert("ship".into(), Value::Object(ship));
+    store.update(&card.id, card.version, &patch, by).map_err(|e| e.to_string())?;
+    store.add_log(&card.id, &format!("Ship {state}{}", if detail.is_empty() { String::new() } else { format!(": {detail}") }), by).map_err(|e| e.to_string())?;
+    if patch_moved {
+        after_stack_move(app, store, &card.id, by);
+    }
+    let _ = app.emit("cards-changed", ());
+    // For the notifications. `state` is what was recorded (a third failure is needs-hugh).
+    let _ = app.emit("ship-result", json!({ "card": card.id, "number": card.number, "state": recorded, "detail": detail, "retries": tries }));
+    Ok(json!(reply))
+}
+
+pub const RESTARTED: &str = "The kanban app restarted while you were working. Carry on from where you were.";
+
+/// After the restart recovery resumed `card`'s conversation `prev` (at once, or later from the
+/// queue): queues RESTARTED. A session that had no transcript yet started afresh instead, and
+/// gets its card's header.
+pub fn restarted(store: &mut Store, card: &Card, prev: Option<&str>, new: &kanban_store::SessionRow) {
+    if prev == Some(new.claude_session_id.as_str()) {
+        let _ = store.queue(&card.id, "message", RESTARTED);
+        let _ = store.add_log(&card.id, "Resumed after the app restarted, because it was mid-turn", "the app");
+    }
+}
+
+/// After the app starts: resumes each session that was mid-turn when it last stopped, and
+/// queues RESTARTED, typed once the session is ready. Idle sessions wait for Hugh. Over the
+/// cap, the rest wait in the queue (oldest first) and resume as places come free.
+pub fn resume_after_restart(app: &AppHandle, rows: &[kanban_store::SessionRow]) {
+    let live = app.state::<Arc<Sessions>>().inner().clone();
+    for row in rows {
+        let board = app.state::<Board>();
+        let Ok(mut store) = board.0.lock() else { return };
+        let Ok(card) = store.get(&row.card_id) else { continue };
+        // A card archived or in Done since keeps its session stopped.
+        let done = store.column(&card.column).ok().flatten().map_or(false, |c| c.on_enter == "suspend");
+        if card.archived || done || live.is_live(&card.id).is_some() {
+            continue;
+        }
+        match crate::begin_session(app, &mut store, &card, "resume", "restart") {
+            Ok(crate::Begun::Started(new)) => restarted(&mut store, &card, Some(&row.claude_session_id), &new),
+            Ok(crate::Begun::Queued(_)) => {}
+            Err(e) => {
+                let _ = store.add_log(&card.id, &format!("Couldn't resume after the app restarted: {e}"), "the app");
+            }
+        }
+        drop(store);
+        let _ = app.emit("cards-changed", ());
+    }
+}
+
+pub fn on_hook(app: &AppHandle, row_id: &str, event: &str, body: &Value) {
+    // A subagent finished: a card-tester's verdict goes on the card (card #76). Other uses of
+    // the hook still see it below.
+    if event == "SubagentStop" {
+        crate::tester::on_subagent_stop(app, row_id, body);
+    }
+    let live = app.state::<Arc<Sessions>>();
+    let testing = live.testing_hook(row_id, event, body);
+    if let Some((card, state)) = live.hook(row_id, event, body) {
+        record_state(app, row_id, &state);
+        if event == "Stop" {
+            crate::needs::turn_ended(app, &card);
+        }
+        let _ = app.emit("activity", json!({ "card": card, "state": state }));
+    }
+    // After the state, so a review ending with its turn goes straight from Testing to nothing.
+    if let Some((card, on)) = testing {
+        let _ = app.emit("testing", json!({ "card": card, "on": on }));
+    }
+}
+
+/// Keeps the session's state in its events (a row only on a change), so that after a crash
+/// the next start knows whether it was mid-turn.
+fn record_state(app: &AppHandle, row_id: &str, state: &str) {
+    let board = app.state::<Board>();
+    if let Ok(mut store) = board.0.lock() {
+        let _ = store.session_state(row_id, state);
+    };
+}
+
+/// Ends session `row_id`'s turn if its transcript says it ended with no hook.
+fn turn_check(app: &AppHandle, live: &Sessions, row_id: &str, path: &std::path::Path) {
+    let Some(at) = crate::transcript::turn_ended_in(path) else { return };
+    if let Some((card, state)) = live.turn_ended(row_id, &at) {
+        record_state(app, row_id, &state);
+        let _ = app.emit("activity", json!({ "card": card.clone(), "state": state }));
+        let _ = app.emit("session-changed", card);
+    }
+}
+
+/// The statusLine's JSON: keeps each account's newest 5-hour and 7-day usage.
+pub fn on_status(app: &AppHandle, row_id: &str, body: &Value) {
+    crate::note_status(app, row_id, body); // the card panel's session footer
+    let live = app.state::<Arc<Sessions>>();
+    if let Some((card, state)) = live.status_seen(row_id) {
+        record_state(app, row_id, &state);
+        let _ = app.emit("activity", json!({ "card": card, "state": state }));
+    }
+    // A turn that ended with no hook (interrupted in the terminal): the statusLine still
+    // reports, and the transcript records the end. The timer in `run` checks again later.
+    if let Some(path) = body.get("transcript_path").and_then(Value::as_str) {
+        live.note_transcript(row_id, path);
+        if live.on_turn(row_id) {
+            turn_check(app, &live, row_id, std::path::Path::new(path));
+        }
+    }
+    let Some(limits) = body.get("rate_limits") else { return };
+    let board = app.state::<Board>();
+    let Ok(mut store) = board.0.lock() else { return };
+    let account = store.session_account(row_id).ok().flatten().unwrap_or_else(|| "main".into());
+    let pct = |k: &str| limits.get(k).and_then(|w| w.get("used_percentage")).and_then(Value::as_f64);
+    let v = json!({ "seven_day": pct("seven_day"), "five_hour": pct("five_hour"), "at": chrono::Utc::now().to_rfc3339() });
+    let key = format!("usage.{account}");
+    let before = store.setting(&key).ok().flatten().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let _ = store.set_setting(&key, &v.to_string());
+    drop(store);
+    // The board's header shows the 7-day figures; it is told only when one changes.
+    if before.as_ref().and_then(|b| b.get("seven_day")) != v.get("seven_day") {
+        let _ = app.emit("usage-changed", account);
+    }
+}
+
+/// The account for a new session: the card's pin, else the lower 7-day usage, else the card's
+/// recorded account, else main. Also returns the reason, for the log.
+pub fn pick_account(store: &Store, card: &Card) -> (String, String) {
+    if let Some(pin) = card.fields.get("accountPin").and_then(Value::as_str) {
+        return (pin.to_string(), "the card is pinned to it".into());
+    }
+    let week = |a: &str| -> Option<f64> {
+        let v: Value = serde_json::from_str(&store.setting(&format!("usage.{a}")).ok()??).ok()?;
+        v.get("seven_day")?.as_f64()
+    };
+    if let (Some(m), Some(a2)) = (week("main"), week("account2")) {
+        let pick = if a2 < m { "account2" } else { "main" };
+        return (pick.into(), format!("7-day usage: main {m:.0}%, Account 2 {a2:.0}%"));
+    }
+    match card.fields.get("account").and_then(Value::as_str) {
+        Some("account2") => ("account2".into(), "the card's recorded account".into()),
+        _ => ("main".into(), "no usage reported yet for both accounts".into()),
+    }
+}
+
+/// Hands the next waiting ship of each repo with nothing shipping to its session, as Hugh's
+/// move into Ship it would have (card #79). A ship ends however it ends (shipped, failed,
+/// needs Hugh, moved out by anyone, archived, or a request no session picked up going stale),
+/// so this looks every couple of seconds rather than at each of those places. With nothing
+/// queued it costs one small query.
+fn pump_ships(app: &AppHandle) {
+    let board = app.state::<Board>();
+    let released: Vec<(String, String)> = {
+        let Ok(mut store) = board.0.lock() else { return };
+        if !store.ship_any_queued().unwrap_or(false) {
+            return;
+        }
+        if store.ship_cancel_strays().unwrap_or(0) > 0 {
+            let _ = app.emit("cards-changed", ());
+        }
+        let due = store.ship_due().unwrap_or_default();
+        due.iter().filter_map(|c| store.ship_release(&c.id).ok().map(|(c, from)| (c.id, from))).collect()
+    };
+    for (id, from) in released {
+        let a = app.clone();
+        std::thread::spawn(move || after_move(&a, &id, &from));
+    }
+}
+
+/// Types queued text into free sessions and applies held moves, every 400 ms.
+pub fn run(app: AppHandle) {
+    let mut last_pause_check = std::time::Instant::now();
+    let mut last_ship_check = std::time::Instant::now();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(400));
+        let live = app.state::<Arc<Sessions>>().inner().clone();
+        for (card_id, gave_up) in live.nudge() {
+            if gave_up {
+                if let Ok(mut store) = app.state::<Board>().0.lock() {
+                    let _ = store.add_log(&card_id, &format!("The session didn't take a message after {} tries; the chat shows it with Send again", crate::sessions::TYPE_TRIES), "the app");
+                }
+            } else if let Ok(mut store) = app.state::<Board>().0.lock() {
+                let _ = store.add_log(&card_id, &format!("Typed a message into the session again: Claude hadn't taken it {} s after it was typed", crate::sessions::RETYPE_AFTER.as_secs()), "the app");
+            }
+            let _ = app.emit("session-changed", card_id);
+        }
+        if last_ship_check.elapsed() > Duration::from_secs(2) {
+            last_ship_check = std::time::Instant::now();
+            pump_ships(&app);
+        }
+        if last_pause_check.elapsed() > Duration::from_secs(20) {
+            last_pause_check = std::time::Instant::now();
+            pause_idle(&app, &live);
+            // A turn interrupted in the terminal whose end no statusLine report caught.
+            for (row_id, path) in live.quiet_turns(Duration::from_secs(10)) {
+                turn_check(&app, &live, &row_id, &path);
+            }
+        }
+        crate::drain_queue(&app);
+        for card_id in live.free() {
+            let board = app.state::<Board>();
+            let Ok(mut store) = board.0.lock() else { continue };
+            if let Ok(Some(m)) = store.waiting(&card_id, "move") {
+                let to: Value = serde_json::from_str(&m.payload).unwrap_or_default();
+                let col = to.get("column").and_then(Value::as_str).unwrap_or("").to_string();
+                let reason = to.get("reason").and_then(Value::as_str).unwrap_or("").to_string();
+                let res = store.get(&card_id).map_err(|e| e.to_string()).and_then(|c| {
+                    let by = format!("card #{}'s session (held until its turn ended)", c.number);
+                    // Checked again now: the card may have moved since the session asked.
+                    if let Some(why) = crate::tester::move_refused(&store, &c, &col) {
+                        let _ = store.add_log(&c.id, &format!("Refused a move to {col} by {by}: it hasn't passed a subagent test"), "the app");
+                        return Err(why);
+                    }
+                    session_move(&app, &mut store, &c, &col, &reason, &by)
+                });
+                let _ = store.done(m.id, if res.is_ok() { "applied" } else { "failed" });
+                if let Err(e) = &res {
+                    let _ = store.queue(&card_id, "message", &format!("Your move of this card to {col} was refused: {e}"));
+                }
+                // A held move into a column that runs at once (Deploy complete, after a ship)
+                // gives the session that column's prompt, as Hugh's move would.
+                // Not when the app has already moved it on (auto-progress into Ship it): that
+                // move sends its own message.
+                if res.is_ok() {
+                    if let Some(text) = store.get(&card_id).ok().filter(|c| c.column == col).and_then(|c| held_move_message(&store, &c)) {
+                        let _ = store.queue(&card_id, "message", &text);
+                    }
+                }
+                let suspend = store.column(&col).ok().flatten().map_or(false, |c| c.on_enter == "suspend");
+                drop(store);
+                let _ = app.emit("cards-changed", ());
+                if suspend {
+                    let _ = live.stop(&app, &card_id);
+                }
+                continue;
+            }
+            // A model or effort switch goes before the next message, so the message runs on it.
+            if let Some((field, value, row_id)) = live.apply_switch(&card_id) {
+                let _ = store.session_event(&row_id, "running", Some(&format!("switched {field} to {value}")));
+                let _ = store.add_log(&card_id, &format!("Typed /{field} {value} into the session"), "the app");
+                drop(store);
+                let _ = app.emit("session-changed", card_id.clone());
+                continue;
+            }
+            if let Ok(Some(m)) = store.waiting(&card_id, "message") {
+                if live.send_message(&card_id, &m.payload).is_ok() {
+                    let _ = store.done(m.id, "sent");
+                }
+            }
+        }
+    });
+}
+
+/// Pauses sessions left idle longer than Hugh's setting (`sessions.idle_pause_minutes`), as
+/// Kangentic does: the session is stopped and recorded as suspended, its conversation kept, and
+/// it resumes when Hugh sends it a message (`session_send`) or starts it. A session with
+/// something waiting to be typed, or whose card Hugh is looking at, isn't paused.
+fn pause_idle(app: &AppHandle, live: &Arc<Sessions>) {
+    let board = app.state::<Board>();
+    let mins = match board.0.lock() {
+        Ok(s) => s.idle_pause_minutes().unwrap_or(kanban_store::IDLE_PAUSE_DEFAULT),
+        Err(_) => return,
+    };
+    if mins <= 0 {
+        return;
+    }
+    for card_id in live.idle_for(Duration::from_secs(mins as u64 * 60)) {
+        if crate::notify::looking_at(app, &card_id) {
+            continue;
+        }
+        {
+            let Ok(mut store) = board.0.lock() else { return };
+            let waiting = store.waiting(&card_id, "message").ok().flatten().is_some() || store.waiting(&card_id, "move").ok().flatten().is_some();
+            if waiting {
+                continue;
+            }
+            let _ = store.add_log(&card_id, &format!("Paused after {mins} minute{} idle. The conversation is kept; it resumes when you send it a message.", if mins == 1 { "" } else { "s" }), "the app");
+        }
+        let (a, id, l) = (app.clone(), card_id.clone(), live.clone());
+        std::thread::spawn(move || {
+            let _ = l.stop(&a, &id);
+            let _ = a.emit("cards-changed", ());
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn card(fields: Value, column: &str) -> Card {
+        Card {
+            id: "x".into(),
+            number: 7,
+            column: column.into(),
+            order: None,
+            order_col: None,
+            archived: false,
+            fields: fields.as_object().cloned().unwrap(),
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn t3_7_edit_message_names_the_fields() {
+        let c = card(json!({ "title": "T", "summary": "new s", "nextStep": "do x" }), "In progress");
+        let m = edit_message(&c, &["summary", "nextStep", "order"]).unwrap();
+        assert!(m.starts_with("Hugh edited summary, nextStep on this card:"));
+        assert!(m.contains("- summary: new s"));
+        assert!(edit_message(&c, &["order", "orderCol"]).is_none());
+    }
+
+    #[test]
+    fn t3_13_dry_run_prefix_and_fill() {
+        let c = card(json!({ "title": "T", "dryRun": true, "repo": "acme/web", "issue": { "number": 12 } }), "Planning");
+        assert!(dry(&c, "x".into()).starts_with("Dry run: say what you would do and change nothing."));
+        assert_eq!(fill("#{n} {title} ({repo}{issue})", &c, "", ""), "#7 T (acme/web, issue 12)");
+        // {prompts} is the prompts folder: the bundled one here, with no private folder set.
+        let p = fill(r"follow {prompts}\planning.md", &c, "", "");
+        assert!(!p.contains("{prompts}") && p.ends_with(r"prompts\planning.md"), "{p}");
+        assert!(!back_from_test().contains("{prompts}"));
+    }
+
+    #[test]
+    fn t5_held_move_into_deploy_complete_gets_its_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        let c = card(json!({ "title": "T" }), "Deploy complete");
+        let m = held_move_message(&s, &c).unwrap();
+        assert!(m.starts_with("Your move of this card to Deploy complete is done."));
+        assert!(m.contains("deploy-complete.md") && m.contains("Hugh moves it to Done"));
+        assert!(held_move_message(&s, &card(json!({ "title": "T" }), "Human test")).is_none());
+        let h = header(&card(json!({ "title": "T" }), "Planning"));
+        assert_eq!(h, "You are the session for card #7, \"T\" (no repo). Read and update your card with the kanban_* tools (or `kb` in Bash). Never move a card into Ship it, never merge, never push to main.");
+    }
+
+    #[test]
+    fn auto_progress_notes_tell_the_session_what_to_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        let plan = card(json!({ "title": "T", "autoTo": "Human test" }), "Planning");
+        let m = move_message(&s, &plan, "Backlog", false);
+        assert!(m.starts_with("Hugh moved this card from Backlog to Planning."), "{m}");
+        assert!(m.contains("move this card to In progress yourself"), "{m}");
+        // The app's own move into Planning says so.
+        let started = card(json!({ "title": "T", "autoTo": "Deploy complete", "plan": { "state": "requested", "auto": true } }), "Planning");
+        assert!(move_message(&s, &started, "Backlog", false).starts_with("The app moved this card from Backlog to Planning for Hugh: he set it to go on by itself to Deploy complete."));
+        let asked = card(json!({ "title": "T", "plan": { "state": "requested", "auto": true } }), "Planning");
+        assert!(move_message(&s, &asked, "Backlog", false).starts_with("The app moved this card from Backlog to Planning for Hugh: he asked for it to start in Planning when he added it."));
+        // A held move into In progress gets the In progress prompt, only on a card that goes on.
+        let ip = card(json!({ "title": "T", "autoTo": "Deploy complete" }), "In progress");
+        let h = held_move_message(&s, &ip).unwrap();
+        assert!(h.starts_with("Your move of this card to In progress is done.") && h.contains("in-progress.md") && h.contains("the app moves it into Ship it for him"), "{h}");
+        assert!(held_move_message(&s, &card(json!({ "title": "T" }), "In progress")).is_none());
+        // A stack's child never goes on by itself.
+        assert!(auto_note(&card(json!({ "title": "T", "autoTo": "Human test", "stackOf": 3 }), "Planning")).is_none());
+        // The app's move into Ship it is Hugh's approval, and says so.
+        let ship = card(json!({ "title": "T", "autoTo": "Deploy complete", "ship": { "state": "requested", "auto": true } }), "Ship it");
+        let m = move_message(&s, &ship, "Human test", false);
+        assert!(m.starts_with("The app moved this card from Human test to Ship it for Hugh: he set it to go on by itself to Deploy complete."), "{m}");
+        assert!(m.contains("ship-it.md") && m.contains("approval to ship it with no human test"), "{m}");
+        // Hugh's own move into Ship it reads as before.
+        let hugh = card(json!({ "title": "T", "ship": { "state": "requested" } }), "Ship it");
+        assert!(move_message(&s, &hugh, "Human test", false).starts_with("Hugh moved this card from Human test to Ship it."));
+        // Hugh's edit of autoTo is told in words.
+        let e = edit_message(&ip, &["autoTo"]).unwrap();
+        assert!(e.contains("- autoTo: Deploy complete. The card now goes on by itself"), "{e}");
+        let e = edit_message(&card(json!({ "title": "T" }), "Planning"), &["autoTo"]).unwrap();
+        assert!(e.contains("no longer goes on by itself"), "{e}");
+    }
+
+    // Card #93: a card back from Human test is told why, by Hugh's message or his move.
+    #[test]
+    fn a_message_to_a_card_in_human_test_takes_it_back_to_work() {
+        let t = card(json!({ "title": "T" }), "Human test");
+        assert!(message_moves_back(&t));
+        for c in [
+            card(json!({ "title": "T" }), "In progress"),
+            card(json!({ "title": "T" }), "Ship it"),
+            card(json!({ "title": "T", "stackOf": 3 }), "Human test"),
+            card(json!({ "title": "T", "stack": [8, 9] }), "Human test"),
+            Card { archived: true, ..card(json!({ "title": "T" }), "Human test") },
+        ] {
+            assert!(!message_moves_back(&c), "{} {:?}", c.column, c.fields);
+        }
+        let moved = card(json!({ "title": "T" }), "In progress");
+        let m = moved_back_message(&moved, "The button is still grey");
+        assert!(m.starts_with("Hugh's message below moved this card from Human test back to In progress"), "{m}");
+        assert!(m.contains("card-tester") && m.contains("in-progress.md") && m.ends_with("Hugh's message:\n\nThe button is still grey"), "{m}");
+        let dry_card = card(json!({ "title": "T", "dryRun": true }), "In progress");
+        assert!(moved_back_message(&dry_card, "x").starts_with("Dry run:"));
+        // Hugh's own move back from Human test says the same; a move from elsewhere doesn't.
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        assert!(move_message(&s, &moved, "Human test", false).contains("It came back from Human test"));
+        assert!(!move_message(&s, &moved, "Planning", false).contains("It came back from Human test"));
+    }
+
+    #[test]
+    fn template_starting_prompt_opens_a_new_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        let c = card(json!({ "title": "Bug: login fails", "templateId": "bug" }), "Planning");
+        let start = template_prompt(&s, &c).unwrap();
+        assert!(start.starts_with("This card was made from the \"Bug\" template. This card is a bug."), "{start}");
+        assert_eq!(opening(&s, &c), format!("{}\n\n{start}", header(&c)));
+        // No template, or one that isn't on the board: just the header.
+        let plain = card(json!({ "title": "T" }), "Planning");
+        assert!(template_prompt(&s, &plain).is_none());
+        assert_eq!(opening(&s, &plain), header(&plain));
+        assert!(template_prompt(&s, &card(json!({ "title": "T", "templateId": "gone" }), "Planning")).is_none());
+        // The move's message, which follows it, is unchanged.
+        assert!(!move_message(&s, &c, "Backlog", true).contains("template"));
+    }
+
+    #[test]
+    fn t3_11_account_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let c = card(json!({ "title": "T" }), "Backlog");
+        assert_eq!(pick_account(&s, &c).0, "main");
+        s.set_setting("usage.main", r#"{"seven_day": 80}"#).unwrap();
+        s.set_setting("usage.account2", r#"{"seven_day": 20}"#).unwrap();
+        let (a, why) = pick_account(&s, &c);
+        assert_eq!(a, "account2");
+        assert!(why.contains("main 80%") && why.contains("Account 2 20%"));
+        let pinned = card(json!({ "title": "T", "accountPin": "main" }), "Backlog");
+        assert_eq!(pick_account(&s, &pinned).0, "main");
+    }
+
+    fn numbered(n: i64, fields: Value, column: &str) -> Card {
+        let mut c = card(fields, column);
+        c.number = n;
+        c.id = format!("card-{n}");
+        c
+    }
+
+    #[test]
+    fn join_message_for_a_stack_waiting_in_ship_it() {
+        let l = numbered(53, json!({ "title": "Lead", "branch": "lead-53", "ship": { "state": "queued" } }), "Ship it");
+        let c = numbered(81, json!({ "title": "Menu", "branch": "canvas-menu-81", "pr": "https://github.com/x/y/pull/1860", "ship": { "state": "queued" } }), "Ship it");
+        let j = kanban_store::Joined { unshipped: vec![81], came_with: vec![] };
+        let m = join_message(&l, &c, &[], &j, "Hugh (board)");
+        assert!(m.starts_with("#81 \"Menu\" joined this stack (Hugh (board))."), "{m}");
+        assert!(m.contains("#81 was waiting in Ship it itself") && m.contains("its own ship request is cancelled, it is marked Passed"), "{m}");
+        assert_eq!(m.matches("approval").count(), 1, "said once: {m}");
+        assert!(m.contains("on branch canvas-menu-81, PR https://github.com/x/y/pull/1860. Merge that branch into this stack's branch lead-53"), "{m}");
+        assert!(m.contains("one merge: one push to main and one deploy"), "{m}");
+        assert!(m.contains("don't merge to main or ship until the app sends you the Ship it prompt"), "{m}");
+        assert!(m.contains("check kanban_stack_list"), "{m}");
+        assert!(!m.contains("dev stack"), "nobody tests a stack in Ship it again: {m}");
+        // Asked for and about to be handed: the prompt is on its way, or there.
+        let asked = numbered(53, json!({ "title": "Lead", "branch": "lead-53", "ship": { "state": "requested" } }), "Ship it");
+        let m = join_message(&asked, &numbered(81, json!({ "title": "Menu", "branch": "b" }), "Human test"), &[], &kanban_store::Joined::default(), "Hugh (board)");
+        assert!(m.contains("If you already have the Ship it prompt, ship it with the rest; otherwise wait for it"), "{m}");
+        assert!(!m.contains("ship request is cancelled"), "{m}");
+    }
+
+    #[test]
+    fn join_message_outside_ship_it_and_on_the_same_branch() {
+        let l = numbered(10, json!({ "title": "Lead", "branch": "main" }), "Human test");
+        let c = numbered(11, json!({ "title": "App card", "branch": "main" }), "Ship it");
+        let j = kanban_store::Joined { unshipped: vec![11], came_with: vec![] };
+        let m = join_message(&l, &c, &[], &j, "Hugh (board)");
+        assert!(m.contains("It is on main already, so there is nothing to merge."), "{m}");
+        assert!(m.contains("update this stack's dev stack") && m.contains("ships with this stack when Hugh moves the stack to Ship it"), "{m}");
+        // In Ship it, on the same branch: no merge to do, only the wait.
+        let waiting = numbered(10, json!({ "title": "Lead", "branch": "main", "ship": { "state": "queued" } }), "Ship it");
+        let m = join_message(&waiting, &numbered(11, json!({ "title": "App card", "branch": "main" }), "Human test"), &[], &kanban_store::Joined::default(), "Hugh (board)");
+        assert!(m.contains("nothing to merge") && m.contains("It all ships as one merge") && !m.contains("do the merge"), "{m}");
+        // A stack on main, a card on its own branch: the merge goes in with the ship, never before it.
+        let m = join_message(&waiting, &numbered(12, json!({ "title": "Branch card", "branch": "fix-12" }), "Human test"), &[], &kanban_store::Joined::default(), "Hugh (board)");
+        assert!(m.contains("This stack's branch is main, so that branch goes in with this stack's ship"), "{m}");
+        assert!(m.contains("don't merge anything to main or ship until the app sends you the Ship it prompt") && !m.contains("do the merge into the stack's branch now"), "{m}");
+        // Not built yet: plan and build it, as before.
+        let m = join_message(&l, &numbered(12, json!({ "title": "New" }), "Backlog"), &[], &kanban_store::Joined::default(), "card #5's session");
+        assert!(m.contains("It isn't built yet") && m.contains("kanban_get_card 12") && m.contains("on this stack's branch main"), "{m}");
+    }
+
+    #[test]
+    fn join_message_for_a_whole_stack() {
+        let l = numbered(1, json!({ "title": "Lead", "branch": "one" }), "Human test");
+        let c = numbered(2, json!({ "title": "Other stack", "branch": "two", "stack": [3, 4] }), "Human test");
+        let kids = [numbered(3, json!({ "title": "a" }), "Human test"), numbered(4, json!({ "title": "b" }), "Human test")];
+        let j = kanban_store::Joined { unshipped: vec![], came_with: vec![3, 4] };
+        let m = join_message(&l, &c, &kids, &j, "Hugh (board)");
+        assert!(m.starts_with("Stack #2 \"Other stack\" joined this stack (Hugh (board)), with its cards #3, #4: you own them all now"), "{m}");
+        assert!(m.contains("on branch two, which holds its cards' work so far"), "{m}");
+        assert!(!m.contains("isn't built yet"), "{m}");
+        // Under the "first" rule a stack in Human test can still have a card being built.
+        let kids = [numbered(3, json!({ "title": "a" }), "Human test"), numbered(4, json!({ "title": "b" }), "In progress")];
+        let m = join_message(&l, &c, &kids, &j, "Hugh (board)");
+        assert!(m.contains("#4 isn't built yet: take it through planning and building like any card: read it (kanban_get_card 4)") && !m.contains("#3 isn't built"), "{m}");
+        let s = stand_down_message(&c, 1, &j);
+        assert!(s.starts_with("This card's stack joined stack #1: that stack's session owns this card and its cards now."), "{s}");
+    }
+
+    #[test]
+    fn stand_down_says_a_cancelled_ship_is_not_to_be_shipped() {
+        let c = numbered(81, json!({ "title": "Menu" }), "Ship it");
+        let j = kanban_store::Joined { unshipped: vec![81], came_with: vec![] };
+        let s = stand_down_message(&c, 53, &j);
+        assert!(s.starts_with("This card joined stack #53") && s.ends_with("so don't ship it from here."), "{s}");
+        assert!(!stand_down_message(&c, 53, &kanban_store::Joined::default()).contains("ship"), "only a cancelled ship is mentioned");
+    }
+
+    #[test]
+    fn after_move_leaves_a_card_that_left_ship_it_for_its_stack() {
+        let joined = numbered(81, json!({ "title": "M", "stackOf": 53, "ship": { "state": "cancelled", "with": 53, "detail": "Ships with stack #53" } }), "Human test");
+        assert!(left_ship_for_stack(&joined));
+        // A plain stack card, a card whose ship was cancelled some other way or for another stack, and a lone card are left to after_move.
+        assert!(!left_ship_for_stack(&numbered(5, json!({ "title": "M", "stackOf": 53 }), "Planning")));
+        assert!(!left_ship_for_stack(&numbered(6, json!({ "title": "M", "stackOf": 53, "ship": { "state": "cancelled", "detail": "Ships with stack #53" } }), "Human test")));
+        assert!(!left_ship_for_stack(&numbered(8, json!({ "title": "M", "stackOf": 53, "ship": { "state": "cancelled", "with": 9 } }), "Human test")));
+        assert!(!left_ship_for_stack(&numbered(7, json!({ "title": "M", "ship": { "state": "cancelled", "with": 53 } }), "Human test")));
+    }
+}

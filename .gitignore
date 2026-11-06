@@ -1,0 +1,9 @@
+target/
+node_modules/
+ui/dist/
+*.db
+*.db-wal
+*.db-shm
+.env
+*.key
+.claude/

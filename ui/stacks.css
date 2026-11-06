@@ -1,0 +1,113 @@
+/* Stacked cards (stacks.js): the stack card, its progress strip, and its child rows. Uses
+   board.css's tokens, so it follows the light and dark themes. The strip's four states:
+   amber = to test, green = passed or done, red = needs Hugh, blue = building. */
+/* Amber is lifted towards yellow so it never reads as the red beside it (board.css's --warn is a dark amber in light mode). */
+:root{--stk-test:color-mix(in srgb,var(--warn) 55%,#ffb300);--stk-pass:var(--ok);--stk-need:var(--bad);--stk-build:var(--info)}
+.card.stk{border-left:3px solid var(--accent);padding-left:9px;gap:6px;cursor:grab}
+.card.stk:active{cursor:grabbing}
+.card.stk.sel{border-left-color:var(--accent)}
+.stk-ic{width:14px;height:14px;vertical-align:-2px;margin-right:5px;color:var(--accent);flex:0 0 auto}
+.stk-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.stk-top .t{min-width:0}
+.stk-ready{flex:0 0 auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.card .stk-sum{-webkit-line-clamp:2}
+.stk-sub{font-size:12px;color:var(--muted);overflow-wrap:anywhere;line-height:1.35}
+.stk-sub code{font-family:var(--mono);font-size:11.5px;color:var(--fg)}
+.stk-sub .chip{font-family:var(--mono);font-size:11px}
+.stk-down{color:var(--bad)}
+.stk-strip{display:flex;gap:3px;margin-top:2px}
+.stk-seg{flex:1;height:6px;border-radius:3px;min-width:4px}
+.s-test{--c:var(--stk-test)} .s-pass{--c:var(--stk-pass)} .s-need{--c:var(--stk-need)} .s-build{--c:var(--stk-build)}
+.stk-seg,.stk-dot{background:var(--c,var(--muted))}
+.stk-leg{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--muted)}
+.stk-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0;flex:0 0 auto}
+.stk-x{display:flex;flex-direction:column;gap:4px;cursor:default}
+.stk-links{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:12px}
+.stk-link{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;font-size:12px;text-align:left;text-decoration:none}
+.stk-link:hover{text-decoration:underline}
+a.stk-link{line-height:inherit}
+.stk-tog{display:flex;align-items:center;gap:5px;background:none;border:0;padding:2px 0;color:var(--muted);font-size:12px;cursor:pointer;align-self:flex-start}
+.stk-tog:hover{color:var(--fg)}
+.chev{display:inline-block;width:10px;font-size:10px;color:var(--muted)}
+.stk-kids{display:flex;flex-direction:column}
+.stk-kid{border-top:1px solid var(--line)}
+.stk-row{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;background:none;border:0;padding:5px 0;text-align:left;cursor:pointer;font-size:12.5px;line-height:1.3}
+.stk-row:hover .stk-name{color:var(--accent)}
+.stk-name{min-width:0;overflow-wrap:anywhere}
+.stk-name .num{margin-right:5px}
+.stk-state{flex:0 0 auto;font-size:11px;color:var(--muted);white-space:nowrap}
+.stk-state.s-need{color:var(--bad);font-weight:600}
+.stk-md{overflow-wrap:anywhere}
+.stk-md p{margin:.35em 0}.stk-md>:first-child{margin-top:0}.stk-md>:last-child{margin-bottom:0}
+.stk-md ol,.stk-md ul{margin:.35em 0;padding-left:18px}
+.stk-md code{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:0 3px}
+.stk-md pre{white-space:pre-wrap;margin:.35em 0}
+.stk-q{margin:0;color:var(--muted)}
+.stk-ask{overflow-wrap:anywhere}
+.stk-acts{display:flex;flex-wrap:wrap;gap:6px}
+.stk-acts .btn.sm{padding:3px 9px;font-size:12px}
+.stk-form{display:flex;flex-direction:column;gap:6px}
+.stk-form textarea{font-size:12.5px;padding:5px 7px;background:var(--panel);min-height:44px}
+.stk-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:6px}
+.stk-col{font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+.stk-quiet{margin-left:auto;background:none;border:0;padding:0;color:var(--muted);font-size:11px;cursor:pointer}
+.stk-quiet:hover{color:var(--bad);text-decoration:underline}
+/* A child opened in the overlay (stkKidOpen): the stack and child at the top, the how-to-test
+   scrolling in the middle, and Passed / Found a problem / answers pinned at the bottom. */
+dialog.stk-kdlg{width:min(720px,calc(100vw - 32px));max-width:none;max-height:min(88vh,1000px);padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--fg);font-family:var(--sans);box-shadow:0 18px 50px rgba(0,0,0,.35);overflow:hidden}
+dialog.stk-kdlg[open]{display:flex;flex-direction:column}
+dialog.stk-kdlg::backdrop{background:rgba(12,14,24,.5)}
+.skd-head{position:relative;flex:none;padding:16px 52px 12px 22px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.skd-lead{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.skd-lead .num,.skd-t .num{margin-right:6px}
+.skd-t{margin:0;font-size:17px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.skd-t .stk-dot{width:10px;height:10px;margin-right:8px;vertical-align:1px}
+.skd-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;font-size:13px}
+.skd-meta .stk-state{font-size:12.5px}
+.skd-meta .stk-link{font-size:13px}
+.skd-x{position:absolute;top:10px;right:10px;width:32px;height:32px;border:0;border-radius:6px;background:none;color:var(--muted);font-size:22px;line-height:1;cursor:pointer}
+.skd-x:hover,.skd-x:focus-visible{background:var(--bg);color:var(--fg)}
+.skd-body{flex:1 1 auto;min-height:0;overflow:auto;padding:14px 22px 16px;font-size:14px;line-height:1.6;user-select:text}
+.skd-body .stk-md ol,.skd-body .stk-md ul{padding-left:22px}
+.skd-body .stk-md li{margin:.25em 0}
+.skd-body .stk-md code{font-size:12.5px}
+.skd-foot{flex:none;padding:12px 22px 14px;border-top:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column;gap:10px;font-size:13.5px;line-height:1.5}
+.skd-foot .stk-acts .btn.sm{padding:6px 14px;font-size:13px}
+.skd-foot .stk-form textarea{font-size:13.5px;padding:7px 9px;min-height:84px;resize:vertical}
+.skd-foot .stk-foot{padding-top:8px}
+.skd-foot .stk-col,.skd-foot .stk-quiet{font-size:12px}
+.skd-foot .stk-link{font-size:13px}
+@media (prefers-reduced-motion:no-preference){dialog.stk-kdlg[open]{animation:stkpop .14s ease-out}}
+@media (max-width:600px){dialog.stk-kdlg{width:100vw;height:100%;max-height:100%;margin:0;border:0;border-radius:0}}
+
+/* The card panel's Stack box */
+.stk-det ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.stk-det li{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.stk-det li .meta{margin-left:auto}
+.stk-det .stk-link{font-size:13px;color:var(--fg)}
+.stk-det .stk-link:hover{color:var(--accent)}
+.stk-det .num{margin-right:5px}
+
+.card.stk-drop{outline:2px dashed var(--accent,#378add);outline-offset:2px}
+
+/* The stack confirm (stkConfirm) */
+dialog.stk-dlg{width:min(520px,calc(100vw - 32px));padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--fg);font-family:var(--sans);box-shadow:0 18px 50px rgba(0,0,0,.35)}
+dialog.stk-dlg::backdrop{background:rgba(12,14,24,.5)}
+.stk-dlg form{padding:18px 20px 16px;margin:0}
+.stk-dlg h2{font-size:16px;font-weight:600;margin:0 0 14px}
+.stk-pair{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center}
+.stk-chip{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--bg);min-width:0;display:flex;flex-direction:column;gap:3px}
+.stk-chip.lead{border-left:3px solid var(--accent)}
+.stk-chip .ch-lab{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.stk-chip .ch-t{font-size:13px;font-weight:500;line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.stk-chip .ch-t svg{width:13px;height:13px;vertical-align:-2px;margin-right:4px;color:var(--accent)}
+.stk-chip .ch-col{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.stk-arrow{font-size:11px;color:var(--muted);white-space:nowrap}
+.stk-arrow::after{content:" →";color:var(--accent);font-size:14px}
+.stk-what{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.stk-what li{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45}
+.stk-what .i{flex:none;width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;background:var(--accent-soft);color:var(--accent)}
+.stk-what .i-merge,.stk-what .i-test,.stk-what .i-ship{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.stk-what .i-stop{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.stk-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+@media (prefers-reduced-motion:no-preference){dialog.stk-dlg[open]{animation:stkpop .14s ease-out}@keyframes stkpop{from{transform:translateY(8px) scale(.985);opacity:.6}}}
