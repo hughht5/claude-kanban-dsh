@@ -1,0 +1,23 @@
+/* The card-tester's before-and-after screenshots in the card's details (card #101, ui/evidence.js).
+   Colours come from board.css's variables, so light and dark both work. */
+.ev{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:13px;min-width:0;background:var(--panel)}
+.ev .ev-run{font-size:12.5px;color:var(--muted)}
+.ev .ev-run b{font-weight:600;color:var(--fg)}
+.ev .ev-run b.ev-passed{color:var(--ok)}
+.ev .ev-run b.ev-failed{color:var(--bad)}
+.ev .ev-run b.ev-unclear{color:var(--warn)}
+.ev .ev-run time{font-family:var(--mono);font-size:11.5px}
+/* Two shots side by side; one column when the details are narrow. */
+.ev .ev-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(150px,calc((100% - 8px) / 2)),1fr));gap:8px;min-width:0}
+.ev figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0}
+.ev .ev-k{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.ev img.shot{display:block;width:100%;height:auto;max-height:280px;object-fit:contain;object-position:left top;margin:0;border:1px solid var(--line);border-radius:6px;background:var(--bg);cursor:zoom-in}
+.ev img.shot:not([src]){min-height:60px}
+.ev img.shot.gone{cursor:default;border-style:dashed;color:var(--muted);font-size:12px;padding:6px;min-height:0;max-height:none;box-sizing:border-box}
+.ev figcaption{font-size:12px;line-height:1.4;color:var(--fg);overflow-wrap:anywhere}
+.ev .ev-note{margin:0;font-size:12px;color:var(--muted)}
+.ev .ev-none{font-size:12px;color:var(--muted)}
+.ev details.ev-old summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
+.ev .ev-past{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.ev .ev-b{font-family:var(--mono);font-size:11.5px}
+.ev .ev-stale{margin:0;font-size:12px;color:var(--warn);font-weight:500}

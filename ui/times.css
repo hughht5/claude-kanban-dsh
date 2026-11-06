@@ -1,0 +1,15 @@
+/* Time in each column (card #111): the panel's "Time in columns" section (times.js). */
+.times{display:grid;gap:0;font-size:12.5px}
+.times .trow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 12px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--line)}
+.times .trow.now .tcol{color:var(--fg);font-weight:600}
+.times .tcol{color:var(--muted);min-width:0}
+.times .tnow{margin-left:6px;font:500 10.5px var(--mono);color:var(--accent);background:var(--accent-soft);border-radius:3px;padding:0 5px}
+.times .tval{font:12px var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.times .tvis{color:var(--muted)}
+.times .tmed{font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;min-width:9ch}
+.times details.tother{margin-top:4px}
+.times details.tother>summary{cursor:pointer;color:var(--muted);font-size:12.5px;padding:3px 0;list-style-position:inside}
+.times details.tother>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.times .tnote{margin:4px 0 0;font-size:12px;color:var(--muted);line-height:1.4}
+/* Card #120: lightly in the mockup's style (12px mono figures, line rules). The board's bar is in search.css (.colbar, .legend). */
+.times .trow:last-of-type{border-bottom:0}

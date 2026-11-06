@@ -44,6 +44,19 @@ pub struct Staged {
 pub struct Status {
     running: Running,
     ready: Option<Staged>,
+    /// Why the last Restart now didn't install, once (macOS's helper records it; card #117).
+    failed: Option<String>,
+}
+
+/// The macOS update helper's result, `restart-result.json` beside its log: the error of a
+/// failed install, read once at the first status and then renamed, so the board says it once.
+/// Windows' helper writes no such file.
+fn last_failure(dir: &Path) -> Option<String> {
+    let file = dir.join("restart-result.json");
+    let text = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::rename(&file, dir.join("restart-result.seen.json"));
+    let (ok, error, _) = kanban_unix::text::restart_result(&text)?;
+    (!ok).then(|| error.unwrap_or_else(|| "the helper gave no reason".into()))
 }
 
 #[derive(Serialize, Clone)]
@@ -60,6 +73,8 @@ pub struct Updates {
     /// The `built_at` Hugh clicked Later on. Kept in memory only, so it lasts until the app
     /// restarts; a newer staged build has another `built_at` and shows again.
     later: Mutex<Option<String>>,
+    /// Why the last Restart now didn't install (macOS), until Hugh clicks OK on it.
+    failed: Mutex<Option<String>>,
 }
 
 pub fn folder() -> PathBuf {
@@ -98,15 +113,24 @@ impl Updates {
             .ok()
             .and_then(|r| r.clone())
             .filter(|s| later.as_deref() != Some(s.built_at.as_str()));
-        Status { running: Running { version: VERSION, commit: COMMIT, built_at: BUILT_AT }, ready }
+        Status { running: Running { version: VERSION, commit: COMMIT, built_at: BUILT_AT }, ready, failed: self.failed.lock().ok().and_then(|f| f.clone()) }
     }
 
     /// Looks at the folder again; true if what is ready changed.
     fn refresh(&self, dir: &Path) -> bool {
+        // A failed install's result is picked up at start and at any later look, so a helper
+        // that gave up while this copy still ran is told too.
+        let mut changed = false;
+        if let Some(why) = last_failure(dir) {
+            if let Ok(mut f) = self.failed.lock() {
+                *f = Some(why);
+                changed = true;
+            }
+        }
         let now = ready_now(dir);
-        let Ok(mut ready) = self.ready.lock() else { return false };
+        let Ok(mut ready) = self.ready.lock() else { return changed };
         if *ready == now {
-            return false;
+            return changed;
         }
         *ready = now;
         true
@@ -125,9 +149,13 @@ pub fn watch(app: AppHandle) {
     });
 }
 
+/// What runs and what is ready. A change it finds is announced as the watcher would, so a caller
+/// outside the page (`tools/cdp.mjs shot` reading the build, card #101) can't swallow the banner.
 #[tauri::command]
-pub fn update_status(updates: State<Updates>) -> Status {
-    updates.refresh(&folder());
+pub fn update_status(app: AppHandle, updates: State<Updates>) -> Status {
+    if updates.refresh(&folder()) {
+        let _ = app.emit("update-ready", updates.status());
+    }
     updates.status()
 }
 
@@ -136,6 +164,14 @@ pub fn update_status(updates: State<Updates>) -> Status {
 pub fn update_later(updates: State<Updates>, built_at: String) {
     if let Ok(mut l) = updates.later.lock() {
         *l = Some(built_at);
+    }
+}
+
+/// OK on "The last update didn't install": the notice goes until another install fails.
+#[tauri::command]
+pub fn update_failure_seen(updates: State<Updates>) {
+    if let Ok(mut f) = updates.failed.lock() {
+        *f = None;
     }
 }
 
@@ -152,14 +188,14 @@ pub fn update_restart(app: AppHandle) -> Result<(), String> {
         .or_else(|| exe.parent().map(PathBuf::from))
         .ok_or("couldn't tell where the app is installed")?;
     let app_exe = staged.app_exe.clone().map(PathBuf::from).unwrap_or(exe);
-    let script = helper_script(
+    let script = crate::platform::update_helper(
         std::process::id(),
         Path::new(&staged.installer),
         &install_dir,
         &app_exe,
         &dir.join("restart.log"),
     );
-    spawn_detached(&script)?;
+    crate::platform::spawn_detached(&script)?;
     // The stops take a moment each, so they run off the command's thread, as tray > Quit's do.
     let a = app.clone();
     std::thread::spawn(move || {
@@ -167,66 +203,6 @@ pub fn update_restart(app: AppHandle) -> Result<(), String> {
         a.exit(0);
     });
     Ok(())
-}
-
-/// A PowerShell literal string: single quotes, with any inside doubled.
-fn ps_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-/// The helper's script: wait for the app (pid) to exit, run the installer silently into the
-/// install folder, then start the app again whatever the installer did, so Hugh is never left
-/// without the board. It starts in front, not with `--background`: Hugh clicked Restart now, so
-/// he is looking at the board and expects it back. Each step is logged to `log`.
-pub fn helper_script(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path) -> String {
-    let log = ps_quote(&log.display().to_string());
-    let setup = ps_quote(&installer.display().to_string());
-    // /D must come last and unquoted, even with spaces (NSIS).
-    let d_arg = ps_quote(&format!("/D={}", install_dir.display()));
-    let dir = ps_quote(&install_dir.display().to_string());
-    let exe = ps_quote(&app_exe.display().to_string());
-    format!(
-        "$ErrorActionPreference = 'Continue'\n\
-         $log = {log}\n\
-         function Note($t) {{ \"$(Get-Date -Format o) $t\" | Out-File -FilePath $log -Append -Encoding utf8 }}\n\
-         Note 'Waiting for the app (pid {pid}) to exit'\n\
-         try {{ Wait-Process -Id {pid} -Timeout 300 -ErrorAction Stop }} catch {{}}\n\
-         if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Note 'The app is still running after 5 minutes; not installing.'; exit 1 }}\n\
-         Note ('Installing ' + {setup})\n\
-         try {{\n\
-           $p = Start-Process -FilePath {setup} -ArgumentList '/S', {d_arg} -Wait -PassThru\n\
-           Note \"Installer exit code $($p.ExitCode)\"\n\
-         }} catch {{ Note \"Installer failed to start: $_\" }}\n\
-         Note ('Starting ' + {exe})\n\
-         Start-Process -FilePath {exe} -WorkingDirectory {dir}\n\
-         Note 'Done'\n"
-    )
-}
-
-/// Starts PowerShell with no window, in its own process group and (when allowed) outside any
-/// job this app is in, so it outlives the app.
-fn spawn_detached(script: &str) -> Result<(), String> {
-    use base64::Engine;
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    // -EncodedCommand takes the script as base64 of UTF-16LE, so no quoting can go wrong.
-    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
-    let run = |flags: u32| {
-        std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", &encoded])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(flags)
-            .spawn()
-    };
-    run(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
-        .or_else(|_| run(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP))
-        .map(|_| ())
-        .map_err(|e| format!("couldn't start the update helper: {e}"))
 }
 
 #[cfg(test)]
@@ -268,6 +244,33 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_restart_is_told_once() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(last_failure(t.path()), None, "no result file: nothing to say");
+        let file = t.path().join("restart-result.json");
+        std::fs::write(&file, r#"{"ok":false,"error":"mv: rename failed: Operation not permitted","at":"2026-11-06T10:00:00Z"}"#).unwrap();
+        assert_eq!(last_failure(t.path()).as_deref(), Some("mv: rename failed: Operation not permitted"));
+        assert!(!file.exists() && t.path().join("restart-result.seen.json").is_file(), "kept, renamed");
+        assert_eq!(last_failure(t.path()), None, "said once");
+        std::fs::write(&file, r#"{"ok":true,"error":null,"at":"2026-11-06T10:00:00Z"}"#).unwrap();
+        assert_eq!(last_failure(t.path()), None, "a good install says nothing");
+    }
+
+    #[test]
+    fn the_failure_stays_until_ok() {
+        let t = tempfile::tempdir().unwrap();
+        let u = Updates::default();
+        assert!(!u.refresh(t.path()));
+        std::fs::write(t.path().join("restart-result.json"), r#"{"ok":false,"error":"ditto: no space","at":"2026-11-06T10:00:00Z"}"#).unwrap();
+        assert!(u.refresh(t.path()), "a new failure is a change");
+        assert!(!u.refresh(t.path()), "told once per failure");
+        assert_eq!(u.status().failed.as_deref(), Some("ditto: no space"));
+        assert_eq!(u.status().failed.as_deref(), Some("ditto: no space"), "kept across looks and reloads");
+        *u.failed.lock().unwrap() = None;
+        assert_eq!(u.status().failed, None);
+    }
+
+    #[test]
     fn later_hides_only_that_build() {
         let t = tempfile::tempdir().unwrap();
         let setup = t.path().join("setup.exe");
@@ -282,41 +285,5 @@ mod tests {
         write(t.path(), &setup, "2099-01-02T00:00:00Z");
         assert!(u.refresh(t.path()));
         assert!(u.status().ready.is_some(), "a newer build shows again");
-    }
-
-    #[test]
-    fn helper_quotes_paths() {
-        let s = helper_script(
-            42,
-            Path::new(r"C:\Users\o'neil\.claude-kanban-dsh\update\Claude Kanban DSH_0.1.0_x64-setup.exe"),
-            Path::new(r"C:\Users\o'neil\Programs\Claude Kanban DSH"),
-            Path::new(r"C:\Users\o'neil\Programs\Claude Kanban DSH\claude-kanban-dsh.exe"),
-            Path::new(r"C:\Users\o'neil\.claude-kanban-dsh\update\restart.log"),
-        );
-        assert!(s.contains("Wait-Process -Id 42"));
-        assert!(s.contains(r"'/D=C:\Users\o''neil\Programs\Claude Kanban DSH'"));
-        assert!(s.contains(r"-FilePath 'C:\Users\o''neil\Programs\Claude Kanban DSH\claude-kanban-dsh.exe'"));
-        // Hugh clicked for the restart, so the app comes back in front, not in the background.
-        assert!(!s.contains("--background"), "the restarted app must not start in the background");
-        // The installer runs only after the wait, and the app starts after the installer.
-        let (w, i, r) = (s.find("Wait-Process").unwrap(), s.find("'/S'").unwrap(), s.rfind("Start-Process -FilePath 'C:").unwrap());
-        assert!(w < i && i < r);
-    }
-
-    /// The helper must be valid PowerShell: parse it (never run it) with PowerShell's own parser.
-    #[test]
-    fn helper_parses_as_powershell() {
-        let t = tempfile::tempdir().unwrap();
-        let file = t.path().join("helper.ps1");
-        let s = helper_script(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"));
-        std::fs::write(&file, s).unwrap();
-        let cmd = format!(
-            "$e=$null;$t=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('{}',[ref]$t,[ref]$e);$e.Count",
-            file.display()
-        );
-        let Ok(out) = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &cmd]).output() else {
-            return; // no PowerShell here
-        };
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "parse errors in:\n{}", std::fs::read_to_string(&file).unwrap());
     }
 }

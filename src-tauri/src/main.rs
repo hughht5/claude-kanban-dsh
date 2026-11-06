@@ -1,21 +1,50 @@
 // The Claude Kanban DSH app: the board, a Claude Code session per card, and the app as the dispatcher.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agents;
 mod api;
 mod btw;
+mod changes;
+mod check_size;
+mod configwatch;
 mod control;
+mod critic;
 mod dispatch;
+mod done_when;
+mod evidence;
+mod feed;
+mod goes_on;
+mod guard;
+#[cfg(test)]
+mod hang_tests;
 mod launch;
+mod lockwatch;
+mod monitor;
+mod merger;
 mod needs;
 mod notify;
 mod place;
+mod repro;
+mod reviewer;
+mod router;
+// The Router session and its tools (card #119).
+mod routersession;
+mod routertools;
+mod search;
+mod platform;
 mod private;
 mod sessions;
 mod stack;
+mod stackrun;
+mod steps;
 mod settings;
 mod slash;
+mod small;
 mod tester;
+mod testapp;
 mod testing;
+// Time in each column (card #111).
+mod times;
 mod tools;
 mod transcript;
 mod tray;
@@ -28,7 +57,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
-pub struct Board(pub Mutex<Store>);
+pub struct Board(pub lockwatch::Watched<Store>);
+
+/// Card #120: list_cards' columnSince for each card, kept with the board history marker it was
+/// worked out at (`Store::history_marker`), so it is worked out again only after a revision or
+/// a log line is written.
+#[derive(Default)]
+pub struct ColumnSince(Mutex<Option<((i64, i64), Arc<SinceMap>)>>);
+type SinceMap = std::collections::HashMap<String, Option<String>>;
 
 /// What a refused command sends back to the page.
 #[derive(Serialize)]
@@ -73,10 +109,55 @@ fn changed(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn list_cards(board: State<Board>) -> CmdResult<Vec<Value>> {
+fn list_cards(board: State<Board>, since_cache: State<ColumnSince>) -> CmdResult<Vec<Value>> {
     let store = board.0.lock().map_err(CmdError::other)?;
     let cards = store.list(true).map_err(CmdError::other)?;
-    Ok(cards.iter().map(|c| doc(&store, c)).collect())
+    // Card #120: when each card entered its column. Worked out for all cards in one pass, from
+    // the cards just listed, and only when the board's history changed since the last time.
+    let since = column_since(&store, &cards, &since_cache);
+    let out = cards
+        .iter()
+        .map(|c| {
+            let mut d = doc(&store, c);
+            d["columnSince"] = json!(since.as_ref().and_then(|m| m.get(&c.id).cloned().flatten()));
+            d
+        })
+        .collect();
+    drop(store);
+    Ok(out)
+}
+
+/// The cached columnSince map, worked out again when the history marker moved. None (and a line
+/// on stderr) when it can't be read: each card's columnSince is then null.
+fn column_since(store: &Store, cards: &[Card], cache: &ColumnSince) -> Option<Arc<SinceMap>> {
+    let marker = match store.history_marker() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("columnSince: couldn't read the board's history marker: {e}");
+            return None;
+        }
+    };
+    if let Ok(c) = cache.0.lock() {
+        if let Some((m, map)) = c.as_ref() {
+            // A card made since has a revision, so the marker moved; this only guards odd cases.
+            if *m == marker && cards.iter().all(|k| map.contains_key(&k.id)) {
+                return Some(Arc::clone(map));
+            }
+        }
+    }
+    match store.column_since_of(cards, chrono::Utc::now().timestamp_millis()) {
+        Ok(map) => {
+            let map = Arc::new(map);
+            if let Ok(mut c) = cache.0.lock() {
+                *c = Some((marker, Arc::clone(&map)));
+            }
+            Some(map)
+        }
+        Err(e) => {
+            eprintln!("columnSince: couldn't work out when the cards entered their columns: {e}");
+            None
+        }
+    }
 }
 
 /// Hugh's Add card. `to` is his "Take it to" (card #76): Backlog (or none) leaves it there;
@@ -136,7 +217,7 @@ fn move_card(app: AppHandle, board: State<Board>, id: String, version: i64, colu
 /// Hugh's move of card `id` (his drag, or his drop that ships a card straight after another,
 /// card #89): the stack rules, the ship queue, and the session told or started once the board
 /// is let go.
-fn hugh_move(app: &AppHandle, mut store: std::sync::MutexGuard<'_, Store>, id: String, version: i64, column: &str, extra: Patch) -> CmdResult<Value> {
+fn hugh_move(app: &AppHandle, mut store: lockwatch::WatchedGuard<'_, Store>, id: String, version: i64, column: &str, extra: Patch) -> CmdResult<Value> {
     let app = app.clone();
     let from = store.get(&id).map(|c| c.column).unwrap_or_default();
     let m = store.move_by_hugh(&id, version, column, extra).map_err(|e| refused(&store, e))?;
@@ -155,21 +236,23 @@ fn hugh_move(app: &AppHandle, mut store: std::sync::MutexGuard<'_, Store>, id: S
         }
     }
     let out = json!({ "card": doc(&store, &card), "version": card.version, "ship": m.ship, "plan": m.plan, "shipWaitFor": wait_for });
-    // A stack's child has no session of its own: its stack's session owns it, and hears of the move.
+    // A stack's child has its own session (card #113), which after_move tells or starts like any
+    // card's. Its lead hears of the move, and a child now in Human test is ready to merge.
     let lead = store.stack_lead(&card).ok().flatten();
     if let Some(l) = &lead {
         if dispatch::has_session(&app, &store, &l.id) {
             let text = format!("Hugh moved #{} \"{}\" in this stack from {from} to {}.", card.number, card.title(), card.column);
             let _ = store.queue(&l.id, "message", &text);
         }
+        if card.column == "Human test" {
+            dispatch::child_ready(&app, &mut store, &id);
+        }
     }
     drop(store);
     changed(&app);
-    if lead.is_none() {
-        // Starting a session can take a moment, so it happens off the command's thread.
-        let a = app.clone();
-        std::thread::spawn(move || dispatch::after_move(&a, &id, &from));
-    }
+    // Starting a session can take a moment, so it happens off the command's thread.
+    let a = app.clone();
+    std::thread::spawn(move || dispatch::after_move(&a, &id, &from));
     Ok(out)
 }
 
@@ -204,6 +287,15 @@ fn stack_remove(app: AppHandle, board: State<Board>, lead: i64, child: i64) -> C
 /// `dispatch::after_move` off the lock, which starts its session).
 pub(crate) fn stack_detach_op(app: &AppHandle, store: &mut Store, lead: i64, child: i64, by: &str) -> Result<(Card, Option<String>), String> {
     let l = store.get_by_number(lead).map_err(|e| e.to_string())?;
+    let before = store.get_by_number(child).map_err(|e| e.to_string())?;
+    // A merged child is in the stack's branch already (card #113): it can't leave on its own.
+    if before.stack_of() == Some(lead) {
+        if let Some(why) = stackrun::detach_refused(&before, &l) {
+            return Err(why);
+        }
+    }
+    // A child that builds itself keeps its session and its branch (card #113).
+    let own = kanban_store::stack_own_build(&before);
     store.stack_remove(lead, child, by).map_err(|e| e.to_string())?;
     let c = store.get_by_number(child).map_err(|e| e.to_string())?;
     let branch = l.fields.get("branch").and_then(Value::as_str).unwrap_or("");
@@ -222,6 +314,17 @@ pub(crate) fn stack_detach_op(app: &AppHandle, store: &mut Store, lead: i64, chi
         let _ = store.add_log(&l.id, &format!("#{child} was detached from this stack by {by}"), by);
     }
     let from = c.column.clone();
+    if own {
+        // It keeps its column; from Human test it needs its own hand-over and ship now.
+        let note = stackrun::detached_note(&c, &l);
+        if from == "Human test" {
+            let moved = store.move_by_hugh(&c.id, c.version, "In progress", Patch::new()).map_err(|e| e.to_string())?.card;
+            let _ = store.queue(&moved.id, "message", &dispatch::dry(&moved, note));
+            return Ok((moved, Some(from)));
+        }
+        let _ = store.queue(&c.id, "message", &dispatch::dry(&c, note));
+        return Ok((c, None));
+    }
     if ["Backlog", "Blocked", "In progress", "Human test"].contains(&from.as_str()) {
         let moved = store.move_by_hugh(&c.id, c.version, "Planning", Patch::new()).map_err(|e| e.to_string())?.card;
         return Ok((moved, Some(from)));
@@ -241,13 +344,29 @@ pub(crate) fn stack_join_op(app: &AppHandle, store: &mut Store, lead: i64, child
     let kids = if c.is_lead() { store.stack_children(&c).unwrap_or_default() } else { Vec::new() };
     let (_, j) = store.stack_join(lead, child, by, hugh).map_err(|e| e.to_string())?;
     let text = dispatch::join_message(&l, &c, &kids, &j, by);
-    let _ = store.add_log(&c.id, &format!("Joined stack #{lead} ({by}); {}", if dispatch::built(&c) { "already built: its branch is to be merged into the stack's" } else { "the stack's session plans and builds it" }), by);
+    let _ = store.add_log(&c.id, &format!("Joined stack #{lead} ({by}); {}", if dispatch::built(&c) { "already built: its branch is to be merged into the stack's" } else { "it builds itself in its own session, and the stack's lead merges it" }), by);
     let _ = store.stack_recheck(lead, &format!("#{child} joined"), by);
     let l = store.get_by_number(lead).map_err(|e| e.to_string())?;
     send_to_session(app, store, &l.id, &dispatch::dry(&l, text))?;
+    // A card keeps its own session in a stack (card #113); only a lead that joins stands down,
+    // since the stack it joined has its own integrator.
     if dispatch::has_session(app, store, &c.id) {
-        let _ = store.queue(&c.id, "message", &dispatch::stand_down_message(&c, lead, &j));
+        let note = if c.is_lead() {
+            dispatch::stand_down_message(&c, lead, &j)
+        } else {
+            let joined = store.get(&c.id).map_err(|e| e.to_string())?;
+            format!("This card joined stack #{lead} ({by}). {}", dispatch::child_note(&joined, &l))
+        };
+        let _ = store.queue(&c.id, "message", &dispatch::dry(&c, note));
     }
+    // Its start, or its lead's merge brief, waits until this command lets go of the board.
+    let (a, id) = (app.clone(), c.id.clone());
+    std::thread::spawn(move || {
+        let board = a.state::<Board>();
+        let Ok(mut store) = board.0.lock() else { return };
+        stackrun::joined_started_stack(&a, &mut store, &id);
+        stackrun::lead_effort(&a, &mut store, lead);
+    });
     let _ = app.emit("session-changed", l.id.clone());
     store.get_by_number(lead).map_err(|e| e.to_string())
 }
@@ -335,6 +454,20 @@ fn stack_join_preview(board: State<Board>, lead: i64, child: i64) -> CmdResult<V
     })
 }
 
+/// Each child's stage in stack `lead` (card #113), for the board's stack overlay (card #116):
+/// waiting, building, to-merge, merged, passed or shipped. Only a merged child is testable.
+#[tauri::command]
+fn stack_stages(board: State<Board>, lead: i64) -> CmdResult<Value> {
+    let store = board.0.lock().map_err(CmdError::other)?;
+    let l = store.get_by_number(lead).map_err(CmdError::other)?;
+    let kids = store.stack_children(&l).map_err(CmdError::other)?;
+    let out: Vec<Value> = kids
+        .iter()
+        .map(|k| json!({ "number": k.number, "id": k.id, "stage": stackrun::stage(&store, k, &l), "waitsOn": stackrun::waits_on(k) }))
+        .collect();
+    Ok(json!(out))
+}
+
 /// Hugh dropped card `child` on card or stack `lead` and confirmed. On a card whose ship has
 /// started, the card ships straight after it instead (card #89): `shipAfter` in the reply.
 #[tauri::command]
@@ -384,9 +517,40 @@ fn set_passed(app: AppHandle, board: State<Board>, id: String, on: bool) -> CmdR
     Ok(out)
 }
 
-/// The session a stack child's message goes to: its lead's, or the card's own if it isn't in a stack.
+/// The session a stack child's message goes to: the child's own when it builds itself (card
+/// #113), with a log line on its lead (`note_lead`); its lead's when the lead builds it.
 fn stack_session_card(store: &Store, card: &Card) -> String {
+    if kanban_store::stack_own_build(card) {
+        return card.id.clone();
+    }
     store.stack_lead(card).ok().flatten().map(|l| l.id).unwrap_or_else(|| card.id.clone())
+}
+
+/// The steps of Hugh's problem note on a stack's card, shared by "Found a problem" on a child
+/// and Fail on a stack's lead in Human test (card #102): `log` on the card, a move back to In
+/// progress as Hugh's (logged), Passed cleared, and the stack rules after it. Returns the card.
+fn problem_back(app: &AppHandle, store: &mut Store, id: &str, log: &str) -> CmdResult<Card> {
+    let card = store.get(id).map_err(CmdError::other)?;
+    let from = card.column.clone();
+    let mut patch = Patch::new();
+    if from != "In progress" {
+        patch.insert("column".into(), json!("In progress"));
+    }
+    let card = if patch.is_empty() { card } else { store.update(id, card.version, &patch, HUGH).map_err(|e| refused(store, e))? };
+    store.add_log(id, log, HUGH).map_err(|e| refused(store, e))?;
+    if from != "In progress" {
+        store.add_log(id, &format!("Hugh moved it from {from} to In progress"), HUGH).map_err(CmdError::other)?;
+    }
+    store.set_passed(&card.id, false, HUGH).map_err(CmdError::other)?;
+    dispatch::after_stack_move(app, store, id, HUGH);
+    store.get(id).map_err(CmdError::other)
+}
+
+/// A line on a child's lead about what Hugh sent the child.
+fn note_lead(store: &mut Store, card: &Card, what: &str) {
+    if let Some(l) = store.stack_lead(card).ok().flatten() {
+        let _ = store.add_log(&l.id, &format!("Hugh {what} #{} \"{}\"; it went to that card's own session", card.number, card.title()), "the app");
+    }
 }
 
 /// Hugh's "Found a problem" on a stack's child: it goes back to In progress (Passed cleared),
@@ -398,25 +562,38 @@ fn stack_problem(app: AppHandle, board: State<Board>, id: String, note: String) 
         return Err(CmdError::other("say what the problem is"));
     }
     let mut store = board.0.lock().map_err(CmdError::other)?;
-    let card = store.get(&id).map_err(CmdError::other)?;
-    let from = card.column.clone();
-    let mut patch = Patch::new();
-    if from != "In progress" {
-        patch.insert("column".into(), json!("In progress"));
+    let card = problem_back(&app, &mut store, &id, &format!("Hugh found a problem: {note}"))?;
+    // His note is a bug report for the card-reproducer (card #112). A stack's card isn't held
+    // for it (mark_needed logs that): the lead proves it on the stack's install, and the
+    // message says so (`repro::child_note`).
+    if let Err(e) = store.get(&id).map_err(|e| e.to_string()).and_then(|c| repro::mark_needed(&mut store, &c, "found-a-problem", &note)) {
+        let _ = store.add_log(&id, &format!("Couldn't log the bug report for the card-reproducer: {e}"), "the app");
     }
-    let card = if patch.is_empty() { card } else { store.update(&id, card.version, &patch, HUGH).map_err(|e| refused(&store, e))? };
-    store.add_log(&id, &format!("Hugh found a problem: {note}"), HUGH).map_err(|e| refused(&store, e))?;
-    if from != "In progress" {
-        store.add_log(&id, &format!("Hugh moved it from {from} to In progress"), HUGH).map_err(CmdError::other)?;
+    let own_build = kanban_store::stack_own_build(&card);
+    if own_build && store.rule_on(kanban_store::REPRO_RULE_KEY) {
+        if let Some(l) = store.stack_lead(&card).ok().flatten() {
+            let _ = store.add_log(&l.id, &format!("Hugh's bug on #{n} is for your card-reproducer: after you install the stack with #{n}'s fix, run it with CARD: #{n} (if your session has it).", n = card.number), "the app");
+        }
     }
-    let card = store.set_passed(&card.id, false, HUGH).map_err(CmdError::other)?;
-    dispatch::after_stack_move(&app, &mut store, &id, HUGH);
     let to = stack_session_card(&store, &card);
-    let text = format!(
-        "Hugh tested #{n} \"{t}\" in this stack and found a problem: {note}\n#{n} is back in In progress. Fix it, then move it back to Human test.",
-        n = card.number,
-        t = card.title()
-    );
+    let sb = store.stack_lead(&card).ok().flatten().and_then(|l| l.fields.get("branch").and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| "the stack's branch".into());
+    let mut text = if own_build {
+        note_lead(&mut store, &card, "found a problem on");
+        format!(
+            "Hugh tested this card (#{n} \"{t}\") in its stack and found a problem: {note}\nIt is back in In progress. Fix it forward: in your worktree, rebase your branch onto {sb} (anything already merged drops out), add the fix as new commits, run your card-reviewer and card-tester again, and move it back to Human test. The stack's lead merges it again then.",
+            n = card.number,
+            t = card.title()
+        )
+    } else {
+        format!(
+            "Hugh tested #{n} \"{t}\" in this stack and found a problem: {note}\n#{n} is back in In progress. Fix it, then move it back to Human test.",
+            n = card.number,
+            t = card.title()
+        )
+    };
+    if store.rule_on(kanban_store::REPRO_RULE_KEY) {
+        text = format!("{text}\n\n{}", repro::child_note(card.number, own_build));
+    }
     // A dry-run stack (the test board's copies) only says what it would do.
     let text = match store.get(&to) { Ok(l) => dispatch::dry(&l, text), Err(_) => text };
     let sent = send_to_session(&app, &mut store, &to, &text);
@@ -450,7 +627,12 @@ fn stack_answer(app: AppHandle, board: State<Board>, id: String, answer: String)
     let card = store.update(&id, card.version, &patch, HUGH).map_err(|e| refused(&store, e))?;
     let to = stack_session_card(&store, &card);
     let asked = if question.is_empty() { String::new() } else { format!(" ({question})") };
-    let text = format!("Hugh answered the question on #{} \"{}\"{asked}: {answer}", card.number, card.title());
+    let text = if kanban_store::stack_own_build(&card) {
+        note_lead(&mut store, &card, "answered the question on");
+        format!("Hugh answered the question on this card (#{} \"{}\"){asked}: {answer}", card.number, card.title())
+    } else {
+        format!("Hugh answered the question on #{} \"{}\"{asked}: {answer}", card.number, card.title())
+    };
     // A dry-run stack (the test board's copies) only says what it would do.
     let text = match store.get(&to) { Ok(l) => dispatch::dry(&l, text), Err(_) => text };
     let sent = send_to_session(&app, &mut store, &to, &text);
@@ -519,7 +701,7 @@ fn show_window(app: &AppHandle) {
         let a2 = app.clone();
         let _ = app.run_on_main_thread(move || {
             let Some(w) = a2.get_webview_window("main") else { return };
-            place::place(&w, place::initial(), background);
+            place::place(&w, place::initial(&w), background);
             if !background {
                 let _ = w.set_focus();
             }
@@ -533,11 +715,24 @@ fn board_location() -> String {
     board_path().display().to_string()
 }
 
-/// "live" or "test", fixed when the app was built (`KANBAN_CHANNEL=test`). The page shows a
-/// warning bar across the top in the test build.
+/// "live", "test", "test2", ..., fixed when the app was built (`KANBAN_CHANNEL`). The page shows
+/// a warning bar across the top in a test build.
 #[tauri::command]
 fn app_channel() -> &'static str {
     kanban_store::channel()
+}
+
+/// The name the window, tray and toasts use ("Claude Kanban DSH (test 2)"), so the page shows the same.
+#[tauri::command]
+fn app_name() -> &'static str {
+    kanban_store::app_name()
+}
+
+/// "windows" or "macos", so the page knows the keys and paths of this system without guessing
+/// from the browser (card #117).
+#[tauri::command]
+fn app_platform() -> &'static str {
+    std::env::consts::OS
 }
 
 fn board_path() -> PathBuf {
@@ -545,13 +740,13 @@ fn board_path() -> PathBuf {
 }
 
 fn main() {
+    platform::at_start();
     // A board asked for in import-from.txt (a renamed app's old data folder) comes in first.
-    match kanban_store::import_if_asked(&kanban_store::data_dir(), &private::home()) {
-        Ok(Some(from)) => eprintln!("imported the board from {}", from.display()),
-        Ok(None) => {}
+    let imported = match kanban_store::import_if_asked(&kanban_store::data_dir(), &private::home()) {
+        Ok(i) => i,
         // Never go on to an empty board in its place: the import would then never run.
         Err(e) => panic!("import the board asked for in {}: {e}", kanban_store::IMPORT_REQUEST),
-    }
+    };
     let mut store = Store::open(board_path()).expect("open the board database");
     // Sessions still marked running were ended by the Job Object when the app last stopped:
     // they are marked orphaned. Those mid-turn at the last stop (a Quit or a crash) resume below.
@@ -562,9 +757,18 @@ fn main() {
     if let Err(e) = store.backup_if_none_today(kanban_store::KEEP_BACKUPS) {
         eprintln!("backup at start: {e}");
     }
+    // Settings the import asked for (for example the private folder), through the usual checks.
+    if let Some(i) = &imported {
+        eprintln!("imported the board from {}", i.from.display());
+        for (k, v) in &i.settings {
+            if let Err(e) = store.set_page_setting(k, v) {
+                eprintln!("import: setting {k}: {e}");
+            }
+        }
+    }
     private::set(&store.page_setting(kanban_store::PRIVATE_DIR_KEY).unwrap_or_default());
     let sessions = Arc::new(sessions::Sessions::new().expect("create the job object"));
-    let app = tauri::Builder::default()
+    let app = platform::builder(tauri::Builder::default())
         // One copy only: a second launch brings the running window forward and exits.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.iter().any(|a| a == "--background") {
@@ -578,18 +782,28 @@ fn main() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(Board(Mutex::new(store)))
+        .manage(Board(lockwatch::Watched::new("board", store)))
+        .manage(ColumnSince::default())
         .manage(sessions)
+        .manage(routersession::Router::new())
         .manage(update::Updates::default())
+        .manage(Arc::new(search::Search::new(board_path().parent().map(PathBuf::from).unwrap_or_default())))
         .setup(move |app| {
             show_window(app.handle());
             let dir = board_path().parent().map(PathBuf::from).unwrap_or_default();
+            // Long lock holds and lock order cycles go to locks.log (card #122).
+            lockwatch::start(dir.clone());
             let info = api::start(app.handle().clone(), dir).map_err(|e| eprintln!("local API: {e}")).ok();
             app.manage(Api(info));
+            app.manage(steps::Steps::start(app.handle().clone()));
             dispatch::run(app.handle().clone());
             let handle = app.handle().clone();
             std::thread::spawn(move || dispatch::resume_after_restart(&handle, &mid_turn));
+            // The Router resumes when Hugh had it on, idle or not (card #119).
+            let handle = app.handle().clone();
+            std::thread::spawn(move || routersession::resume_at_start(&handle));
             nightly_backups(app.handle().clone());
+            search::start(app.handle().clone());
             update::watch(app.handle().clone());
             notify::setup(app);
             tray::setup(app)?;
@@ -602,9 +816,20 @@ fn main() {
         .on_window_event(|w, e| {
             place::on_event(w, e);
             tray::on_window_event(w, e);
+            notify::on_window_event(w, e);
         })
         .invoke_handler(tauri::generate_handler![
             list_cards,
+            routersession::router_status,
+            routersession::router_start,
+            routersession::router_stop,
+            routersession::router_send,
+            routersession::router_feed,
+            routersession::router_opened,
+            notify::router_panel_opened,
+            routersession::router_trust,
+            routersession::router_trust_answer,
+            check_size::check_size_again,
             create_card,
             update_card,
             move_card,
@@ -614,8 +839,10 @@ fn main() {
             stack_detach,
             stack_join,
             stack_join_preview,
+            stack_stages,
             set_passed,
             stack_problem,
+            human_test_fail,
             stack_answer,
             open_external,
             open_login,
@@ -623,6 +850,8 @@ fn main() {
             session_info,
             board_location,
             app_channel,
+            app_name,
+            app_platform,
             session_states,
             session_testing,
             session_start,
@@ -639,19 +868,38 @@ fn main() {
             session_stop,
             transcript_read,
             subagent_list,
+            search_sessions,
+            search_status,
             notify::panel_opened,
+            testapp::testapp_status,
+            testapp::testapp_release,
+            testapp::testapp_hold,
+            testapp::testapp_let_restart,
+            testapp::testapp_input,
+            testapp::testapp_release_mkdir,
             needs::needs_you,
             needs::mark_card_read,
             needs::usage_summary,
+            // Time in each column (card #111).
+            times::card_times,
+            times::column_medians,
+            steps::card_steps,
             stack::stack_health,
+            changes::card_changes,
+            changes::card_changes_brief,
+            // The agents' feed (card #120).
+            feed::agents_feed,
+            changes::changes_open,
             update::update_status,
             update::update_later,
             update::update_restart,
+            update::update_failure_seen,
             set_session_model_effort,
             get_session_cap,
             set_session_cap,
             session_queue,
             session_unqueue,
+            route_again,
             resume_offer,
             resume_offer_answer,
             session_status,
@@ -664,20 +912,41 @@ fn main() {
             settings::save_template,
             settings::archive_template,
             settings::get_setting,
+            settings::get_setting_log,
+            goes_on::small_opt_out,
             settings::set_setting,
             settings::list_repos
         ])
         .build(tauri::generate_context!())
         .expect("build the app");
-    app.run(|app, event| match event {
-        // An exit asked for in code (the tray's Quit, app.exit) or the app's last moment:
-        // every live session is suspended, recording whether it was mid-turn. The last
-        // window closing (code None) is left to the tray, which may keep the app running.
-        RunEvent::ExitRequested { code: Some(_), .. } | RunEvent::Exit => {
-            app.state::<Arc<sessions::Sessions>>().stop_all(app);
+    app.run(|app, event| {
+        platform::on_run_event(app, &event);
+        match event {
+            // An exit asked for in code (the tray's Quit, app.exit) or the app's last moment:
+            // every live session is suspended, recording whether it was mid-turn. The last
+            // window closing (code None) is left to the tray, which may keep the app running.
+            RunEvent::ExitRequested { code: Some(_), .. } | RunEvent::Exit => {
+                app.state::<Arc<sessions::Sessions>>().stop_all(app);
+            }
+            _ => {}
         }
-        _ => {}
     });
+}
+
+/// The board's session search (card #110): the newest matches, grouped by card. Off the main
+/// thread; a newer search stops this one, which then says "interrupted".
+#[tauri::command]
+async fn search_sessions(app: AppHandle, query: String, card: Option<String>, limit: Option<usize>) -> CmdResult<Value> {
+    tauri::async_runtime::spawn_blocking(move || search::run(&app, search::Who::Board, &query, card.as_deref(), limit))
+        .await
+        .map_err(CmdError::other)?
+        .map_err(CmdError::other)
+}
+
+/// The search index's progress, for the dialog's indexing line.
+#[tauri::command]
+async fn search_status(app: AppHandle) -> CmdResult<Value> {
+    tauri::async_runtime::spawn_blocking(move || search::status(&app)).await.map_err(CmdError::other)
 }
 
 /// A backup of the board every 24 hours while the app runs, keeping the newest 30.

@@ -8,14 +8,23 @@ const b64bytes=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 // its path in data-local and loses its src, for showShots to draw through image_read: the
 // page's CSP takes images only from the app itself or data: URLs. Network paths are left alone.
 const LOCAL_IMG=/^(file:\/\/\/?)?[A-Za-z]:[\\/]/i;
-function localPath(src){let p=src||"";try{p=decodeURI(p)}catch(e){}return p.replace(/^file:\/\/\/?/i,"")}
+// The system, from the app (card #117): on a Mac a local image is a /Users/... path, Cmd is the
+// shortcut key, and Option is the terminal's Meta key.
+// WKWebView says Macintosh at once, so a panel drawn before the app answers already has the
+// Mac rules; the app's answer then settles it.
+let IS_MAC=/Macintosh/.test(navigator.userAgent||"");
+invoke("app_platform").then(p=>{IS_MAC=p==="macos"}).catch(()=>{});
+const isLocalImg=p=>LOCAL_IMG.test(p)||(IS_MAC&&/^\/(?!\/)/.test(p));
+// The shortcut key: Ctrl or Cmd on Windows; Cmd only on a Mac, so Ctrl+F and Ctrl+K reach the terminal.
+const modKey=e=>IS_MAC?(e.metaKey&&!e.ctrlKey):(e.ctrlKey||e.metaKey);
+function localPath(src){let p=src||"";try{p=decodeURI(p)}catch(e){}return IS_MAC?p.replace(/^file:\/\/(localhost)?/i,""):p.replace(/^file:\/\/\/?/i,"")}
 let mdAt=""; // the message md() is drawing, so a screenshot path reused later loads afresh
 DOMPurify.addHook("beforeSanitizeAttributes",n=>{
   if(n.nodeName!=="IMG")return;
   // marked percent-encodes the link (a backslash comes as %5C), so test the decoded path.
   const path=localPath(n.getAttribute("src"));
   if(/^(\\|\/\/)/.test(path)){n.removeAttribute("src");return} // a network path: never fetched
-  if(!LOCAL_IMG.test(path))return;
+  if(!isLocalImg(path))return;
   n.setAttribute("data-local",path);n.setAttribute("data-at",mdAt);n.removeAttribute("src");n.classList.add("shot");
 });
 function md(t,at){mdAt=at||"";try{return DOMPurify.sanitize(marked.parse(t,{gfm:true,breaks:false}))}finally{mdAt=""}}
@@ -57,14 +66,18 @@ function attachedImages(text){
 function openShot(img){
   const v=document.createElement("div");v.className="shotview";v.setAttribute("role","dialog");v.setAttribute("aria-label","Screenshot");v.tabIndex=-1;
   v.innerHTML=`<img alt="${esc(img.alt||"")}"><div class="cap">${esc(img.dataset.local||"")}</div>`;v.querySelector("img").src=img.src;
-  const close=()=>v.remove();
+  const was=document.activeElement,close=()=>{v.remove();if(was&&was.isConnected&&was!==document.body)was.focus({preventScroll:true})};
   v.onclick=close;v.addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();e.stopPropagation();close()}});
-  document.body.append(v);v.focus();
+  // In a modal dialog (the stack overlay, card #116) the view goes inside it, or it would be behind.
+  (document.querySelector("dialog[open]")||document.body).append(v);v.focus();
 }
 
-function openPanel(id){
+// opts.step (card #102, review.js): the Human test review switches card in place, so the close
+// before the open keeps the review's queue and doesn't hand the focus back to the board.
+function openPanel(id,opts){
   if(panel&&panel.id===id)return; // already open: keep what Hugh is typing
-  closePanel();
+  const step=!!(opts&&opts.step);
+  closePanel(step);
   const c=cards.find(x=>x.id===id);if(!c)return;
   const back=document.createElement("div");back.className="panel-back";back.onclick=closePanel;
   const el=document.createElement("section");el.className="panel";el.setAttribute("role","dialog");el.setAttribute("aria-label","Card session");
@@ -84,6 +97,7 @@ function openPanel(id){
   panel={id,el,back,entries:[],tools:{},offset:0,shown:SHOW,info:null,term:null,fit:null,timer:null,unlisten:[],
     open:new Set(),more:new Set(),find:{q:"",hits:[],i:-1},att:[],status:null,queued:[],ask:{},view:"",gen:0,subs:[],subsTick:0,lastMainUser:null};
   setupFind(el);setupToolToggles(el);setupDrop(id);setupAsk(el);setupSubs(el);
+  if(typeof reviewOpened==="function")reviewOpened(id,step); // review.js: the Human test queue
   // The details column (board.js renders it), and the board's record of which card is open.
   if(!draft||draft.id!==id){draft=null;stale=null}
   selected=id;returnFocusTo=id;try{history.replaceState(null,"","#"+id)}catch(e){}
@@ -102,10 +116,11 @@ function openPanel(id){
   panel.statusTick=setInterval(()=>{if(panel&&panel.status&&panel.status.running)renderStatus();renderBusy();if(panel&&panel.subs.some(subRunning))renderSubs()},1000);
 }
 function panelKeys(e){
-  if((e.ctrlKey||e.metaKey)&&!e.altKey&&e.key.toLowerCase()==="f"&&panel&&!$("#addDlg").open){e.preventDefault();const q=panel.el.querySelector("#p-q");q.focus();q.select();return}
+  if(modKey(e)&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==="f"&&panel&&!$("#addDlg").open){e.preventDefault();const q=panel.el.querySelector("#p-q");q.focus();q.select();return}
   if(e.key==="Escape"&&panel&&!$("#addDlg").open&&!(e.target.closest&&e.target.closest("#cmdbar"))){e.preventDefault();closePanel()}}
 let returnFocusTo=null;
-function closePanel(){
+function closePanel(step){
+  if(typeof reviewClosed==="function")reviewClosed(step===true); // a close by Hugh ends the Human test queue
   if(!panel)return;
   clearInterval(panel.timer);clearInterval(panel.statusTick);clearTimeout(panel.statusSoon);clearTimeout(panel.findTimer);
   panel.unlisten.forEach(u=>{try{u()}catch(e){}});
@@ -114,6 +129,7 @@ function closePanel(){
   invoke("panel_opened",{cardId:null}).catch(()=>{});
   document.removeEventListener("keydown",panelKeys);
   selected=null;draft=null;stale=null;try{history.replaceState(null,"",location.pathname)}catch(e){}
+  if(step===true)return; // the review switching card: the next panel opens straight away
   render();
   const back=returnFocusTo;returnFocusTo=null;
   if(back){const k=document.querySelector(`.card[data-id="${CSS.escape(back)}"]`);if(k)k.focus()}
@@ -187,6 +203,7 @@ async function sendNow(queuedOnly){
   if(!panel)return;const id=panel.id,ta=panel.el.querySelector("#p-text");
   const paths=panel.att.filter(a=>a.path).map(a=>a.path);
   if(!queuedOnly&&panel.att.some(a=>!a.path)){foot(`<span class="err">Wait for the attachments to finish saving.</span>`);return}
+  if(!queuedOnly&&typeof reviewFailing==="function"&&reviewFailing()){const t=withAttachments(ta.value,paths);if(t.trim())reviewFailSend(t);return}
   const text=queuedOnly?"":withAttachments(ta.value,paths);
   if(!queuedOnly&&!text.trim()&&!pendingQueued().length)return;
   hideSlash();
@@ -212,7 +229,7 @@ async function slashList(){
 function hideSlash(){const m=panel&&panel.el.querySelector("#p-slash");if(m){m.hidden=true;m.innerHTML=""}if(panel)panel.slash=null}
 async function slashMenu(ta,send){
   const v=ta.value;
-  if(!/^\/\S*$/.test(v)){hideSlash();return}
+  if(!/^\/\S*$/.test(v)||(typeof reviewFailing==="function"&&reviewFailing())){hideSlash();return}
   const items=await slashList();if(!panel||ta.value!==v||panel.sending)return;
   const q=v.slice(1).toLowerCase();
   const starts=[],inName=[],inDesc=[];
@@ -270,18 +287,22 @@ function slashSent(text){
 function compose(info){
   const box=panel.el.querySelector("#p-compose");
   if(!box.querySelector("#p-text")){
-    box.innerHTML=`<div class="slashmenu" id="p-slash" role="listbox" aria-label="Slash commands" hidden></div><div class="startrow" id="p-startrow"></div><div class="atts" id="p-atts" aria-label="Attachments"></div><textarea id="p-text" rows="2" aria-label="Message to the card's session"></textarea><button class="btn" id="p-send" type="button">Send</button>`;
+    box.innerHTML=`<div class="slashmenu" id="p-slash" role="listbox" aria-label="Slash commands" hidden></div><div class="startrow" id="p-startrow"></div><div class="atts" id="p-atts" aria-label="Attachments"></div><textarea id="p-text" rows="2" aria-label="Message to the card's session"></textarea><button class="btn" id="p-send" type="button">Send</button><button class="btn ghost" id="p-bug" type="button" hidden title="Send this message as a bug report: the card-reproducer subagent reproduces the bug before the fix and proves the fix after it">Report a bug</button>`;
     const ta=box.querySelector("#p-text");
-    const send=async()=>{
+    // bug: Hugh's "Report a bug" (card #112): the message goes as a bug report for the card-reproducer.
+    const post=async bug=>{
       const paths=panel.att.filter(a=>a.path).map(a=>a.path);
       if(panel.att.some(a=>!a.path)){foot(`<span class="err">Wait for the attachments to finish saving.</span>`);return}
-      if(isBtw(ta.value)&&panel.att.length){foot(`<span class="err">A /btw question can't take attachments: remove them, or send it as a message.</span>`);return}
-      const text=withAttachments(ta.value,paths);if(!text.trim())return;
+      // Fail in Human test (review.js): the box's text is Hugh's note, sent as the card's Fail.
+      if(typeof reviewFailing==="function"&&reviewFailing()){const t=withAttachments(ta.value,paths);if(t.trim())reviewFailSend(t);return}
+      if(!bug&&isBtw(ta.value)&&panel.att.length){foot(`<span class="err">A /btw question can't take attachments: remove them, or send it as a message.</span>`);return}
+      const text=withAttachments(ta.value,paths);if(!text.trim()){if(bug)foot(`<span class="err">Say what the bug is in the box first, then Report a bug.</span>`);return}
       hideSlash();const id=panel.id;
       const mid=!!(panel.info&&panel.info.running&&panel.info.state==="working");
       panel.sending=true;
-      try{await invoke("session_send",{cardId:id,text});if(!panel||panel.id!==id)return;panel.midTurn=mid&&!text.trim().startsWith("/");ta.value="";hideSlash();panel.att=[];renderAtts();slashSent(text);refreshInfo()}catch(e){if(panel&&panel.id===id)foot(`<span class="err">Not sent: ${esc(errText(e))}</span>`)}
+      try{await invoke("session_send",{cardId:id,text,bug});if(!panel||panel.id!==id)return;panel.midTurn=mid&&(bug||!text.trim().startsWith("/"));ta.value="";hideSlash();panel.att=[];renderAtts();if(!bug)slashSent(text);refreshInfo()}catch(e){if(panel&&panel.id===id)foot(`<span class="err">Not sent: ${esc(errText(e))}</span>`)}
       finally{if(panel)panel.sending=false}};
+    const send=()=>post(false);
     // As in the terminal: Enter sends (mid-turn it waits for Claude's next step); Ctrl+X Ctrl+S
     // or Ctrl+Enter sends now, interrupting the turn. Ctrl+X with text selected still cuts.
     let chordAt=0;
@@ -289,6 +310,8 @@ function compose(info){
     ta.addEventListener("blur",()=>setTimeout(()=>{if(panel&&document.activeElement!==ta)hideSlash()},150));
     ta.addEventListener("keydown",e=>{
       if(e.isComposing)return;
+      // Esc in fail mode (review.js) leaves fail mode; the panel stays open.
+      if(e.key==="Escape"&&typeof reviewFailing==="function"&&reviewFailing()){e.preventDefault();e.stopPropagation();reviewFailEnd();return}
       if(slashKeys(e,ta,send))return;
       const k=e.key.toLowerCase(),ctrl=e.ctrlKey||e.metaKey;
       if(ctrl&&!e.altKey&&k==="x"&&ta.selectionStart===ta.selectionEnd){e.preventDefault();chordAt=Date.now();return}
@@ -297,11 +320,14 @@ function compose(info){
       if(e.key==="Enter"&&ctrl&&!e.shiftKey){e.preventDefault();sendNow(false);return}
       if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
     ta.addEventListener("paste",onPaste);
-    box.querySelector("#p-send").onclick=send;ta.focus();
+    box.querySelector("#p-send").onclick=send;box.querySelector("#p-bug").onclick=()=>post(true);if(!(typeof reviewOwnsFocus==="function"&&reviewOwnsFocus()))ta.focus();
     slashList().catch(()=>{}); // so the / menu has Claude Code's own list by the time it opens
     renderAtts();
   }
   const ta=box.querySelector("#p-text"),row=box.querySelector("#p-startrow");
+  // Report a bug is for a card being built; in Human test the bug report is Fail (router, card #112),
+  // and a stack's card has Found a problem, which reaches the session leading the stack.
+  {const card=cards.find(x=>x.id===panel.id),bb=box.querySelector("#p-bug");if(bb)bb.hidden=!(card&&colOf(card)==="In progress"&&!isArch(card)&&card.stackOf==null)}
   const c=info.conversation,desktop=!!(c&&c.source==="desktop");
   const hint="Enter to send, Shift+Enter for a new line; paste or drop screenshots and files";
   ta.placeholder=info.running?`Send a message… (Enter to send; while Claude works, Ctrl+X Ctrl+S sends it now and interrupts; Shift+Enter for a new line; paste or drop files)`
@@ -819,7 +845,7 @@ function toggleTerm(){
   if(panel.term){panel.term.dispose();panel.term=null;panel.el.querySelector(".term").remove();const sp=body.querySelector(".split");if(sp)sp.remove();body.classList.remove("with-term");btn.setAttribute("aria-pressed","false");return}
   body.classList.add("with-term");btn.setAttribute("aria-pressed","true");
   const host=document.createElement("div");host.className="term";body.appendChild(host);addSplit(body);
-  const term=new Terminal({fontFamily:'"IBM Plex Mono", Consolas, monospace',fontSize:13,cursorBlink:true,scrollback:5000,
+  const term=new Terminal({fontFamily:'"IBM Plex Mono", Consolas, monospace',fontSize:13,cursorBlink:true,scrollback:5000,macOptionIsMeta:IS_MAC,
     theme:{background:"#0f1117",foreground:"#e6e8ef"}});
   const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(host);panel.term=term;panel.fit=fit;
   term.onData(d=>{if(panel&&panel.info&&panel.info.running)invoke("session_input",{cardId:panel.id,data:d}).catch(()=>{})});
@@ -911,7 +937,7 @@ function openCommand(){
     close();await moveCard(c.id,col,{});
   });
 }
-document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();openCommand()}});
+document.addEventListener("keydown",e=>{if(modKey(e)&&e.key.toLowerCase()==="k"){e.preventDefault();openCommand()}});
 
 // Moving and resizing the panel: drag its header to move it, any edge or corner to resize it,
 // and double-click the header to fill the window again. Its place is remembered as shares of

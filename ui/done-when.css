@@ -1,0 +1,36 @@
+/* "Done when..." and its checks (card #105, done-when.js). Only board.css's colour variables, so it
+   follows the light and dark themes (theme.js sets data-theme; board.css switches the variables). */
+.dw-dot{flex:0 0 auto;display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.dw-dot.dw-s-blocked{background:var(--bad)} .dw-dot.dw-s-done{background:var(--ok)} .dw-dot.dw-s-waiting{background:var(--warn)}
+.dw-dot.dw-s-working{background:var(--info)} .dw-dot.dw-s-paused{background:var(--muted)}
+.dw-bad{color:var(--bad);font-weight:600}
+
+/* The card face (card #120, the mockup's .dw): up to two lines, cut with an ellipsis; the counts stay whole. */
+.card .dw-line{display:flex;align-items:baseline;gap:5px;min-width:0;max-width:100%;overflow:hidden;font-size:12.9px;line-height:1.4;color:var(--muted)}
+.card .dw-line .dw-dot{align-self:center}
+.card .dw-line .dw-t{flex:0 1 auto;min-width:0;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .dw-line .dw-t b{font-weight:600;color:var(--fg)}
+.card .dw-line .dw-n{flex:0 0 auto;font-family:var(--mono);font-size:11px;white-space:nowrap}
+
+/* The panel block, a .shipbox like Ship and Planning. */
+.dw-box .dw-st{display:flex;align-items:center;gap:6px;font-size:12.5px}
+.dw-box .dw-none{color:var(--muted);font-size:12.5px}
+.dw-box input.tx{width:100%}
+.dw-box input.tx:disabled{opacity:.6}
+.dw-list{list-style:none;margin:2px 0;padding:0;display:flex;flex-direction:column;gap:7px}
+.dw-ck{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:6px;row-gap:1px;align-items:start}
+.dw-lab{display:flex;gap:7px;align-items:flex-start;min-width:0;line-height:1.4;cursor:pointer}
+.dw-lab input{flex:0 0 auto;margin:2px 0 0;accent-color:var(--ok);cursor:pointer}
+.dw-lab input:disabled{cursor:default}
+.dw-ct{min-width:0;overflow-wrap:anywhere}
+.dw-met .dw-ct{color:var(--muted)}
+.dw-fail{flex:0 0 auto;align-self:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--bad);border:1px solid currentColor;border-radius:999px;padding:0 6px;line-height:1.45}
+.dw-by,.dw-note{grid-column:1/-1;padding-left:20px;font-size:12px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.dw-note{font-style:italic}
+.dw-x{background:none;border:0;border-radius:4px;color:var(--muted);cursor:pointer;padding:0 5px;font-size:12px;line-height:1.6}
+.dw-x:hover:not(:disabled){color:var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.dw-x:disabled{opacity:.4;cursor:default}
+.dw-addrow{display:flex;gap:6px;align-items:center}
+.dw-addrow input.tx{flex:1 1 auto;width:auto}
+.dw-addrow .btn{flex:0 0 auto;padding:6px 12px}
+.dw-msg:empty{display:none}

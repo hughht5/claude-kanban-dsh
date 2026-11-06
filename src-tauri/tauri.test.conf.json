@@ -13,7 +13,8 @@
         "minWidth": 720,
         "minHeight": 480,
         "visible": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--remote-debugging-port=9334 --remote-allow-origins=http://127.0.0.1:9334 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
       }
     ]
   },

@@ -4,6 +4,9 @@
 //! by Hugh, after a move, or the restart recovery) that would go over it waits in the queue,
 //! kept as JSON in the setting `sessions.start_queue`, and starts oldest-first once a running
 //! session ends or is suspended. The queue logic here is pure, so it is tested without a PTY.
+//!
+//! A stack lead's start goes first (card #113): it is the integrator its children wait on. It
+//! goes in front of every ordinary start, behind other first ones; the cap doesn't change.
 
 use crate::{now, Error, Result, Store};
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,14 @@ pub struct WaitingStart {
     pub queued_at: String,
     /// Increases with each new entry, so the queue keeps its order however it is stored.
     pub seq: u64,
+    /// Goes in front of the ordinary starts (`push_first`, card #113). Older queues have none.
+    #[serde(default)]
+    pub first: bool,
+}
+
+/// The queue's order: first starts, then the rest, each oldest first.
+fn order(w: &WaitingStart) -> (bool, u64) {
+    (!w.first, w.seq)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -64,9 +75,31 @@ impl StartQueue {
             why: why.to_string(),
             queued_at: at.to_string(),
             seq: self.next_seq,
+            first: false,
         });
-        self.items.sort_by_key(|w| w.seq);
+        self.items.sort_by_key(order);
         self.items.len()
+    }
+
+    /// Like `push`, for a start that goes first (a stack lead's, card #113): a new one goes in
+    /// front of every ordinary start, behind the other first ones. One already waiting moves
+    /// up there too. Returns its place, from 1.
+    pub fn push_first(&mut self, card_id: &str, mode: &str, why: &str, at: &str) -> usize {
+        self.push(card_id, mode, why, at);
+        let w = self.items.iter_mut().find(|w| w.card_id == card_id).expect("just pushed");
+        if !w.first {
+            w.first = true;
+            self.next_seq += 1;
+            w.seq = self.next_seq;
+            self.items.sort_by_key(order);
+        }
+        self.position(card_id).expect("just pushed")
+    }
+
+    /// `starts_now` for a first start: there is a place, and no other first start is waiting
+    /// (the ordinary ones wait behind it).
+    pub fn starts_now_first(&self, card_id: &str, running: usize, cap: usize) -> bool {
+        Self::may_start(running, cap) && self.items.iter().all(|w| w.card_id == card_id || !w.first)
     }
 
     pub fn remove(&mut self, card_id: &str) -> Option<WaitingStart> {
@@ -82,7 +115,7 @@ impl StartQueue {
     /// Takes the starts to make now, oldest first: as many as there are free places.
     pub fn take(&mut self, running: usize, cap: usize) -> Vec<WaitingStart> {
         let free = cap.saturating_sub(running).min(self.items.len());
-        self.items.sort_by_key(|w| w.seq);
+        self.items.sort_by_key(order);
         self.items.drain(..free).collect()
     }
 
@@ -122,6 +155,14 @@ impl Store {
     pub fn queue_start(&mut self, card_id: &str, mode: &str, why: &str) -> Result<usize> {
         let mut q = self.start_queue()?;
         let pos = q.push(card_id, mode, why, &now());
+        self.save_start_queue(&q)?;
+        Ok(pos)
+    }
+
+    /// `queue_start` for a start that goes first (a stack lead's, card #113).
+    pub fn queue_start_first(&mut self, card_id: &str, mode: &str, why: &str) -> Result<usize> {
+        let mut q = self.start_queue()?;
+        let pos = q.push_first(card_id, mode, why, &now());
         self.save_start_queue(&q)?;
         Ok(pos)
     }
@@ -224,6 +265,70 @@ mod tests {
         let mut back = back;
         assert_eq!(back.push("d", "new", "hugh", "t"), 3);
         assert!(back.items.windows(2).all(|w| w[0].seq < w[1].seq));
+    }
+
+    // Card #113: a stack lead's start goes in front of the ordinary ones, behind other first ones.
+    #[test]
+    fn push_first_goes_in_front_of_ordinary_starts_and_behind_first_ones() {
+        let mut q = q_with(&["a", "b"]);
+        assert_eq!(q.push_first("lead1", "new", "move", "t"), 1);
+        assert_eq!(q.push_first("lead2", "resume", "move", "t"), 2, "behind the other first start");
+        assert_eq!(q.push("c", "new", "hugh", "t"), 5, "an ordinary start still goes to the back");
+        let ids = |q: &StartQueue| q.items.iter().map(|w| w.card_id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&q), ["lead1", "lead2", "a", "b", "c"]);
+        // One already waiting moves up, behind the first ones, and is marked first.
+        assert_eq!(q.push_first("b", "resume", "move", "t2"), 3);
+        assert_eq!(ids(&q), ["lead1", "lead2", "b", "a", "c"]);
+        assert!(q.items[2].first && q.items[2].mode == "resume" && q.items[2].queued_at == "t");
+        // Again, or an ordinary push of a first start: it keeps its place.
+        assert_eq!(q.push_first("lead1", "resume", "move", "t"), 1);
+        assert_eq!(q.push("lead2", "resume", "hugh", "t"), 2);
+        assert!(q.items[1].first);
+        // A restart stays a restart.
+        q.push("r", "resume", "restart", "t");
+        q.push_first("r", "resume", "move", "t");
+        assert_eq!((q.position("r"), q.items[3].why.as_str()), (Some(4), "restart"));
+        // Taken in that order, and the order survives a round trip through JSON.
+        let back: StartQueue = serde_json::from_str(&serde_json::to_string(&q).unwrap()).unwrap();
+        assert_eq!(back, q);
+        let got: Vec<String> = q.take(7, 10).into_iter().map(|w| w.card_id).collect();
+        assert_eq!(got, ["lead1", "lead2", "b"]);
+    }
+
+    #[test]
+    fn an_old_queue_without_first_still_loads() {
+        let old = r#"{"items":[{"card_id":"a","mode":"new","why":"hugh","queued_at":"t","seq":1},{"card_id":"b","mode":"resume","why":"move","queued_at":"t","seq":2}],"next_seq":2}"#;
+        let mut q: StartQueue = serde_json::from_str(old).unwrap();
+        assert!(q.items.iter().all(|w| !w.first));
+        assert_eq!(q.push_first("lead", "new", "move", "t"), 1);
+        assert_eq!(q.items.iter().map(|w| w.card_id.as_str()).collect::<Vec<_>>(), ["lead", "a", "b"]);
+    }
+
+    #[test]
+    fn a_first_start_waits_only_behind_other_first_ones() {
+        let mut q = q_with(&["a", "b"]);
+        assert!(q.starts_now_first("lead", 5, 10), "ordinary starts don't hold it back");
+        assert!(!q.starts_now("lead", 5, 10), "an ordinary start would wait");
+        assert!(!q.starts_now_first("lead", 10, 10), "the cap still holds");
+        q.push_first("lead1", "new", "move", "t");
+        assert!(!q.starts_now_first("lead2", 5, 10), "lead1 waits first");
+        assert!(q.starts_now_first("lead1", 5, 10), "its own entry doesn't count");
+        assert!(StartQueue::default().starts_now_first("x", 0, 1));
+    }
+
+    #[test]
+    fn store_queues_a_first_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        assert_eq!(s.queue_start("a", "new", "hugh").unwrap(), 1);
+        assert_eq!(s.queue_start("b", "new", "move").unwrap(), 2);
+        assert_eq!(s.queue_start_first("lead", "resume", "move").unwrap(), 1);
+        assert_eq!(s.queue_start("c", "new", "hugh").unwrap(), 4);
+        drop(s);
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        let q = s.start_queue().unwrap();
+        assert_eq!(q.items.iter().map(|w| w.card_id.as_str()).collect::<Vec<_>>(), ["lead", "a", "b", "c"]);
+        assert!(q.items[0].first && q.items[0].mode == "resume");
     }
 
     #[test]

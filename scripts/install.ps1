@@ -5,6 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test   # the test copy, installed now
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test -Stage
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test -FreshCopy
+#   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test2  # test slot 2 (test3, ... alike)
 #
 # Two modes:
 #
@@ -37,32 +38,463 @@
 # WebView profile, with a warning bar across the top of the board. Try a change there first;
 # to swap it into the live app, run this script without -Channel from the same commit.
 #
+# More test slots run beside test the same way: -Channel test2, test3, ... (up to test10). Slot N
+# has its own everything, named from N as crates\store\src\channel.rs names it: install folder
+# Programs\Claude Kanban DSH Test N, exe claude-kanban-dsh-testN, data folder .claude-kanban-dsh-testN, build
+# folder target\testN, identifier io.github.hughht5.claude-kanban-dsh.testN (so its own lock and WebView profile),
+# quit event Local\ClaudeKanbanDshQuitTestN, and the DevTools port 9333 + N to launch it with. Its
+# Tauri config and NSIS hooks are made from tauri.test.conf.json into target\testN at build time.
+# -NamesOnly prints those names as JSON and stops (a store test checks them against channel.rs).
+#
 # Running it twice is safe: the installer upgrades in place, kb.exe is copied over, and the
 # PATH entry is only added when it is missing. It touches only your user account: no admin,
 # no machine-wide settings. Written for Windows PowerShell 5.1.
+#
+# Test installs take turns (-Channel test in mode now only; live and -Stage runs don't). After
+# the build, before step 2, the script:
+#   1. waits, saying why, while an app gave the turn to someone else (turn-live.json,
+#      turn-test.json, while that app runs), Hugh holds the test app (hold.json) or used it in
+#      the last 10 minutes (input-test.json), or the DSH lock folder
+#      (%USERPROFILE%\.dsh-test-app.lock) is someone else's. It holds nothing meanwhile; it
+#      announces itself in install-wait-<pid>.json in the shared folder
+#      (%USERPROFILE%\.claude-kanban-dsh-shared\testapp);
+#   2. then gives a restart notice: -NoticeSeconds when the test app is running and Hugh used
+#      it in the last hour, else none (it starts again if a wait in 1 comes back).
+#      hold.json's allowUntil ("let it restart") skips the hold, input and notice waits;
+#   3. takes install.lock, open with delete-on-close, so a killed run frees it; while another
+#      run holds it, it says who and tries again (the only wait that counts towards
+#      -LockWaitMinutes);
+#   4. looks at the turns once more: a turn given meanwhile sends it back to 1;
+#   5. takes the DSH lock folder (or uses it when it is already this run's; a folder left by
+#      a run that has ended is renamed aside), installs (steps 2 to 7), then lets go of both.
+# The apps write those files and show install.lock's phase; the script only reads them and
+# never calls an app. A run's owner is KANBAN_LOCK_OWNER, else KANBAN_CARD, else "hugh".
+#
+#   -For "wave 3"          the label the apps show for this run (default "#<card>", else the owner)
+#   -IgnoreTurn            Hugh only: don't wait for the apps' turns (prints a warning)
+#   -LockDir <path>        the shared folder; -DshLockDir <path> the DSH lock folder
+#   -LockWaitMinutes 30    how long to wait for install.lock before giving up
+#   -PollSeconds 5         how often to look again; -NoticeSeconds 120 the restart notice
+#   -LockOnly              only the lock and the waits, then "LOCK OK" (scripts\test-install-lock.ps1);
+#                          no build, no install. -AssumeAppRunning goes with it: count the test
+#                          app as running for the notice (otherwise it counts as stopped).
 
 param(
-    [ValidateSet('live', 'test')]
+    # live, test, or a further test slot test2 to test10 (test1 is not a name: it is "test").
+    [ValidatePattern('^(live|test|test[2-9]|test10)$')]
     [string]$Channel = 'live',
     # Test only: replace the test board with a fresh copy of the live one (the old test board
     # is kept in the test data folder's backups).
     [switch]$FreshCopy,
+    # Print the names this channel uses as JSON and stop: nothing is built or touched.
+    [switch]$NamesOnly,
     # Build and stage the installer for the app's "Update ready" banner; don't quit the app.
     [switch]$Stage,
     # Quit, install and restart straight away (the behaviour before -Stage existed).
     [switch]$Now,
-    # Stage into another app's data folder (its update\ folder) instead of this app's own: for a
-    # renamed app, whose new install doesn't exist yet. The old app shows "Update ready", and its
-    # Restart now installs this build into this build's own folder and starts it there. Write
-    # import-from.txt into the new data folder first, so the new app takes the old board.
-    [string]$StageVia = ''
+    # Test installs take turns (see above). The label the apps show for this run.
+    [string]$For,
+    # Hugh only: don't wait for a turn an app gave to someone else.
+    [switch]$IgnoreTurn,
+    # The shared folder with install.lock and the apps' files, and the DSH lock folder.
+    [string]$LockDir,
+    [string]$DshLockDir,
+    # How long to wait for another run's install.lock (fractions allowed), and how often to look.
+    [double]$LockWaitMinutes = 30,
+    [int]$PollSeconds = 5,
+    # The restart notice when Hugh used the test app in the last hour.
+    [int]$NoticeSeconds = 120,
+    # Only the lock and the waits, then "LOCK OK"; with -AssumeAppRunning the test app counts as running.
+    [switch]$LockOnly,
+    [switch]$AssumeAppRunning
 )
 
 $ErrorActionPreference = 'Stop'
 
+# --- Turns for test installs: the functions (called after the build) ---------------------
+
+if (-not $LockDir)    { $LockDir    = Join-Path $env:USERPROFILE '.claude-kanban-dsh-shared\testapp' }
+if (-not $DshLockDir) { $DshLockDir = Join-Path $env:USERPROFILE '.dsh-test-app.lock' }
+$LockOwner = if ($env:KANBAN_LOCK_OWNER) { $env:KANBAN_LOCK_OWNER } elseif ($env:KANBAN_CARD) { $env:KANBAN_CARD } else { 'hugh' }
+$LockLabel = if ($For) { $For } elseif ($env:KANBAN_CARD) { "#$env:KANBAN_CARD" } else { $LockOwner }
+$script:LockStream  = $null   # install.lock, open with delete-on-close while this run holds it
+$script:LockInfo    = $null   # what install.lock says
+$script:DshMade     = $false  # this run made the DSH lock folder, so it removes it
+$script:LockShown   = ''
+$script:LockShownAt = [datetime]::MinValue
+$script:TurnBadSince  = @{}   # channel -> since when its turn file can't be read
+$script:TurnBadWarned = @{}
+
+# UTC, RFC 3339, to the second.
+function Format-LockTime([datetime]$Time) {
+    $Time.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
+}
+
+# A time from one of the files, as UTC; $null when it is missing or can't be read.
+function ConvertTo-LockTime($Value) {
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    if ([string]::IsNullOrWhiteSpace([string]$Value)) { return $null }
+    $t = [datetime]::MinValue
+    $styles = [Globalization.DateTimeStyles]'AdjustToUniversal, AssumeUniversal'
+    if ([datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$t)) { return $t }
+    return $null
+}
+
+# One of the shared JSON files, opened with full sharing (the apps rename a .tmp file over
+# it, which fails while someone has it open without delete sharing) and closed at once.
+# State is 'ok' (Value is the JSON), 'missing', or 'bad' (locked, half-written or broken).
+function Read-LockJsonState([string]$Path) {
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return [pscustomobject]@{ State = 'missing'; Value = $null } }
+        $fs = [System.IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
+        try {
+            $ms = New-Object IO.MemoryStream
+            $fs.CopyTo($ms)
+        } finally { $fs.Dispose() }
+        $text = [Text.Encoding]::UTF8.GetString($ms.ToArray()).TrimStart([char]0xFEFF)
+        $value = $null
+        if (-not [string]::IsNullOrWhiteSpace($text)) { $value = $text | ConvertFrom-Json }
+        if ($null -eq $value) { return [pscustomobject]@{ State = 'bad'; Value = $null } }
+        return [pscustomobject]@{ State = 'ok'; Value = $value }
+    } catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] {
+        return [pscustomobject]@{ State = 'missing'; Value = $null }
+    } catch {
+        return [pscustomobject]@{ State = 'bad'; Value = $null }
+    }
+}
+
+# The same, where a file that can't be read counts as absent ($null) for this poll.
+function Read-LockJson([string]$Path) { (Read-LockJsonState $Path).Value }
+
+# install.lock is written through the handle this run holds (Set-Content can't open it).
+# Emptied first, so a reader sees an empty (unreadable, so held) file, never a mix of two.
+function Write-TestLock {
+    $bytes = (New-Object Text.UTF8Encoding $false).GetBytes(($script:LockInfo | ConvertTo-Json -Compress))
+    $s = $script:LockStream
+    $s.SetLength(0)
+    [void]$s.Seek(0, [IO.SeekOrigin]::Begin)
+    $s.Write($bytes, 0, $bytes.Length)
+    $s.Flush()
+}
+
+# install-wait-<pid>.json: this run waits (a plain file, written beside and renamed in).
+function Write-WaitFile {
+    $tmp = "$($script:WaitPath).tmp"
+    try {
+        [IO.File]::WriteAllText($tmp, ($script:LockInfo | ConvertTo-Json -Compress))
+        if (Test-Path -LiteralPath $script:WaitPath) { [IO.File]::Replace($tmp, $script:WaitPath, [NullString]::Value) }
+        else { [IO.File]::Move($tmp, $script:WaitPath) }
+    } catch { Write-Warning "Could not write $($script:WaitPath) ($($_.Exception.Message))" }
+}
+
+function Remove-WaitFile {
+    if ($script:WaitPath) {
+        Remove-Item -LiteralPath $script:WaitPath, "$($script:WaitPath).tmp" -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-LockHolderText([string]$Path) {
+    $h = Read-LockJson $Path
+    if (-not $h) { return 'install.lock, held by another run (its details cannot be read yet)' }
+    $t = "install.lock, held by $($h.label) (owner $($h.owner), pid $($h.pid), $($h.phase)"
+    if ($h.waitingFor) { $t += ", waiting for $($h.waitingFor)" }
+    return "$t)"
+}
+
+# The DSH lock folder's owner file: line 1 the owner, line 2 "pid <pid> <pidStart>" (older
+# writers leave out line 2).
+function Get-DshOwnerLines {
+    try { return @(([IO.File]::ReadAllText((Join-Path $DshLockDir 'owner'))) -split "`r?`n" | ForEach-Object { $_.Trim() }) }
+    catch { return @() }
+}
+
+function Get-DshOwner {
+    $lines = @(Get-DshOwnerLines)
+    if ($lines.Count -gt 0) { return $lines[0] }
+    return ''
+}
+
+# The app that wrote a turn file is still that app: the pid runs and started at appStart (2 s).
+function Test-LockAppAlive($AppPid, $AppStart) {
+    try {
+        $start = ConvertTo-LockTime $AppStart
+        if (-not $start) { return $false }
+        $p = Get-Process -Id ([int]$AppPid) -ErrorAction Stop
+        return ([math]::Abs(($p.StartTime.ToUniversalTime() - $start).TotalSeconds) -le 2)
+    } catch { return $false }
+}
+
+# A DSH lock folder whose owner file names a process that has ended (or a reused pid) is
+# dead: it is renamed aside (never deleted). $true when it was moved.
+function Move-DeadDshLock {
+    $lines = @(Get-DshOwnerLines)
+    if ($lines.Count -lt 2 -or $lines[1] -notmatch '^pid\s+(\d+)\s+(\S+)$') { return $false }
+    if (Test-LockAppAlive $Matches[1] $Matches[2]) { return $false }
+    $aside = "$(Split-Path -Leaf $DshLockDir).released-$([datetime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", [Globalization.CultureInfo]::InvariantCulture))"
+    try {
+        Rename-Item -LiteralPath $DshLockDir -NewName $aside -ErrorAction Stop
+    } catch { return $false }
+    Write-Warning "The DSH lock folder belonged to a run that has ended (owner $($lines[0]), $($lines[1])): moved it aside to $aside."
+    return $true
+}
+
+# A turn an app gave to someone else (check a), or $null. The test app read is this run's own
+# slot (turn-test.json, turn-test2.json, ...: each app writes turn-<its channel>.json, card #118).
+function Get-TurnWait {
+    if ($IgnoreTurn) { return $null }
+    $now = [datetime]::UtcNow
+    foreach ($ch in 'live', $Channel) {
+        $read = Read-LockJsonState (Join-Path $LockDir "turn-$ch.json")
+        if ($read.State -eq 'bad') {
+            # Unreadable is not "nobody's turn": wait, for 2 minutes at most.
+            if (-not $script:TurnBadSince.ContainsKey($ch)) { $script:TurnBadSince[$ch] = $now }
+            if (($now - $script:TurnBadSince[$ch]).TotalMinutes -lt 2) { return "the $ch app's turn file can't be read" }
+            if (-not $script:TurnBadWarned[$ch]) {
+                Write-Warning "turn-$ch.json has been unreadable for 2 minutes: going on as if it were absent."
+                $script:TurnBadWarned[$ch] = $true
+            }
+            continue
+        }
+        $script:TurnBadSince.Remove($ch)
+        $script:TurnBadWarned.Remove($ch)
+        $turn = $read.Value
+        if (-not $turn -or -not $turn.holder) { continue }
+        $h = $turn.holder
+        $expires = ConvertTo-LockTime $h.expiresAt
+        if (-not $expires -or $expires -le $now) { continue }
+        if ([string]$h.owner -eq $LockOwner) { continue }
+        if (-not (Test-LockAppAlive $turn.appPid $turn.appStart)) { continue }
+        return "the $ch app's turn: $($h.label) ($($h.kind))"
+    }
+    return $null
+}
+
+# The first reason to wait (checks a to e; the notice is in Enter-TestLock), or $null.
+# Sets $script:LockAllowed when hold.json's allowUntil says "let it restart".
+function Get-TestLockWait {
+    $now = [datetime]::UtcNow
+    $turn = Get-TurnWait
+    if ($turn) { return $turn }
+    $holdPath = Join-Path $LockDir 'hold.json'
+    $hold = Read-LockJson $holdPath
+    $allow = $null
+    if ($hold) { $allow = ConvertTo-LockTime $hold.allowUntil }
+    $script:LockAllowed = [bool]($allow -and $allow -gt $now)
+    if (-not $script:LockAllowed) {
+        $until = $null
+        if ($hold) { $until = ConvertTo-LockTime $hold.until }
+        if ($until) {
+            # A hold lasts at most 2 hours from when it was written.
+            try {
+                $cap = (Get-Item -LiteralPath $holdPath).LastWriteTimeUtc.AddHours(2)
+                if ($until -gt $cap) { $until = $cap }
+            } catch { }
+            if ($until -gt $now) { return "Hugh's hold until $($until.ToLocalTime().ToString('HH:mm'))" }
+        }
+        $inp = Read-LockJson (Join-Path $LockDir 'input-test.json')
+        $at = $null
+        if ($inp) { $at = ConvertTo-LockTime $inp.at }
+        if ($at -and ($now - $at).TotalMinutes -lt 10) { return "Hugh used the test app at $($at.ToLocalTime().ToString('HH:mm'))" }
+    }
+    if (Test-Path -LiteralPath $DshLockDir) {
+        $o = Get-DshOwner
+        if ($o -ne $LockOwner -and -not (Move-DeadDshLock)) {
+            if (-not $o) { $o = 'not written yet' }
+            return "the DSH lock folder (owner $o)"
+        }
+    }
+    return $null
+}
+
+# The notice before a restart: -NoticeSeconds when the test app runs and Hugh used it in the
+# last hour, else 0.
+function Get-NoticeSeconds {
+    if ($LockOnly) { $running = [bool]$AssumeAppRunning }
+    else { $running = [bool](Get-Process -Name $AppNames -ErrorAction SilentlyContinue) }
+    $inp = Read-LockJson (Join-Path $LockDir 'input-test.json')
+    $at = $null
+    if ($inp) { $at = ConvertTo-LockTime $inp.at }
+    if ($running -and $at -and ([datetime]::UtcNow - $at).TotalMinutes -lt 60) { return $NoticeSeconds }
+    return 0
+}
+
+# Says why the run waits when the reason changes, and again once a minute. -Record also
+# writes it into the wait file's waitingFor when it changes.
+function Show-TestLockWait([string]$Text, [switch]$Record) {
+    $changed = $Text -ne $script:LockShown
+    if ($Text -and ($changed -or ((Get-Date) - $script:LockShownAt).TotalSeconds -ge 60)) {
+        Write-Host "  Waiting: $Text (looking again every $PollSeconds s)"
+        $script:LockShownAt = Get-Date
+    }
+    if ($changed) {
+        $script:LockShown = $Text
+        if ($Record) {
+            $script:LockInfo.waitingFor = $null
+            if ($Text) { $script:LockInfo.waitingFor = $Text }
+            Write-WaitFile
+        }
+    }
+}
+
+# The DSH lock folder: made with mkdir (no -Force), so only one taker wins. $true when this
+# run may go on: it made the folder, or the folder is already this owner's (then it stays).
+function Enter-DshLock {
+    $made = $false
+    foreach ($try in 1, 2) {
+        try {
+            New-Item -ItemType Directory -Path $DshLockDir -ErrorAction Stop | Out-Null
+            $made = $true
+            break
+        } catch {
+            if (-not (Test-Path -LiteralPath $DshLockDir)) { throw }
+            if ((Get-DshOwner) -eq $LockOwner) {
+                $script:DshMade = $false
+                Write-Host "Using the DSH lock folder $DshLockDir (already owner $LockOwner; it stays afterwards)."
+                return $true
+            }
+            if (-not (Move-DeadDshLock)) { return $false }
+        }
+    }
+    if (-not $made) { return $false }
+    $script:DshMade = $true
+    [IO.File]::WriteAllText((Join-Path $DshLockDir 'owner'), "$LockOwner`r`npid $PID $($script:LockInfo.pidStart)`r`n")
+    Write-Host "Took the DSH lock folder $DshLockDir (owner $LockOwner)."
+    return $true
+}
+
+# Lets go of install.lock only (delete-on-close removes the file).
+function Close-TestLockFile {
+    if ($script:LockStream) {
+        try { $script:LockStream.Dispose() } catch { }
+        $script:LockStream = $null
+    }
+}
+
+# Steps 1 to 5 of "Test installs take turns" at the top. It holds install.lock and the DSH
+# lock folder when it returns.
+function Enter-TestLock {
+    $done = $false
+    try {
+        New-Item -ItemType Directory -Force -Path $LockDir | Out-Null
+        $path = Join-Path $LockDir 'install.lock'
+        $script:WaitPath = Join-Path $LockDir "install-wait-$PID.json"
+        $pidStart = $null
+        try { $pidStart = Format-LockTime (Get-Process -Id $PID).StartTime } catch { }
+        $card = $null
+        if ($env:KANBAN_CARD) { $card = [string]$env:KANBAN_CARD }
+        $script:LockInfo = [ordered]@{
+            pid        = $PID
+            pidStart   = $pidStart
+            owner      = $LockOwner
+            label      = $LockLabel
+            card       = $card
+            commit     = $Commit
+            worktree   = $Root
+            startedAt  = Format-LockTime ([datetime]::UtcNow)
+            phase      = 'waiting'
+            waitingFor = $null
+            restartAt  = $null
+        }
+        if ($IgnoreTurn) { Write-Warning '-IgnoreTurn: not waiting for a turn the apps gave to someone else.' }
+        $lockWaited = [timespan]::Zero
+
+        while ($true) {
+            # 1 and 2. Wait without install.lock, announced in install-wait-<pid>.json, while a
+            # turn, a hold, Hugh's input or the DSH lock folder stands in the way. The notice
+            # starts when they are all clear, and again whenever one comes back and clears.
+            $script:LockShown = ''
+            $script:LockInfo.phase = 'waiting'
+            $script:LockInfo.waitingFor = $null
+            $script:LockInfo.restartAt = $null
+            $restartAt = $null
+            Write-WaitFile
+            while ($true) {
+                $reason = Get-TestLockWait
+                $now = [datetime]::UtcNow
+                if ($reason) {
+                    $restartAt = $null
+                } else {
+                    if ($null -eq $restartAt) {
+                        $notice = 0
+                        if (-not $script:LockAllowed) { $notice = Get-NoticeSeconds }
+                        $restartAt = $now.AddSeconds($notice)
+                        $script:LockInfo.restartAt = Format-LockTime $restartAt
+                        Write-WaitFile
+                    }
+                    if (-not $script:LockAllowed -and $now -lt $restartAt) {
+                        $reason = "notice until $($restartAt.ToLocalTime().ToString('HH:mm:ss'))"
+                    }
+                }
+                Show-TestLockWait $reason -Record
+                if (-not $reason) { break }
+                Start-Sleep -Seconds $PollSeconds
+            }
+
+            # 3. install.lock. Busy (a sharing violation) or delete-pending (access denied): try
+            # again. Only this wait counts towards -LockWaitMinutes.
+            Remove-WaitFile
+            $script:LockShown = ''
+            $tried = Get-Date
+            while (-not $script:LockStream) {
+                try {
+                    $script:LockStream = [IO.FileStream]::new($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite,
+                        [IO.FileShare]'Read, Delete', 4096, [IO.FileOptions]::DeleteOnClose)
+                } catch {
+                    $e = $_.Exception
+                    while ($e.InnerException -and -not ($e -is [IO.IOException] -or $e -is [UnauthorizedAccessException])) { $e = $e.InnerException }
+                    if (-not ($e -is [IO.IOException] -or $e -is [UnauthorizedAccessException])) { throw }
+                    $holder = Get-LockHolderText $path
+                    if (($lockWaited + ((Get-Date) - $tried)).TotalMinutes -ge $LockWaitMinutes) {
+                        throw "Gave up after $LockWaitMinutes min waiting for $holder. Run this again when that install has finished."
+                    }
+                    Show-TestLockWait $holder
+                    Start-Sleep -Seconds $PollSeconds
+                }
+            }
+            $lockWaited += (Get-Date) - $tried
+            $script:LockInfo.phase = 'installing'
+            $script:LockInfo.waitingFor = $null
+            Write-TestLock
+
+            # 4. A turn given while this run waited for install.lock: let it go and wait again.
+            $turn = Get-TurnWait
+            if ($turn) {
+                Write-Host "  Took install.lock, but now $turn; letting it go and waiting again."
+                Close-TestLockFile
+                continue
+            }
+            # 5. The DSH lock folder (taken meanwhile: let install.lock go and wait again).
+            if (Enter-DshLock) { break }
+            Write-Host '  Took install.lock, but the DSH lock folder was taken meanwhile; letting it go and waiting again.'
+            Close-TestLockFile
+        }
+        Write-Host "Took $path for $LockLabel (owner $LockOwner). It is this run's turn."
+        $done = $true
+    } finally {
+        if (-not $done) { Release-TestLock }
+    }
+}
+
+# Removes the DSH lock folder if this run made it and it is still this owner's, removes the
+# wait file, then closes install.lock (delete-on-close removes the file). Safe to call when
+# nothing is held.
+function Release-TestLock {
+    if ($script:DshMade) {
+        $script:DshMade = $false
+        try {
+            if ((Get-DshOwner) -eq $LockOwner) { Remove-Item -LiteralPath $DshLockDir -Recurse -Force }
+        } catch { Write-Warning "Could not remove the DSH lock folder $DshLockDir ($($_.Exception.Message))" }
+    }
+    Remove-WaitFile
+    Close-TestLockFile
+}
+
 $Root = Split-Path -Parent $PSScriptRoot
-$Test = $Channel -eq 'test'
-if ($FreshCopy -and -not $Test) { throw '-FreshCopy is for -Channel test only; the live board is never replaced.' }
+$Channel = $Channel.ToLowerInvariant()   # ValidatePattern ignores case; the build's check does not
+# The slot: live 0, test 1, testN N. Every name below is derived from it.
+if ($Channel -eq 'live') { $Slot = 0 } elseif ($Channel -eq 'test') { $Slot = 1 } else { $Slot = [int]$Channel.Substring(4) }
+$Test = $Slot -gt 0
+if ($FreshCopy -and -not $Test) { throw '-FreshCopy is for a test channel only; the live board is never replaced.' }
 if ($Stage -and $Now) { throw 'Pass -Stage or -Now, not both.' }
 if ($Stage) { $Mode = 'stage' } elseif ($Now) { $Mode = 'now' } elseif ($Test) { $Mode = 'now' } else { $Mode = 'stage' }
 if ($StageVia -and $Mode -ne 'stage') { throw '-StageVia stages an update: drop -Now.' }
@@ -72,7 +504,7 @@ if ($FreshCopy -and $Mode -eq 'stage') { throw '-FreshCopy needs the test app st
 # Outside AppData on purpose: Windows redirects AppData writes made by processes started from
 # a packaged app (such as the Claude desktop app) into that app's own private copy, which
 # launches from the Start menu or a shortcut never see.
-if ($Test) {
+if ($Slot -eq 1) {
     $InstallDir = Join-Path $env:USERPROFILE 'Programs\Claude Kanban DSH Test'
     $AppExe     = Join-Path $InstallDir 'claude-kanban-dsh-test.exe'   # mainBinaryName in tauri.test.conf.json
     $AppNames   = @('claude-kanban-dsh-test', 'Claude Kanban DSH Test')
@@ -80,6 +512,17 @@ if ($Test) {
     $TargetDir  = Join-Path $Root 'target\test'
     $DataDir    = Join-Path $env:USERPROFILE '.claude-kanban-dsh-test'
     $Name       = 'Claude Kanban DSH (test)'
+    $Identifier = 'io.github.hughht5.claude-kanban-dsh.test'
+} elseif ($Test) {
+    # Test slot N: the test names with N added (channel.rs derives the same).
+    $InstallDir = Join-Path $env:USERPROFILE "Programs\Claude Kanban DSH Test $Slot"
+    $AppExe     = Join-Path $InstallDir "claude-kanban-dsh-test$Slot.exe"   # mainBinaryName in the generated config
+    $AppNames   = @("claude-kanban-dsh-test$Slot", "Claude Kanban DSH Test $Slot")
+    $QuitEvent  = "Local\ClaudeKanbanDshQuitTest$Slot"
+    $TargetDir  = Join-Path $Root "target\test$Slot"
+    $DataDir    = Join-Path $env:USERPROFILE ".claude-kanban-dsh-test$Slot"
+    $Name       = "Claude Kanban DSH (test $Slot)"
+    $Identifier = "io.github.hughht5.claude-kanban-dsh.test$Slot"
 } else {
     $InstallDir = Join-Path $env:USERPROFILE 'Programs\Claude Kanban DSH'
     $AppExe     = Join-Path $InstallDir 'claude-kanban-dsh.exe'
@@ -89,9 +532,25 @@ if ($Test) {
     $TargetDir  = Join-Path $Root 'target'
     $DataDir    = Join-Path $env:USERPROFILE '.claude-kanban-dsh'
     $Name       = 'Claude Kanban DSH'
+    $Identifier = 'io.github.hughht5.claude-kanban-dsh'
 }
 $UpdateDir = Join-Path $DataDir 'update'
-if ($StageVia) { $UpdateDir = Join-Path $StageVia 'update' }
+$DevToolsPort = 9333 + $Slot
+
+if ($NamesOnly) {
+    [ordered]@{
+        channel       = $Channel
+        slot          = $Slot
+        install_dir   = $InstallDir
+        app_exe       = $AppExe
+        quit_event    = $QuitEvent
+        data_dir      = $DataDir
+        name          = $Name
+        identifier    = $Identifier
+        devtools_port = $DevToolsPort
+    } | ConvertTo-Json -Compress
+    return
+}
 
 if ($Mode -eq 'stage' -and -not $StageVia -and -not (Test-Path $AppExe)) {
     throw "$Name isn't installed at $AppExe yet, so there is nothing to update. Run this with -Now for the first install."
@@ -104,6 +563,16 @@ if (-not $Commit) { $Commit = 'unknown' }
 if (& git -C $Root status --porcelain 2>$null) { $Commit = "$Commit-dirty" }
 $BuiltAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 $Version = (Get-Content (Join-Path $Root 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
+
+# Test installs take turns (the functions are at the top). -LockOnly stops here.
+$LockGate = $Test -and $Mode -eq 'now'
+if ($LockOnly -and -not $LockGate) { throw '-LockOnly is for -Channel test in mode now only.' }
+if ($AssumeAppRunning -and -not $LockOnly) { throw '-AssumeAppRunning goes with -LockOnly only.' }
+if ($IgnoreTurn -and $LockOwner -ne 'hugh') { throw "-IgnoreTurn is for Hugh only (this run's owner is $LockOwner)." }
+if ($LockOnly) {
+    try { Enter-TestLock; Write-Host 'LOCK OK' } finally { Release-TestLock }
+    exit 0
+}
 
 # --- 1. Build ----------------------------------------------------------------------------
 
@@ -122,10 +591,40 @@ try {
     $env:KANBAN_BUILT_AT   = $BuiltAt
     # beforeBuildCommand in tauri.conf.json builds kb.exe first; the installer bundles it.
     # Both inherit these variables, so kb and the app are always the same channel.
-    if ($Test) {
+    if ($Slot -eq 1) {
         $env:KANBAN_CHANNEL   = 'test'
         $env:CARGO_TARGET_DIR = $TargetDir
         cargo tauri build --config (Join-Path $Root 'src-tauri\tauri.test.conf.json')
+    } elseif ($Test) {
+        # Slot N: tauri.test.conf.json with the slot's names, and NSIS hooks that take kb.exe
+        # from this slot's own target folder. Both are made in target\testN, so the checkout
+        # stays clean (a dirty checkout would mark the build's commit "-dirty").
+        $env:KANBAN_CHANNEL   = $Channel
+        $env:CARGO_TARGET_DIR = $TargetDir
+        New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+        $Utf8 = New-Object System.Text.UTF8Encoding($false)   # no BOM
+        $Hooks = Join-Path $TargetDir 'hooks.nsh'
+        $HookText = "; Made by scripts\install.ps1 for $Channel, as src-tauri\windows\hooks.test.nsh is for test.`r`n" +
+            "!define KANBAN_KB_EXE `"$(Join-Path $TargetDir 'release\kb.exe')`"`r`n" +
+            "!include `"$(Join-Path $Root 'src-tauri\windows\hooks.nsh')`"`r`n"
+        [System.IO.File]::WriteAllText($Hooks, $HookText, $Utf8)
+        $Conf = Get-Content (Join-Path $Root 'src-tauri\tauri.test.conf.json') -Raw | ConvertFrom-Json
+        $Conf.productName          = "Claude Kanban DSH Test $Slot"
+        $Conf.mainBinaryName       = "claude-kanban-dsh-test$Slot"
+        $Conf.identifier           = $Identifier
+        $Conf.app.windows[0].title = $Name
+        # The slot's own DevTools port (9333 + N) in the window's browser args (card #101's
+        # always-on port), so two test apps never share one.
+        $Args0 = [string]$Conf.app.windows[0].additionalBrowserArgs
+        $Args0 = $Args0 -replace '--remote-debugging-port=\d+', "--remote-debugging-port=$DevToolsPort"
+        $Args0 = $Args0 -replace 'http://127\.0\.0\.1:\d+', "http://127.0.0.1:$DevToolsPort"
+        $Conf.app.windows[0].additionalBrowserArgs = $Args0
+        $Conf.bundle.windows.nsis.installerHooks = $Hooks
+        # The icons are relative to src-tauri in the base config; give them in full here.
+        $Conf.bundle.icon = @($Conf.bundle.icon | ForEach-Object { Join-Path $Root "src-tauri\$_" })
+        $ConfPath = Join-Path $TargetDir "tauri.$Channel.conf.json"
+        [System.IO.File]::WriteAllText($ConfPath, ($Conf | ConvertTo-Json -Depth 20), $Utf8)
+        cargo tauri build --config $ConfPath
     } else {
         # A live build is never made with KANBAN_CHANNEL set, nor into another target folder.
         Remove-Item Env:KANBAN_CHANNEL -ErrorAction SilentlyContinue
@@ -178,6 +677,11 @@ if ($Mode -eq 'stage') {
     return
 }
 
+# --- Test installs take turns: install.lock, the waits, the DSH lock folder (see the top) --
+
+if ($LockGate) { Enter-TestLock }
+
+try {
 # --- 2. Quit the running app cleanly ------------------------------------------------------
 
 function Get-App { Get-Process -Name $AppNames -ErrorAction SilentlyContinue }
@@ -253,6 +757,7 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
     if (($env:Path -split ';') -notcontains $InstallDir) { $env:Path = "$env:Path;$InstallDir" }
 } else {
     Write-Host "The test folder is not added to PATH: run its kb as `"$KbInstalled`"."
+    Write-Host "Launch it with DevTools port $DevToolsPort for tools\cdp.mjs (CDP_PORT=$DevToolsPort)."
 
     # --- 6. A copy of the live board for the test app (test only) -------------------------
 
@@ -276,3 +781,5 @@ Write-Host "Starting $Name..."
 # --background: it opens behind whatever is in front, without taking focus.
 Start-Process -FilePath $AppExe -WorkingDirectory $InstallDir -ArgumentList '--background'
 Write-Host 'Done.'
+if ($LockGate) { $script:LockInfo.phase = 'started'; Write-TestLock }
+} finally { Release-TestLock }

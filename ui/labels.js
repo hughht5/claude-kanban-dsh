@@ -16,7 +16,8 @@ function labelTags(c){return labelsOf(c).map(l=>`<button class="lbl" type="butto
 // The search box: "label:BUG" shows only cards with exactly that label (any case).
 function labelMatch(c,q){const m=/^label:\s*(.+)$/.exec(q);if(!m)return null;const k=m[1].trim();return labelsOf(c).some(l=>lblKey(l)===k)}
 document.addEventListener("click",e=>{const b=e.target.closest("button.lbl[data-label]");if(!b)return;e.preventDefault();e.stopPropagation();
-  const box=$("#q");const v="label:"+b.dataset.label;box.value=box.value.trim().toLowerCase()===v.toLowerCase()?"":v;box.dispatchEvent(new Event("input",{bubbles:true}))},true);
+  // Adds the label's term to the filter, or takes it out again; other terms stay (they all must match).
+  const box=$("#q"),l=b.dataset.label,v=/\s/.test(l)?`label:"${l}"`:"label:"+l;box.value=qToggle(box.value,v);box.dispatchEvent(new Event("input",{bubbles:true}))},true);
 
 // Every label on the board, most used first: the add box suggests them.
 function boardLabels(){const n=new Map();for(const c of cards)for(const l of labelsOf(c)){const k=lblKey(l);const e=n.get(k);if(e)e.n++;else n.set(k,{l,n:1})}

@@ -1,0 +1,259 @@
+# CI for Claude Kanban DSH (card #114). Windows on every push: cargo test --workspace (which includes
+# tests/platform_guard.rs, so Windows-only code outside src-tauri/src/platform/ fails here),
+# then a build of the app and kb.
+#
+# macOS (card #117): a gate job decides, then the Mac jobs build the smoke app (the test
+# channel under its own name, "Claude Kanban DSH Smoke"), install it with scripts/install.sh and run
+# scripts/smoke-macos.sh. On this private repo the Mac jobs run only on pushes to dsh-117 that
+# change app code, scripts, the Cargo files or this workflow, and on a manual run (router
+# decision R1): GitHub bills Mac minutes at ten times on a private repo. After DSH ships they
+# move to the public repo, where they run free. A push builds for Apple silicon only; a manual
+# run with "universal" (or a dsh-117 push whose head commit message has "[mac universal]")
+# builds the universal app and .dmg and runs it on an Intel Mac too.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      universal:
+        description: "macOS: build the universal app and .dmg, and test it on an Intel Mac too"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (cargo test, build)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Git identity for the tests that commit (a runner has none)
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: cargo test --workspace
+        # The runner's TEMP is a short 8.3 name (RUNNER~1); the tests compare paths git prints
+        # in full, so give them the long one.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: cargo test --workspace
+      - name: Build the app and kb
+        run: cargo build -p claude-kanban-dsh -p kb
+
+  mac-gate:
+    name: macOS gate (run the Mac jobs?)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      universal: ${{ steps.decide.outputs.universal }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          INPUT_UNIVERSAL: ${{ github.event.inputs.universal }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          # Any doubt runs the Mac jobs: a skipped job shows green, so a wrong "no" would hide a
+          # failure.
+          set +e
+          run=false
+          why=""
+          files=""
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            run=true
+            why="a manual run"
+          elif [ "$EVENT" = "push" ] && { [ "$REF" = "refs/heads/dsh-117" ] || case "$REF" in refs/heads/dsh-117-*) true ;; *) false ;; esac; }; then
+            base="$BEFORE"
+            # A new branch has no "before"; after a rebase and force-push it isn't in the clone.
+            if [ -z "$base" ] || printf '%s' "$base" | grep -qx '0*' || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              base=$(git merge-base origin/main "$SHA" 2>/dev/null)
+              echo "Diffing against the merge base with origin/main ($base)."
+            fi
+            if printf '%s' "$HEAD_MESSAGE" | grep -qF '[mac universal]'; then
+              run=true
+              why="the commit asks for a universal run"
+            elif [ -z "$base" ]; then
+              run=true
+              why="no commit to diff against"
+            elif ! files=$(git diff --name-only "$base" "$SHA" 2>&1); then
+              run=true
+              why="git diff failed: $files"
+            elif printf '%s\n' "$files" | grep -Eq '^(src-tauri/|crates/|ui/|scripts/|Cargo\.toml$|Cargo\.lock$|\.github/workflows/)'; then
+              run=true
+              why="app code, scripts, the Cargo files or the workflow changed"
+            else
+              why="nothing the Mac jobs test changed"
+            fi
+          else
+            why="only dsh-117 (and dsh-117-*) pushes and manual runs start the Mac jobs on this private repo"
+          fi
+          universal=false
+          if [ "$run" = "true" ]; then
+            if [ "$INPUT_UNIVERSAL" = "true" ]; then
+              universal=true
+            elif printf '%s' "$HEAD_MESSAGE" | grep -qF '[mac universal]'; then
+              universal=true
+            fi
+          fi
+          echo "Mac jobs: run=$run universal=$universal ($why)"
+          if [ -n "$files" ]; then
+            echo "Changed files:"
+            printf '%s\n' "$files" | sed 's/^/  /'
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "universal=$universal" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: macOS (tests, install, smoke)
+    needs: mac-gate
+    if: needs.mac-gate.outputs.run == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      UNIVERSAL: ${{ needs.mac-gate.outputs.universal }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal && rustup default stable
+          if [ "$UNIVERSAL" = "true" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+      # One dependency build serves the tests and the bundle: both use target/smoke and the
+      # test channel. mac-kb.sh builds kb into target/test/kb. Saved only from dsh-117 and main.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/smoke"
+          cache-directories: target/test/kb
+          key: ${{ needs.mac-gate.outputs.universal == 'true' && 'universal' || 'arm64' }}
+          save-if: ${{ github.ref == 'refs/heads/dsh-117' || github.ref == 'refs/heads/main' }}
+      # tauri-cli isn't in install-action's own list; it falls back to cargo-binstall, which
+      # takes the prebuilt cargo-tauri from tauri's GitHub release (tauri-cli's binstall metadata).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2.12.4
+      - name: cargo tauri --version
+        run: cargo tauri --version
+      - name: Git identity for the tests that commit (a runner has none)
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: cargo test --release --workspace
+        env:
+          KANBAN_CHANNEL: test
+          CARGO_TARGET_DIR: target/smoke
+        run: cargo test --release --workspace
+      - name: Build and install the smoke app
+        run: |
+          set -- --channel smoke --now --no-start --install-dir "$RUNNER_TEMP/apps"
+          if [ "$UNIVERSAL" = "true" ]; then
+            set -- "$@" --universal --dmg
+          fi
+          sh scripts/install.sh "$@"
+      - name: Signature and architectures
+        run: |
+          APP="$RUNNER_TEMP/apps/Claude Kanban DSH Smoke.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          app_archs=$(lipo -archs "$APP/Contents/MacOS/claude-kanban-dsh-smoke")
+          kb_archs=$(lipo -archs "$APP/Contents/MacOS/kb")
+          echo "app: $app_archs; kb: $kb_archs"
+          for archs in "$app_archs" "$kb_archs"; do
+            if [ "$UNIVERSAL" = "true" ]; then
+              case " $archs " in *" x86_64 "*) ;; *) echo "::error::x86_64 missing ($archs)"; exit 1 ;; esac
+              case " $archs " in *" arm64 "*) ;; *) echo "::error::arm64 missing ($archs)"; exit 1 ;; esac
+            else
+              [ "$archs" = "arm64" ] || { echo "::error::expected arm64, got $archs"; exit 1; }
+            fi
+          done
+      - name: Smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-logs"
+          export SMOKE_LOG_DIR="$RUNNER_TEMP/smoke-logs"
+          set -- "$RUNNER_TEMP/apps/Claude Kanban DSH Smoke.app" --part all
+          # #114's {prompts} fix: checked once this branch has it.
+          if grep -rqF '{prompts}' src-tauri/src; then
+            set -- "$@" --prompts-check
+          fi
+          sh scripts/smoke-macos.sh "$@"
+      - name: Lock kill test
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-logs"
+          export SMOKE_LOG_DIR="$RUNNER_TEMP/smoke-logs"
+          sh scripts/smoke-macos.sh "$RUNNER_TEMP/apps/Claude Kanban DSH Smoke.app" --part lock
+      - name: Upload the universal .dmg (a smoke build, not for use)
+        if: env.UNIVERSAL == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-kanban-dsh-smoke-universal-dmg
+          path: target/smoke/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+      # Logs only: never api.json or the session settings files (they hold the app's token).
+      - name: Upload the smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-${{ needs.mac-gate.outputs.universal == 'true' && 'universal' || 'arm64' }}
+          path: ${{ runner.temp }}/smoke-logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  macos-intel:
+    name: macOS Intel (the universal .dmg)
+    needs: [mac-gate, macos]
+    if: needs.mac-gate.outputs.universal == 'true' && needs.macos.result == 'success'
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: claude-kanban-dsh-smoke-universal-dmg
+          path: ${{ runner.temp }}/dmg
+      - name: Open the .dmg
+        run: |
+          dmg=$(ls "$RUNNER_TEMP"/dmg/*.dmg | head -n 1)
+          echo "Attaching $dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/mnt" "$dmg"
+          APP="$RUNNER_TEMP/mnt/Claude Kanban DSH Smoke.app"
+          echo "app: $(lipo -archs "$APP/Contents/MacOS/claude-kanban-dsh-smoke"); kb: $(lipo -archs "$APP/Contents/MacOS/kb")"
+          # kb with no arguments prints its usage (and exits non-zero): it runs on Intel.
+          out=$("$APP/Contents/MacOS/kb" 2>&1) || true
+          printf '%s\n' "$out" | head -n 3
+          printf '%s\n' "$out" | grep -q '^usage:' || { echo "::error::kb didn't print its usage on Intel"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/apps"
+          ditto "$APP" "$RUNNER_TEMP/apps/Claude Kanban DSH Smoke.app"
+          xattr -dr com.apple.quarantine "$RUNNER_TEMP/apps/Claude Kanban DSH Smoke.app" 2>/dev/null || true
+      - name: Smoke test, launch 1
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-logs"
+          export SMOKE_LOG_DIR="$RUNNER_TEMP/smoke-logs"
+          sh scripts/smoke-macos.sh "$RUNNER_TEMP/apps/Claude Kanban DSH Smoke.app" --part launch1
+      - name: Close the .dmg
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/mnt" || true
+      - name: Upload the smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-intel
+          path: ${{ runner.temp }}/smoke-logs
+          if-no-files-found: ignore
+          retention-days: 14

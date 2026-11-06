@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "sh \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/scripts/mac-kb.sh\""
+  },
+  "bundle": {
+    "externalBin": ["binaries/kb"]
+  }
+}

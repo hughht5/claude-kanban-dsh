@@ -56,6 +56,7 @@ Each phase's tests are written here before the phase starts (see PLAN.md, *Phase
 | 1.19 | Dragging within a column reorders it, and the order survives a restart | manual |
 | 1.20 | Moving into Ship it sets `ship.state: requested` and `shipRequestedAt`; moving out before anything claims it sets `cancelled`; the same for Planning and `plan` (the page's `moveExtras` rules) | auto for the rules, manual for the drag |
 | 1.20a | One ship at a time per repo (card #79): a card moved into Ship it while another of its repo is shipping gets `queued` ("Waiting to ship") and its session hears nothing; the oldest waiting card goes once the repo is free; different repos and cards with no repo don't wait; a waiting card leaving Ship it is cancelled; a request no session picked up stops holding the repo after 60 s | auto (`crates/store/tests/ships.rs`), manual in the app |
+| 1.20b | Cards that wait on others (card #109): `blockedBy` is cleaned and checked on every write (itself, a missing, archived or already-ready card outside a stack, a stack's lead and its own child, more than 20, a circle of any length, shown in the refusal); a card Hugh dragged to Blocked with no blocked reason moves to Planning once every wait is met (Human test in its repo, Deploy complete in another), never one in Backlog; other cards are told instead; a card it waited on going back is said once; stack children are left alone; the test app starts only dry-run cards; migration 12 adds the index after a backup | auto (`crates/store/tests/waits.rs`), manual in the app |
 | 1.21 | Add card creates a card in Backlog with the next number and `createdBy: "Hugh (board)"` | manual |
 | 1.22 | Search for a number finds only that card (and a card whose issue has that number); search for text matches title, repo, branch and summary | manual |
 | 1.23 | Show archived lists the 17 archived cards, and Restore puts one back in its column | manual |
@@ -187,3 +188,53 @@ Run on dry-run card #29 (main account, low effort). Toasts and the tray are nati
 - **A crashed session was never noticed**, so no crash toast and the card still showed it as idle: ConPTY keeps the output pipe open after the process exits, so the reader never ended. A thread now waits on the process as well.
 
 **Also seen:** `kb ship-result 29 failed` on a card in Backlog moved it to In progress ("Recorded the failure… back in In progress"). A ship result for a card not in Ship it should probably be refused. Not changed.
+
+## Card #105: "Done when" and acceptance checks (6 Nov 2026)
+
+| # | Test | How |
+|---|---|---|
+| 105.1 | `doneWhen` is one clean line of at most 200 characters; "" or null removes it | `crates/store/tests/done_when.rs` `done_when_is_one_clean_line` |
+| 105.2 | `doneWhenChecks` takes a string or a list, refuses too many, too long, a bad state or an unknown key, and leaves the card unchanged | `done_when_checks_are_cleaned_and_checked` |
+| 105.3 | A filtered word, a sign-in link or a Bearer header is refused, and the error names the check | `a_filtered_word_in_a_check_is_refused_by_name` |
+| 105.4 | The store records who changed each check's state and when; reordering keeps it | `a_check_records_who_changed_its_state_and_when` |
+| 105.5 | Other writes keep the fields (an older build's behaviour) | `an_older_build_keeps_the_done_when_fields`. It puts the fields in with raw SQL (`json_set`) and runs **this** build's other writes over them; it does not run an older binary. The older-build claim rests on reading the code: `apply`'s generic arm only touches the keys a patch names, in every build since the first |
+| 105.6 | The tester's CHECK lines are read, masked and marked on the card its CARD line names (a stack child's on the child); an unclear verdict marks nothing | `src-tauri/src/done_when.rs` tests (incl. `the_agents_ask_about_the_checks`); `agents.rs` `check_results_go_to_the_card_the_report_names`, `a_pass_with_a_failed_check_is_recorded_as_a_fail`, `a_check_list_the_store_refuses_keeps_the_verdict` |
+| 105.7 | Hugh's edits are told as numbered lines, and not in Human test, Ship it or Deploy complete | `dispatch.rs` `hughs_edit_of_the_checks_is_told_readably`, `a_check_edit_in_human_test_is_not_told` |
+| 105.8 | Sessions and `kb` can set the fields | `tools.rs` `done_when_fields_are_updatable`; `kb` `done_when_fields_pass_through_update` |
+| 105.9 | The status rule gives each of the five states | In the test app, `tools/cdp.mjs eval` calling `doneWhenStatus` on a fixture card per state (no JavaScript test runner in this repo) |
+
+## macOS (card #117, 6 Nov 2026): untested on real hardware, unsigned
+
+Nobody has a Mac yet, so the proof is CI on GitHub's Mac runners. The app is unsigned (no Apple
+Developer ID, not notarised): a user allows it once in System Settings > Privacy & Security >
+Open Anyway (README).
+
+### Checked by CI (`.github/workflows/ci.yml`, Mac jobs; run IDs on card #117)
+
+| # | Check | Where |
+|---|---|---|
+| M.1 | `cargo test --workspace` on Apple silicon, including the macOS-only tests (exit waiter, reaper, update helper swap and failed-move result, flock) | `macos` job |
+| M.2 | `install.sh` builds and installs the smoke app; `codesign --verify --deep --strict` passes; `lipo -archs` shows arm64 (and x86_64 on a universal run) for the app and kb | `macos` job |
+| M.3 | The data folder is 0700 and `api.json` 0600 | smoke |
+| M.4 | Launch 1 (binary run directly): API up, a second launch exits, focus stays on TextEdit, a dry-run card created, moved and read back, `kb notify`, four sessions ready on PTYs with no "Broken pipe", LANG set, `ulimit -n` at least 10240 | smoke |
+| M.5 | An account-2 card refuses to start with the "isn't supported on a Mac" text | smoke |
+| M.6 | SIGTERM quits with the sessions suspended and nothing left running; kill -9 of the app hangs claude up and the reaper ends a `nohup` child handed to launchd | smoke |
+| M.7 | Launch 2 (`open -g`, launchd's bare PATH): claude found through the login-shell PATH; the Apple Event quit suspends the sessions (or SKIP if the runner refuses Automation) | smoke |
+| M.8 | The test-app lock survives a killed install.sh: a second run takes it | `macos` job |
+| M.9 | Universal run: the `.dmg` built; on the Intel runner its kb runs and launch 1 passes | `macos-intel` job |
+| M.10 | After the `{prompts}` commit: the first message a Planning session gets has no `C:\` and no `\` before `planning.md` | smoke `--prompts-check` |
+
+### Real Mac only (to do; nobody has run these)
+
+- A start from Finder: PATH (claude, git, node found), LANG, the log line in `~/.claude-kanban-dsh/macos.log`.
+- Focus: a background start (install.sh, Restart now) and a start at log-in don't take focus from a full-screen app.
+- App Nap: with the window hidden for an hour, hooks, the dispatcher and the backup keep their timing.
+- Folder permission prompts (Documents, Desktop, Downloads) for a session there, and whether a granted permission survives an update (self-signed certificate) and resets once after an ad-hoc build.
+- Restart now with real sessions running: does macOS ask for App Management; a failed move puts the old app back and the banner says why; the sessions resume.
+- Notifications: they appear, a click opens the card, a card's newer one replaces its older one.
+- The menus: Cmd+Q with sessions running asks (and the native alert if the page is slow), Cmd+C/V in text boxes, the menu-bar icon's menu and count, the Dock icon brings the window back.
+- The Apple Event quit, if CI printed SKIP for it.
+- The universal app on Intel hardware.
+- A downloaded `.dmg`: Gatekeeper refuses it, and Open Anyway in Privacy & Security lets it run.
+- claude found from the Claude desktop app's own copy.
+- A self-detaching process (`setsid`) started by a session outlives the app: the known gap.

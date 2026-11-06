@@ -40,10 +40,14 @@ fn is_local(url: &str) -> bool {
 }
 
 /// A checkout path inside WSL's own file system, which Windows tools must not open.
-fn in_wsl(path: &str) -> bool {
+pub(crate) fn in_wsl(path: &str) -> bool {
     let p = path.replace('/', "\\").to_ascii_lowercase();
-    p.starts_with("\\\\wsl$\\") || p.starts_with("\\\\wsl.localhost\\") || path.starts_with('/')
+    // A `/` path is WSL's on Windows; on a Mac it is an ordinary local folder (card #117).
+    p.starts_with("\\\\wsl$\\") || p.starts_with("\\\\wsl.localhost\\") || (crate::platform::DEV_STACKS && path.starts_with('/'))
 }
+
+/// Dev stacks need WSL, so they run on Windows only in this version (card #117, D6).
+const NO_DEV_STACKS: &str = "Dev stacks run on Windows only in this version.";
 
 /// The same folder as WSL sees it: `C:\a\b` -> `/mnt/c/a/b`, `\\wsl$\Ubuntu\home\x` -> `/home/x`.
 pub fn wsl_path(path: &str) -> Option<String> {
@@ -90,15 +94,14 @@ pub fn restart_command(worktree: Option<&str>, branch: Option<&str>) -> String {
 
 /// `git rev-parse --abbrev-ref HEAD` in a checkout on a Windows drive, with no console window.
 fn checkout_branch(worktree: &str) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    use crate::platform::NoWindow;
     if in_wsl(worktree) || !Path::new(worktree).is_dir() {
         return None;
     }
     let out = std::process::Command::new("git")
         .args(["-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"])
         .stdin(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
+        .no_window()
         .output()
         .ok()?;
     let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -118,7 +121,9 @@ pub fn health(url: &str, worktree: Option<&str>, card_branch: Option<&str>) -> H
     let restart = (local && !up).then(|| Restart {
         command: restart_command(worktree, branch.as_deref()),
         run_in: "a WSL terminal",
-        note: if worktree.is_some() {
+        note: if !crate::platform::DEV_STACKS {
+            NO_DEV_STACKS.into()
+        } else if worktree.is_some() {
             "Paste it into a WSL terminal. The app never runs WSL commands itself.".into()
         } else {
             "The card has no worktreePath, so run it from the branch's own checkout, in a WSL terminal. The app never runs WSL commands itself.".into()
@@ -139,6 +144,8 @@ pub async fn stack_health(url: String, worktree: Option<String>, branch: Option<
 mod tests {
     use super::*;
 
+    // WSL is Windows only: these three tests run on Windows (card #114).
+    #[cfg(windows)]
     #[test]
     fn wsl_paths() {
         assert_eq!(wsl_path(r"C:\Users\me\web\wt-123").as_deref(), Some("/mnt/c/Users/me/web/wt-123"));
@@ -151,12 +158,17 @@ mod tests {
         assert!(!in_wsl(r"C:\Users\x"));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn commands() {
+    fn commands_in_wsl() {
         assert_eq!(
             restart_command(Some(r"C:\Users\me\web\my wt"), Some("feat/login-v2")),
             "cd '/mnt/c/Users/me/web/my wt' && scripts/dev-stack.sh restart feat/login-v2"
         );
+    }
+
+    #[test]
+    fn commands() {
         assert_eq!(restart_command(None, Some("x;rm -rf ~")), "scripts/dev-stack.sh restart 'x;rm -rf ~'");
         assert_eq!(restart_command(None, None), "scripts/dev-stack.sh restart <branch>");
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
@@ -169,6 +181,7 @@ mod tests {
         assert_eq!((h.branch.as_deref(), h.branch_from), (Some("main"), Some("card")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_down_stack_gets_a_command() {
         // Port 1 on 127.0.0.1 never answers here.

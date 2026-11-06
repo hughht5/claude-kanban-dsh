@@ -34,6 +34,28 @@ fn main() {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     println!("cargo:rustc-env=KANBAN_GIT_COMMIT={commit}");
+    // The column prompts' folder (card #96). A live build always points at main's checkout, as
+    // the board's own column prompts do, wherever it was built. A test build points at the
+    // checkout it was built from, so a worktree's test app reads that worktree's prompts.
+    println!("cargo:rerun-if-env-changed=KANBAN_CHANNEL");
+    // Main's checkout is the folder that holds the repo's shared .git, whichever worktree builds
+    // (for example C:\Users\someone\kanban-app). Paths take the target system's separator, so
+    // a Mac build names /Users/<you>/kanban-app/prompts (card #117).
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
+    let native = |p: &str| if windows { p.replace('/', "\\") } else { p.replace('\\', "/") };
+    let sep = if windows { "\\" } else { "/" };
+    let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().map(|p| p.display().to_string()).unwrap_or_default();
+    let main_checkout = git(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .map(|g| g.trim_end_matches(['/', '\\']).trim_end_matches(".git").trim_end_matches(['/', '\\']).to_string())
+        .unwrap_or_else(|| here.clone());
+    let main_prompts = format!("{}{sep}prompts", native(&main_checkout));
+    // Any test slot ("test", "test2", ...); the store crate refuses a KANBAN_CHANNEL that is not one.
+    let prompts = if std::env::var("KANBAN_CHANNEL").is_ok_and(|c| c.starts_with("test")) {
+        git(&["rev-parse", "--show-toplevel"]).map(|top| format!("{}{sep}prompts", native(&top))).unwrap_or_else(|| main_prompts.clone())
+    } else {
+        main_prompts
+    };
+    println!("cargo:rustc-env=KANBAN_PROMPTS_DIR={prompts}");
     println!("cargo:rustc-env=KANBAN_BUILT_AT={built_at}");
 
     tauri_build::build()

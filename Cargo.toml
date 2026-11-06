@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/store", "crates/kb", "src-tauri"]
+members = ["crates/store", "crates/kb", "crates/unix", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,3 +15,8 @@ regex = "1"
 thiserror = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tempfile = "3"
+
+# SQLite's C code built optimised in dev and test builds too (card #110): the session search
+# index's full-text inserts are about ten times slower unoptimised.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3

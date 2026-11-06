@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Claude Kanban DSH Smoke",
+  "mainBinaryName": "claude-kanban-dsh-smoke",
+  "identifier": "io.github.hughht5.claude-kanban-dsh.smoke",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Claude Kanban DSH (smoke)",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 720,
+        "minHeight": 480,
+        "visible": false,
+        "dragDropEnabled": false
+      }
+    ]
+  },
+  "bundle": {
+    "icon": [
+      "icons-test/32x32.png",
+      "icons-test/128x128.png",
+      "icons-test/128x128@2x.png",
+      "icons-test/icon.icns"
+    ]
+  }
+}

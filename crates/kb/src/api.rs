@@ -8,16 +8,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn api_file() -> PathBuf {
-    kanban_store::data_dir().join("api.json")
+    crate::data_dir().join("api.json")
 }
 
 fn post(path_tail: impl Fn(&str) -> String, body: &Value, timeout: Duration) -> Result<Value, String> {
-    let text = std::fs::read_to_string(api_file()).map_err(|_| format!("the {} app isn't running (no api.json)", kanban_store::app_name()))?;
+    let text = std::fs::read_to_string(api_file()).map_err(|_| format!("the {} app isn't running (no api.json in {})", crate::app_label(), crate::data_dir().display()))?;
     let info: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let port = info["port"].as_u64().ok_or("api.json has no port")?;
     let token = info["token"].as_str().ok_or("api.json has no token")?;
     let mut s = TcpStream::connect_timeout(&([127, 0, 0, 1], port as u16).into(), Duration::from_millis(800))
-        .map_err(|_| format!("the {} app isn't running", kanban_store::app_name()))?;
+        .map_err(|_| format!("the {} app isn't running", crate::app_label()))?;
     s.set_read_timeout(Some(timeout)).ok();
     let payload = body.to_string();
     let session = std::env::var("KANBAN_SESSION").map(|v| format!("X-Kanban-Session: {v}\r\n")).unwrap_or_default();

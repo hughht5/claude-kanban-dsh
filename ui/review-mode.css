@@ -1,0 +1,113 @@
+/* Human test review mode (card #120, review.js): a card opened in the Human test queue shows the
+   review view over the whole panel, as the mockup: the header (Previous, the title, "i of N in
+   Human test", Review/Chat, Next), the shots side by side, one verdict table, the acceptance
+   checks, then the check-size chip, the diff size and the buttons at the foot.
+   The bar (#p-rbar) stays one element: in review mode it is a subgrid over the panel's rows, its
+   head in the top row and its actions in the row under the details. The chat and terminal are
+   hidden; Fail shows the message box alone under the review. Only board.css's tokens. */
+
+/* The buttons, in both views (the mockup's .abtn). */
+.rbar .abtn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;padding:5px 12px;font:inherit;font-size:12.5px;line-height:1.35;cursor:pointer;white-space:nowrap}
+.rbar .abtn:hover:not(:disabled){border-color:var(--accent)}
+.rbar .abtn:disabled{opacity:.5;cursor:default}
+.rbar .abtn:focus-visible,.rbar .rv-tabs .ibtn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.rbar .abtn.pri{background:var(--ok);border-color:var(--ok);color:var(--bg);font-weight:600}
+.rbar .abtn.pri:hover:not(:disabled){border-color:var(--ok);filter:brightness(1.06)}
+.rbar .abtn.acc{border-color:var(--accent);color:var(--accent)}
+.rbar .abtn.acc:hover{background:var(--accent-soft)}
+.rbar .abtn.ht-fail{color:var(--fg);border-color:var(--line)}
+.rbar .abtn.ht-fail[aria-pressed="true"]{color:var(--bad);border-color:var(--bad)}
+.rbar .rv-head,.rbar .rv-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-width:0}
+.rbar .rv-acts{flex:1 1 auto}
+.rbar .rv-tabs{display:inline-flex;gap:4px}
+.rbar .rv-tabs .ibtn{padding:3px 9px;font-size:12px}
+.rbar .rv-tags{align-items:center}
+.rbar .rv-size{font-family:var(--mono)}
+.rbar .rv-size.quick{border-style:dashed}
+.rbar .rv-diff{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+.rbar .rv-diff .chg-add{color:var(--ok)} .rbar .rv-diff .chg-del{color:var(--bad)}
+.panel:not(.rv) .rbar .rv-ttl{display:none}
+
+/* The panel's grid in review mode: header row (the bar's head beside .ph's buttons), the review,
+   the bar's actions, the footer. */
+.panel.rv.has-rbar{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr) auto auto}
+.panel.rv>.ph{grid-row:1;grid-column:2;padding-left:8px;gap:8px}
+.panel.rv>.ph .ttl{display:none}
+.panel.rv>.rbar{grid-row:1/4;grid-column:1/-1;display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid;
+  padding:0;border:0;background:none;pointer-events:none;gap:0}
+.panel.rv>.rbar>*{pointer-events:auto}
+.panel.rv>.rbar:focus-visible{box-shadow:none}
+.panel.rv>.rbar:focus-visible>.rv-head{box-shadow:inset 0 0 0 2px var(--accent)}
+.panel.rv .rv-head{grid-row:1;grid-column:1;padding:10px 8px 10px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap}
+.panel.rv .rv-ttl{flex:1 1 200px;min-width:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel.rv .rv-num{font-family:var(--mono);font-weight:600;color:var(--accent)}
+.panel.rv .rbar .ht-pos{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+.panel.rv .rv-acts{grid-row:3;grid-column:1/-1;flex-direction:column;align-items:flex-start;gap:8px;padding:10px 16px 12px;border-top:1px solid var(--line);background:var(--panel)}
+.panel.rv .rv-acts .ht-chips{display:flex;flex-wrap:wrap;gap:6px}
+.panel.rv .rv-acts .ht-acts{margin-left:0;gap:6px}
+.panel.rv .rv-acts .ht-keys{flex-basis:auto}
+.panel.rv>.pb{grid-row:2;grid-column:1/-1;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.panel.rv>.pf{grid-row:4;grid-column:1/-1}
+.panel.rv .dsplit,.panel.rv .work{display:none}
+@media (max-width:760px){.panel.rv .rv-head{flex-wrap:wrap}.panel.rv .rv-ttl{flex-basis:100%;order:-1}}
+
+/* Fail: the message box alone, under the review. */
+.panel.rv.rv-failing>.pb{grid-template-rows:minmax(0,1fr) auto}
+.panel.rv.rv-failing .work{display:grid;grid-row:2;grid-column:1;grid-template-columns:minmax(0,1fr);border-top:1px solid var(--line)}
+.panel.rv.rv-failing .work>:not(.chat){display:none}
+.panel.rv.rv-failing .chat{grid-template-rows:auto}
+.panel.rv.rv-failing .chat>:not(.compose){display:none}
+
+/* The review itself: only the review box and the "Done when" checks show in the details. */
+.panel.rv #p-det{grid-column:1;padding:14px 16px 18px;gap:12px}
+.panel.rv #p-det>:not(.htbox):not(#dw-box){display:none}
+.panel.rv #p-det>.htbox{display:contents}
+.panel.rv .rv-shots{order:1}
+.panel.rv .rv-verdict{order:2}
+.panel.rv #dw-box{order:3}
+.panel.rv .rv-try{order:4}
+
+/* Shots (the mockup's .ev): two side by side; one takes the whole width. */
+.rv-ev{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.rv-ev.one{grid-template-columns:minmax(0,1fr)}
+.rv-ev figure{margin:0;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel);display:flex;flex-direction:column;min-width:0}
+.rv-ev figcaption{font:10.5px var(--mono);color:var(--muted);padding:4px 8px;border-bottom:1px solid var(--line)}
+.rv-ev .rv-shot{aspect-ratio:16/9;max-height:52vh;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:8px;min-height:0}
+.rv-ev.one .rv-shot{max-height:60vh}
+.rv-ev img.shot{display:block;max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in;border-radius:3px}
+.rv-ev img.shot.gone{cursor:default;font-size:12px;color:var(--muted)}
+.rv-ev .rv-note{margin:0;padding:4px 8px 6px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
+.rv-noshots{margin:0;font-size:12.5px;color:var(--muted)}
+
+/* One verdict table (the mockup's .verdict: 92px, 64px, the rest). The word, not colour alone. */
+.rv-verdict{width:100%;border-collapse:collapse;font-size:12px}
+.rv-verdict th,.rv-verdict td{padding:5px 8px 5px 0;border-bottom:1px solid var(--line);text-align:left;vertical-align:baseline}
+.rv-verdict tr:last-child>*{border-bottom:0}
+.rv-verdict .who{width:92px;font:600 11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.rv-verdict .v{min-width:64px;width:64px;font:600 11px var(--mono);white-space:nowrap;color:var(--muted)}
+.rv-verdict .v.ok{color:var(--ok)} .rv-verdict .v.fix{color:var(--info)} .rv-verdict .v.bad{color:var(--bad)} .rv-verdict .v.warn{color:var(--warn)}
+.rv-verdict .d{color:var(--muted);overflow-wrap:anywhere}
+.rv-verdict .rv-at{font:11px var(--mono);opacity:.8;white-space:nowrap}
+.rv-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* The acceptance checks: done-when.js's block, read-only here. One mark per state (✓ met, ✗
+   failed, ○ open), each with its word for screen readers; editing stays in the Chat view. */
+.dw-mk{display:none}
+.panel.rv #dw-box{border:0;padding:0;background:none;gap:3px}
+.panel.rv #dw-box:not(:has(.dw-list)){display:none}
+.panel.rv #dw-box>h3,.panel.rv #dw-box .dw-st,.panel.rv #dw-box .dw-none,.panel.rv #dw-box #dw-text,.panel.rv #dw-box>.hidden-secret,
+.panel.rv #dw-box .dw-addrow,.panel.rv #dw-box .dw-x,.panel.rv #dw-box .dw-by,.panel.rv #dw-box .dw-lab input{display:none}
+.panel.rv .dw-list{gap:3px;margin:0}
+.panel.rv .dw-ck{grid-template-columns:minmax(0,1fr)}
+.panel.rv .dw-lab{pointer-events:none;cursor:default;font-size:12.5px;gap:6px;align-items:baseline}
+.panel.rv .dw-met .dw-ct{color:var(--fg)}
+.panel.rv .dw-mk{display:inline-block;flex:0 0 auto;width:1em;text-align:center;font-weight:700}
+.panel.rv .dw-met .dw-mk{color:var(--ok)}
+.panel.rv .dw-failed .dw-mk{color:var(--bad)}
+.panel.rv .dw-open .dw-mk{color:var(--muted)}
+.panel.rv .dw-note{padding-left:1.4em}
+
+/* The hand-over steps, folded under the checks. */
+.rv-try>summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.rv-try>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.rv-try .ht-steps{margin-top:6px}

@@ -5,15 +5,27 @@
   --ok:#1f7a4d; --warn:#a15c00; --bad:#b4232c; --info:#2b6aa8;
   --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  /* card #120: board face tokens */
+  --ask:#6a3fc4; --ask-soft:#efe8fb; --warn-soft:#fbf0de;
+  --ag-router:var(--accent); --ag-critic:var(--ask); --ag-tester:var(--ok); --ag-reviewer:var(--ok);
+  --ag-reproducer:var(--info); --ag-merger:var(--bad); --ag-monitor:var(--warn);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#12141b; --panel:#1b1e28; --fg:#e6e8ef; --muted:#9aa1b3; --line:#2c3040;
   --accent:#8b9bff; --accent-soft:#262c4f;
-  --ok:#5cc690; --warn:#e2a54a; --bad:#f07178; --info:#6fb0ee; color-scheme:dark}}
+  --ok:#5cc690; --warn:#e2a54a; --bad:#f07178; --info:#6fb0ee; color-scheme:dark;
+  /* card #120: board face tokens */
+  --ask:#b9a2f5; --ask-soft:#2c2545; --warn-soft:#352a17;
+  --ag-router:var(--accent); --ag-critic:var(--ask); --ag-tester:var(--ok); --ag-reviewer:var(--ok);
+  --ag-reproducer:var(--info); --ag-merger:var(--bad); --ag-monitor:var(--warn);}}
 :root[data-theme="dark"]{
   --bg:#12141b; --panel:#1b1e28; --fg:#e6e8ef; --muted:#9aa1b3; --line:#2c3040;
   --accent:#8b9bff; --accent-soft:#262c4f;
-  --ok:#5cc690; --warn:#e2a54a; --bad:#f07178; --info:#6fb0ee; color-scheme:dark}
+  --ok:#5cc690; --warn:#e2a54a; --bad:#f07178; --info:#6fb0ee; color-scheme:dark;
+  /* card #120: board face tokens */
+  --ask:#b9a2f5; --ask-soft:#2c2545; --warn-soft:#352a17;
+  --ag-router:var(--accent); --ag-critic:var(--ask); --ag-tester:var(--ok); --ag-reviewer:var(--ok);
+  --ag-reproducer:var(--info); --ag-merger:var(--bad); --ag-monitor:var(--warn);}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
@@ -33,16 +45,16 @@ h1{font-size:18px;font-weight:600;margin:0;text-wrap:balance}
 input,select,textarea,button{font:inherit;color:inherit}
 input[type=search]{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:220px;max-width:100%}
 .board{flex:1;min-height:0;display:flex;gap:10px;overflow-x:auto;padding-bottom:8px}
-.col{flex:0 0 240px;display:flex;flex-direction:column;background:transparent;border-radius:8px;min-height:120px}
+.col{flex:1 0 240px;min-width:0;display:flex;flex-direction:column;background:transparent;border-radius:8px;min-height:120px}
 .col.over{background:var(--accent-soft)}
 .dropline{flex:0 0 auto;height:2px;margin:-5px 0;border-radius:2px;background:var(--accent);pointer-events:none}
-.colhead{display:flex;align-items:center;gap:8px;padding:6px 4px 8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.colhead{display:flex;align-items:center;gap:8px;padding:2px 2px 4px;margin-bottom:4px;font-size:12.4px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .colhead .n{font-family:var(--mono);font-weight:500}
 .colhead .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .c-Blocked .dot{background:var(--bad)} .c-In-progress .dot{background:var(--accent)}
 .c-Human-test .dot{background:var(--warn)} .c-Ship-it .dot{background:var(--info)} .c-Deploy-complete .dot{background:color-mix(in srgb,var(--ok) 55%,var(--info))} .c-Done .dot{background:var(--ok)}
 .cards{display:flex;flex-direction:column;gap:8px;overflow-y:auto;min-height:40px;padding:2px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 10px;cursor:pointer;display:flex;flex-direction:column;gap:5px;text-align:left;width:100%}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 10px;cursor:pointer;display:flex;flex-direction:column;gap:6px;text-align:left;width:100%;min-width:0}
 .card:hover{border-color:var(--accent)}
 .card:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .card.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
@@ -62,9 +74,21 @@ input[type=search]{background:var(--panel);border:1px solid var(--line);border-r
 .chip.plan-requested,.chip.plan-claimed{color:var(--info)} .chip.plan-started{color:var(--ok)} .chip.building{color:var(--accent)}
 /* Take it to (card #76): where a card goes on to by itself, and its card-tester subagent's verdict. */
 .chip.auto{color:var(--accent);border-style:dashed} .chip.auto-deploy{color:var(--warn)}
+.chip.route{color:var(--muted)} .chip.route-small{color:var(--ok)} .chip.route-split{color:var(--info)}
+.chip.small-wait{color:var(--warn);border-style:dashed} .chip.small-went{color:var(--warn)} .chip.small-stop{color:var(--bad);background:none;font:inherit;cursor:pointer} .chip.small-stop:hover{background:var(--line)}
 .chip.test-passed{color:var(--ok)} .chip.test-failed{color:var(--bad)} .chip.test-unclear{color:var(--warn)}
+/* The card-reproducer (card #112): its chip states, and its proof box in the panel. */
+.chip.test-needed{color:var(--warn)} .chip.test-reproduced{color:var(--bad)} .chip.test-fixed{color:var(--ok)} .chip.test-not-reproduced{color:var(--warn)}
+.repro .rp-runs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.repro .rp-run{display:flex;flex-direction:column;gap:4px;min-width:0}
+.repro pre.rp-steps{white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.4}
+.repro img.shot{display:block;max-width:100%;max-height:200px;border:1px solid var(--line);border-radius:6px;cursor:zoom-in;background:var(--bg)}
+.repro .rp-earlier summary{cursor:pointer;font-size:12px;color:var(--muted)} .repro .rp-round{border-top:1px solid var(--line);padding-top:6px;margin-top:6px;display:flex;flex-direction:column;gap:4px}
+.repro img.shot.gone{cursor:default;border-style:dashed;color:var(--muted);font-size:12px;padding:6px;max-height:none}
 .hint{margin:-8px 0 0;font-size:12.5px;line-height:1.45;color:var(--muted)} .hint.warn{color:var(--warn);border-left:3px solid var(--warn);padding-left:8px}
 .chip.testing{color:var(--warn)}
+/* The stuck-session monitor (card #99). */
+.chip.stuck{color:var(--bad);border-color:var(--bad);font-weight:600} .stuck-row{color:var(--bad)}
 .addbtn{margin-left:8px}
 input.tx{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;color:var(--fg);font-size:13.5px;min-width:0}
 .chip.failed{color:var(--bad)}

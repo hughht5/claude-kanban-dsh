@@ -1,0 +1,55 @@
+/* The card face (card #120, face.js), after the mockup's .acard. The mockup is drawn at 13px; the
+   app keeps its 14px base, so each mockup size is scaled by 14/13 (10.5px -> 11.3px, 12px -> 12.9px).
+   Only board.css's tokens, so light, dark and System all work. */
+.card.face{gap:6px}
+.card .t .num{margin-right:5px}
+/* The chip row (the mockup's .atags and .ach). */
+.card > .tags.face-chips{gap:4px;font-size:11.3px;align-items:center}
+.card > .tags[hidden]{display:none}
+.card .chip.route{color:var(--ag-router)}
+.card .chip.route-split{color:var(--info)}
+.card .chip[data-check="critique"].test-failed{color:var(--bad)}
+.card .chip[data-check-size]{border-style:dashed}
+.card .chip.check-size-quick{color:var(--muted)}
+.card .timein{font-family:var(--mono);font-size:11.3px;color:var(--muted);white-space:nowrap}
+/* The newest agent line: one line, clipped; the whole text in its hover. */
+.card .face-agent{font-size:12.9px;line-height:1.4;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* One long agent line must never set its column's width (final test, card #120): it takes the card's width and ends in an ellipsis. */
+.card.face .face-agent{width:0;min-width:100%}
+.card .face-agent .fa-who{font-weight:600}
+.card .face-agent[data-agent="route"] .fa-who{color:var(--ag-router)}
+.card .face-agent[data-agent="critique"] .fa-who{color:var(--ag-critic)}
+.card .face-agent[data-agent="test"] .fa-who{color:var(--ag-tester)}
+.card .face-agent[data-agent="review"] .fa-who{color:var(--ag-reviewer)}
+.card .face-agent[data-agent="repro"] .fa-who{color:var(--ag-reproducer)}
+.card .face-agent[data-agent="merge"] .fa-who{color:var(--ag-merger)}
+.card.face .s{font-size:12.9px;line-height:1.4;-webkit-line-clamp:2}
+.card.face .s[hidden]{display:none}
+/* A stuck card (the mockup's .astuck): a warn border and a box that says why. */
+.card.stuck{border-color:var(--warn)}
+.card.stuck.sel{box-shadow:0 0 0 1px var(--accent);border-color:var(--accent)}
+.card .face-stuck{background:var(--warn-soft);border-radius:5px;padding:6px 8px;font-size:12.9px;line-height:1.4;color:var(--fg);overflow-wrap:anywhere}
+.card .face-stuck .chip.stuck{border:0;padding:0;border-radius:0;font-family:var(--sans);font-size:inherit;font-weight:600;color:var(--warn)}
+/* What changed (the mockup's .achg): figures and up to three paths, small mono. */
+.card .face-chg{display:flex;flex-wrap:wrap;gap:2px 8px;font:11.3px/1.5 var(--mono);color:var(--muted);min-width:0}
+.card .face-chg .chg-tag{border:0;padding:0;border-radius:0;white-space:normal;overflow-wrap:anywhere}
+.card .face-chg .chg-path{color:var(--muted)}
+/* Human test shots, small: two columns, lazily loaded (face.js keeps each decoded image). */
+.card .face-thumbs{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.card .face-thumb{display:block;width:100%;height:48px;object-fit:cover;object-position:left top;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.card .face-thumb:not([src]){visibility:hidden}
+.card .face-thumb.gone{visibility:visible;border-style:dashed}
+.card .face-thumb[data-kind="after"]{border-color:var(--accent)}
+/* The muted row at the bottom: repo, issue, PR, logins, stack, acct 2, when it last changed. */
+.card .face-meta{display:flex;flex-wrap:wrap;gap:2px 6px;font:11px/1.45 var(--mono);color:var(--muted);min-width:0}
+.card .face-meta .tag{border:0;padding:0;border-radius:0}
+.card .face-meta a.tag{color:var(--accent);text-decoration:none}
+.card .face-meta a.tag:hover{text-decoration:underline}
+.card .face-meta .tag.a2{color:var(--info)}
+.card .face-meta > * + *::before{content:"· ";color:var(--muted)}
+/* A stack card keeps its own layout (stacks.js); only the mockup's styles: its rows under a dashed line. */
+.card.stk .stk-kids{border-top:1px dashed var(--line);padding-top:6px;margin-top:2px;gap:3px}
+.card.stk .stk-kid{border-top:0}
+.card.stk .stk-row{padding:1px 0;font-size:12.4px;color:var(--muted)}
+.card.stk .stk-name{color:var(--fg)}
+.card.stk .stk-name .num,.card.stk .stk-top .num{color:var(--accent);font-family:var(--mono);font-weight:600}

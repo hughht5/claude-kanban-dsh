@@ -1,0 +1,25 @@
+/* The right pane (card #120): docked on the right, 380 px, over the board and beside a card panel.
+   Not a <dialog>, so Human test review keys go on working. The Agents drawer uses .rpane.solo
+   (the feed takes the whole height); card #119's Router pane reuses the same classes:
+   .rpane-head, then .rpane-digest (filled by #119), .rpane-feed (the top, at most 40% high), then
+   .rpane-tabs (Chat / Terminal) and .rpane-body. */
+.rpane{position:fixed;top:0;right:0;bottom:0;z-index:30;width:var(--rpane-w,380px);max-width:100vw;display:flex;flex-direction:column;min-height:0;
+  background:var(--panel);color:var(--fg);border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.18);outline:none}
+.rpane[hidden]{display:none}
+.rpane:focus-visible{box-shadow:inset 0 0 0 2px var(--accent),-12px 0 32px rgba(0,0,0,.18)}
+.rpane-head{flex:none;display:flex;align-items:center;gap:8px;padding:10px 10px 10px 14px;border-bottom:1px solid var(--line);min-width:0}
+.rpane-head h2{margin:0;font-size:14px;font-weight:600}
+.rpane-head .rpane-sub{flex:1;min-width:0;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rpane-head .ibtn.x{width:30px;padding:4px 0}
+.rpane-digest{flex:none;padding:6px 14px 8px;border-bottom:1px solid var(--line);min-width:0}
+.rpane-digest:empty{display:none}
+.rpane-feed{flex:none;max-height:40%;overflow-y:auto;overflow-x:hidden;padding:6px 14px 8px;border-bottom:1px solid var(--line);min-height:0}
+.rpane.solo .rpane-feed{flex:1 1 auto;max-height:none;border-bottom:0}
+.rpane-tabs{flex:none;display:flex;gap:6px;padding:6px 14px;border-bottom:1px solid var(--line)}
+.rpane-tabs button{background:none;border:1px solid var(--line);border-radius:6px;padding:3px 10px;font:inherit;font-size:12px;color:var(--fg);cursor:pointer}
+.rpane-tabs button[aria-pressed="true"],.rpane-tabs button[aria-selected="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.rpane-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.rpane-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+/* With the pane open, a card panel keeps clear of it. */
+body.rpane-open .panel{max-width:calc(100vw - var(--rpane-w,380px) - 28px)}
+@media (max-width:640px){.rpane{width:100vw}body.rpane-open .panel{max-width:none}}

@@ -22,3 +22,8 @@
 .restartcmd .note{margin:0;color:var(--muted)}
 .restartcmd .cmdrow{display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap}
 .restartcmd .cmd{flex:1 1 240px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 8px;overflow-wrap:anywhere;user-select:all}
+dialog#quitDlg{width:min(480px,calc(100vw - 32px));padding:0;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);color:var(--fg);box-shadow:0 18px 48px rgba(0,0,0,.28)}
+dialog#quitDlg::backdrop{background:rgba(12,14,24,.5)}
+dialog#quitDlg p{margin:0;line-height:1.5}
+#quitDlg .qa{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}

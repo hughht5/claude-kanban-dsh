@@ -165,3 +165,27 @@ fn page_settings_are_allow_listed() {
         assert!(s.set_page_setting(key, "1").is_err(), "{key}");
     }
 }
+
+// Card #99: how often the monitor looks for stuck sessions, 0 for off.
+#[test]
+fn the_stuck_check_is_ten_minutes_a_whole_number_and_can_be_off() {
+    use kanban_store::{page_default, STUCK_CHECK_DEFAULT, STUCK_CHECK_KEY};
+    let (_dir, path) = temp_board();
+    let mut s = Store::open(&path).unwrap();
+    assert_eq!(STUCK_CHECK_KEY, "sessions.stuck_check_minutes");
+    assert_eq!(s.stuck_check_minutes().unwrap(), STUCK_CHECK_DEFAULT);
+    assert_eq!(s.page_setting(STUCK_CHECK_KEY).unwrap(), "10");
+    assert_eq!(page_default(STUCK_CHECK_KEY).unwrap(), "10");
+    assert_eq!(s.set_page_setting(STUCK_CHECK_KEY, " 25 ").unwrap(), "25");
+    assert_eq!(s.stuck_check_minutes().unwrap(), 25);
+    assert_eq!(s.set_page_setting(STUCK_CHECK_KEY, "0").unwrap(), "0");
+    assert_eq!(s.stuck_check_minutes().unwrap(), 0);
+    assert_eq!(s.set_page_setting(STUCK_CHECK_KEY, "1440").unwrap(), "1440");
+    for bad in ["-1", "1441", "ten", "2.5", ""] {
+        assert!(matches!(s.set_page_setting(STUCK_CHECK_KEY, bad), Err(Error::Invalid(_))), "{bad}");
+    }
+    assert_eq!(s.stuck_check_minutes().unwrap(), 1440, "a refused value leaves the old one");
+    // A value someone put in the settings table by hand that isn't a number reads as the default.
+    s.set_setting(STUCK_CHECK_KEY, "soon").unwrap();
+    assert_eq!(s.stuck_check_minutes().unwrap(), STUCK_CHECK_DEFAULT);
+}

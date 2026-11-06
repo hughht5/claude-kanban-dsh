@@ -1,0 +1,27 @@
+/* The Agents feed (card #120, agents-feed.js): rows of time, agent and text, as the mockup's .fe.
+   The agent is a word in its own colour (--ag-* in board.css), never colour alone. */
+.af{font-size:12px;min-width:0}
+.af .feed{list-style:none;margin:0;padding:0;display:grid;gap:0}
+.af .fe{display:grid;grid-template-columns:44px 84px minmax(0,1fr);gap:8px;padding:6px 0;border-bottom:1px solid var(--line);align-items:baseline;line-height:1.45}
+.af .fe:last-child{border-bottom:0}
+.af .fe time{font:10.5px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.af .fe .ag{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.af .ag.router{color:var(--ag-router,var(--accent))}
+.af .ag.critic{color:var(--ag-critic,var(--accent))}
+.af .ag.tester{color:var(--ag-tester,var(--ok))}
+.af .ag.reviewer{color:var(--ag-reviewer,var(--ok))}
+.af .ag.reproducer{color:var(--ag-reproducer,var(--info))}
+.af .ag.merger{color:var(--ag-merger,var(--bad))}
+.af .ag.monitor{color:var(--ag-monitor,var(--warn))}
+.af .fe-t{min-width:0;overflow-wrap:anywhere;color:var(--fg)}
+.af .fe-card{font:600 12px var(--mono);color:var(--accent);background:none;border:0;padding:0;cursor:pointer;border-radius:3px}
+.af .fe-card:hover{text-decoration:underline}
+.af .fe-card:focus-visible,.af .af-older:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.af .fe-v{font:600 10.5px var(--mono);letter-spacing:.03em}
+.af .fe-v.ok{color:var(--ok)} .af .fe-v.fix{color:var(--info)} .af .fe-v.bad{color:var(--bad)} .af .fe-v.warn{color:var(--warn)} .af .fe-v.none{color:var(--muted)}
+.af .af-msg{margin:6px 0;color:var(--muted);font-size:12px}
+.af .af-msg.err{color:var(--bad)}
+.af .af-older{display:block;margin:8px auto 2px}
+/* Compact (a 360 px pane): the time and the agent on one line, the text under them. */
+.af .feed.compact .fe{grid-template-columns:auto minmax(0,1fr);row-gap:1px;column-gap:8px}
+.af .feed.compact .fe .fe-t{grid-column:1/-1}

@@ -42,7 +42,7 @@ The app is the dispatcher. A drag is handled by the process that saw it, within 
 
 ## Decisions
 
-Settled by the manager's review on 3 Nov 2026; 11 to 13 by Hugh on 5 Nov 2026 (card #76).
+Settled by the manager's review on 3 Nov 2026; 11 to 13 by Hugh on 5 Nov 2026 (card #76); 15 to 20 by the router on 6 Nov 2026, for card #113 (Hugh delegated them: "yes do that. perfect"), its R1 to R6.
 
 | # | Decision | Settled |
 |---|---|---|
@@ -59,7 +59,18 @@ Settled by the manager's review on 3 Nov 2026; 11 to 13 by Hugh on 5 Nov 2026 (c
 | 11 | The app moving a card into Ship it | Allowed only on Hugh's standing order: a card he set to go on by itself to Deploy complete ("Take it to", `autoTo`) is moved from Human test into Ship it for him, as his approval to ship it with no human test. Sessions still never move a card into Ship it. |
 | 12 | Hugh's own moves and auto-progress | Any move Hugh makes himself, except into Planning or In progress (starting it, or approving its plan), turns the card's auto-progress off: he has taken it over. |
 | 14 | Dropping a card on a Ship it card (card #89) | It joins that card's stack and ships in the same merge while that ship hasn't started (waiting its turn, or not yet handed to its session). Once it has started, the card ships straight after it instead, on its own. A card whose own ship has started never joins. A card not built can't join a stack in Ship it. A card from Ship it keeps Hugh's approval (Passed), and its own ship is cancelled. A built stack can join another. A stack is one repo. Only Hugh's drop does these. Settled in Planning, as the card asked. |
+| 15 | What changed on each card (card #108) | Read-only git in the app, never under the board lock, one job at a time with the panel first. A card's own branch is measured from the newest commit it shares with main/master or origin/main/master; a card on main, or a merged branch, from the commits whose message names the card. Uncommitted work only in the panel and only in the card's own linked worktree. The figures are saved on the card (`changesSaved`) each time it enters Human test, so they outlive a deleted branch (router, for Hugh); otherwise "No figures kept". Handed-over files (`changesOutputs`) open from the board only as md, txt, png, jpg or pdf (router, for Hugh); other types get Show in folder. No GitHub PR figures. |
 | 13 | The subagent test's verdict | Read by the app from the `SubagentStop` hook (the tester's own last message and transcript), never from the session's word. Sessions can't set the card's `test` field, and a pass that ran no tools doesn't count. |
+| 15 | Who approves the sessions of a stack built in parallel (card #113, R1) | Hugh's move of a stack's lead into Planning or In progress approves every start and resume of sessions in that stack, while the lead stays in Planning, In progress or Human test. The app then starts each child that waits on nothing (from Backlog it moves it to Planning first), wakes the lead to merge each child that reaches Human test, and resumes a child it sends back. Children still go through the critic: the app never moves a child to In progress; a child moves itself there once its critic has passed and the lead is In progress, and without the critic subagent it waits for the router or Hugh. |
+| 16 | The merger and stacks (card #113, R2) | Card #100's merger is a hard dependency: it gets a "stack" job that runs outside Ship it, records `merge` on the child, and calls the app's `after_child_merge`. Until it lands, a stack built in parallel can't merge its children. |
+| 17 | How a child is merged (card #113, R3) | In the lead's worktree: detach at the child's head, rebase onto the stack's branch, then fast-forward the stack's branch to the result. The child's branch is never rewritten or checked out there. Never main, never a push. Tested on a scratch repo with two worktrees. |
+| 18 | Order inside a stack (card #113, R4) | A child that waits on a sibling ("Blocked by", card #109's `blockedBy`) starts only once that sibling is merged, and always branches from the stack's branch, never from the sibling's. |
+| 19 | The merger's effort (card #113, R5) | High, in the app's subagent table (card #96's `AGENTS`, card #100's entry). The lead's own session runs on low unless its card has an `effortOverride`. |
+| 20 | Dev stacks in a stack (card #113, R6) | Only the lead brings up a product repo's dev stack, once, for the integrated build. Children build and unit-test without one, and carry no PR and no logins. |
+| 21 | Before-and-after evidence (card #101, 6 Nov 2026; the router, under Hugh's delegation) | Screenshots only (PNG), no GIF. "Before" is the new build just before the tester's action, not the old build; a true old-versus-new comparison can be a later card. No migration: the evidence is an app-only card field, `evidence`, written in the same update as the tester's verdict, so card_revisions keep it append-only. The app copies the shots from the tester's `%TEMP%` into its data folder, checking them before the board lock. Shots only for `hughht5/kanban-app` cards, only from the test app (9334), which now always has its debug port from its own window config (`tauri.test.conf.json`; the router asked for it through `install.ps1`, and the config gives the same result however the test app is started). Each shot carries the test app's build commit, stamped into the PNG by `cdp.mjs`. |
+| 22 | Small changes that go on by themselves (card #104, 6 Nov 2026; router's decisions, Hugh delegated) | Off until Hugh lists a repo (`sessions.small_goes_on_repos`, each with the checkout and branch its ship pushes). Docs (`.md`, `.rst`) and CSS only, no UI text in version 1; CSS may not set display, visibility, pointer-events, position, z-index, opacity or content, and needs #101's screenshots. At most 30 lines, 3,000 bytes and 5 files; no sign-in, data, migration, prompt or agent paths; SQL DROP only as SQL. Both subagents passed on the current HEAD and status hash, the review with SCOPE: full. A 10-minute wait in Human test with Stop and a per-card opt-out; at most once per card; every setting change logged and toasted. The hard rule now reads: "Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo." The router accepted this wording for Hugh on 6 Nov 2026 (Hugh delegated it: "104 - make your own judgement"). Off by default with an empty repo list, so Hugh opts in per repo. |
+| 23 | Who can make a card start by its waits (card #109; the router for Hugh, 6 Nov 2026) | Only Hugh's own drag of the card into Blocked. The app moves a card only from Blocked, to Planning, when the last column change was his and it has no blocked reason. A card in Backlog is never moved: a wait there only shows the order, and Hugh is notified when it is met. So a wait set by any session can't start a card by itself. |
+| 24 | When a card's wait on another is met (card #109; the router for Hugh, 6 Nov 2026) | A card in the same repo: in Human test or later. In another repo: Deploy complete. A card archived in Deploy complete or Done counts. The message to the card that starts names each blocker not shipped yet, with its branch, and says its work is not on main yet. |
 
 ## Stack
 
@@ -407,6 +418,20 @@ Kangentic is AGPL-3.0. The Rust app reimplements its ideas and copies no code. R
 - Worktree creation in v1.
 - The packed `?ct=as-…` login links, which carry a token.
 
+## Time in each column (card #111, 6 Nov 2026)
+
+- **Source:** `card_revisions`, which already records every column and archive change from every
+  writer, rather than the log's wording. No migration and no new table. Older cards' first column
+  comes from the first move's log line; where none says, that stretch isn't counted rather than
+  guessed.
+- **The board's figure is a median, not a mean** (Hugh asked for an average): one card left in a
+  column for weeks would swamp a mean. Decided by the router for Hugh (decision A): finished visits
+  only, over the last 30 days, dry-run cards left out.
+- **The panel shows Planning, In progress and Human test** (the columns Hugh named); the others
+  fold away under one line (decision B).
+- Wall-clock time; archived time and Done don't count. Not built: times on the card face, in `kb`
+  or the MCP tools, or charts.
+
 ## Phases
 
 The first usable release is Phase 4. It has the board, a terminal per card, moves and edits typed into sessions, the `kanban_*` tools with `kb.exe`, and restart recovery, **all running on a copy of the cards**. You use it alongside the artifact for a few days. Cut-over (Phase 5) only comes after that, and restart recovery is already in place by then.
@@ -459,6 +484,22 @@ These are not in v1. Each can be added later without changing the design:
 | Losing the board's data | Low | The artifact is untouched until cut-over; append-only logs and revisions; no `DELETE`; nightly backups; the export JSON is kept |
 | The MSVC build tools need an admin install | Low | Phase 1 checks first. If they do, you run that one installer yourself. |
 
+## Session search (card #110, 6 Nov 2026)
+
+Decisions, after the router's critic (13 findings) and the router's rulings:
+
+- The index is its own file (`search.db`, migrations `search1.sql`…), not part of `board.db`: it is
+  much bigger than the board, its writes would hold the board's lock, and every board backup would
+  carry it. No board migration; `schema13` stays unused.
+- 90 days only, with a new file each month (or for a new index version) and the old one renamed into
+  `backups\search`, one copy kept. Claude Code wasn't deleting transcripts at 30 days on this
+  machine (the oldest was 72 days old on 6 Nov), so the index can always be rebuilt.
+- Size, measured 6 Nov 2026: every transcript of the last 90 days holds 119 MB of indexable text;
+  the card sessions' share (272 conversations and 296 subagents) is 20.3 MB, about 100 MB of
+  trigram index. Well under the 1 GB line at which the router would have been asked.
+- Search is Hugh's only (the board and `kb`); card sessions don't get `kanban_search`.
+- Secrets are masked whole before they are stored; sign-in links are hidden entirely.
+
 ## What can be undone
 
 Nothing before Phase 5 touches the live setup. The app runs on a copy of the cards, keeps its own session folders, writes hooks only into its per-session `--settings` files, and never writes `~\.claude.json`.
@@ -476,3 +517,42 @@ Nothing before Phase 5 touches the live setup. The app runs on a copy of the car
 | Cards changed in the app after cut-over | 5 | `kb.exe export` writes the cards back out as JSON in the artifact's shape, for a session to restore with `ArtifactData` |
 
 Every change is recorded in `UNDO.md` as it is made.
+
+## Card #105: "Done when" and acceptance checks (6 Nov 2026)
+
+Decisions (the router's, from Hugh's delegation, and the card session's), after the router's critic:
+
+- **No migration.** Card fields are free JSON, and an older build keeps fields it doesn't know.
+  #105 adds no schema file; schema11.sql is #104's.
+- **The status is calculated, never stored** (router): blocked (in Blocked) > done (every check met
+  and the card in Human test or later) > waiting on Hugh (in Human test) > working (its session
+  starting or working) > paused. One source of truth: the column, the checks and the session.
+- **Names start with `doneWhen`** (router), apart from the Done column and the "done" status.
+- **The store owns each check's `by` and `at`**, so a writer can't fake who marked it.
+- **The card-tester's prompt asks for CHECK lines on every card**, because it is fixed when the
+  session starts; the app writes the results onto the card the report names.
+- **Hugh's ticks aren't told in Human test, Ship it or Deploy complete**, so testing doesn't wake
+  the session.
+- **The status rule is checked in the test app through `tools/cdp.mjs`**, as the repo has no
+  JavaScript test runner (router accepted).
+
+## Platforms (6 Nov 2026, cards #114 and #117)
+
+- Every operating-system call sits in `src-tauri/src/platform/` behind one interface
+  (`mod.rs`); Windows in `windows.rs` (card #114, moved unchanged), macOS in `macos.rs` (card
+  #117). A test fails on Windows-only code anywhere else, so it shows on Windows before a Mac.
+- `main.rs` calls `platform::at_start()` and `platform::on_run_event()` (no-ops on Windows), so
+  a system's start-up needs don't touch main.rs.
+- Prompts name their folder as `{prompts}` (the public split's syntax), resolved to the
+  private folder's `prompts\` (setting `private.dir`), or else the bundled examples, so the same
+  board works on any system; a worktree or another clone does not change which prompts sessions
+  follow.
+- CI: Windows on every push; macOS only when app code, scripts or configs change, plus a
+  manual run (macOS minutes cost about ten times more on a private repo).
+- macOS decisions (card #117): untested on real hardware and unsigned, with no Apple Developer
+  account (Hugh); a self-signed certificate for stable folder permissions; Mac CI only on
+  `dsh-117` and manual runs here, moving to the public repo after DSH ships; an account-2 card
+  refuses to start on a Mac; product-repo dev stacks Windows-only; Cmd+Q asks when sessions run; a
+  card's Stop ends claude only (as on Windows) and the reaper ends the rest when the app ends;
+  the smoke test runs its own app (`io.github.hughht5.claude-kanban-dsh.smoke`); data in `~/.claude-kanban-dsh` and apps
+  in `~/Applications`, the Windows names, so the later rename covers both.

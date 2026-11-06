@@ -18,6 +18,15 @@
   function render(st){
     if(busy)return;
     const r=st&&st.ready;shown=r||null;
+    // On a Mac the helper records a failed install. It comes first, even with the same update
+    // still staged, and stays until OK (card #117); then the update shows as before.
+    if(st&&st.failed){
+      bar.innerHTML=`<span class="ut"><b>The last update didn't install</b> — ${esc(st.failed)}. This is the version you had before; the helper's log is in the data folder's update/restart.log.</span>
+        <span class="ua"><button class="btn ghost" type="button" id="updOk">OK</button></span>`;
+      bar.hidden=false;
+      bar.querySelector("#updOk").onclick=()=>{call("update_failure_seen").catch(()=>{}).then(()=>call("update_status")).then(render,()=>{})};
+      return;
+    }
     if(!r){bar.hidden=true;bar.innerHTML="";return}
     bar.innerHTML=`<span class="ut"><b>Update ready</b> — ${esc(r.version)} (${esc(r.commit)}, built ${esc(when(r.built_at))})</span>
       <span class="ua"><button class="btn" type="button" id="updNow">Restart now</button><button class="btn ghost" type="button" id="updLater">Later</button></span>

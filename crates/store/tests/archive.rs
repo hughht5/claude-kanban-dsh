@@ -122,7 +122,7 @@ fn migration_10_archives_cards_already_in_done_and_nothing_else() {
         conn.pragma_update(None, "user_version", 9).unwrap();
     }
     let s = Store::open(&path).unwrap();
-    assert_eq!(s.schema_version().unwrap(), 10);
+    assert_eq!(s.schema_version().unwrap(), kanban_store::SCHEMA_VERSION);
     let d = s.get("d").unwrap();
     assert!(d.archived);
     assert_eq!(d.column, "Done");

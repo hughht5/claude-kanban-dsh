@@ -274,12 +274,417 @@ No migration, and nothing in the data folder changes: `/btw` answers are kept in
 | The menu asks Claude Code for its list (`slash::claude_list`, `with_claude`, `CLAUDE_LISTS` in `session_cmds.rs`). `/btw` and `/exit` from the chat are handled before a message is sent, and no slash command takes a Human test card back to work (`chat_command` in `src-tauri\src\session_cmds.rs`) | Same revert |
 | `<local-command-stdout>` shows in the chat as a command's output (`transcript::command_output`) | Same revert |
 
-## The public split (claude-kanban-dsh)
+## Card #96: the card-reviewer subagent beside the card-tester (6 Nov 2026, stack A, branch `dsh-agents`)
+
+Built in the worktree `~\kanban-app-dsh` on the branch `dsh-agents`; main is untouched until Hugh ships.
 
 | Change | Undo |
 |---|---|
-| Setting `private.dir` (Settings > Sessions > Private folder): `{prompts}` and `repos.json` come from it | Clear the field and Save: the bundled example prompts are used and the add-card form lists only this app |
-| Column prompts on new boards name `{prompts}\<file>.md` | Edit a column's prompt in Settings to any path you want |
-| The app renamed to Claude Kanban DSH: `~\Programs\Claude Kanban DSH`, data in `~\.claude-kanban-dsh` | Uninstall it in Windows Settings > Apps; an old install and its data folder are left as they were |
-| A data folder with `import-from.txt` and no board imports that folder's board once, then renames the request `imported-from.txt` | Quit the app, move `board.db` out of the new data folder; the old folder was only read |
-| `scripts\hooks\pre-commit` (`git config core.hooksPath scripts/hooks`) runs `scripts\check-public.sh` | `git config --unset core.hooksPath` |
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-dsh --force; git -C $HOME\claude-kanban-dsh branch -D dsh-agents` (only before it ships) |
+| `src-tauri\src\agents.rs`: one table of the app's subagents, their `--agents` JSON (the reviewer at effort high), the deny list (the card-changing tools under both kanban MCP names; whole tools only, no `Bash(...)` rules, which take the whole shell away), the shared verdict code and the move rules (`GATES`). `tester.rs` keeps the tester's text and rule | `git revert` the commit. Sessions started or resumed after it get only the card-tester again |
+| `src-tauri\src\reviewer.rs`: the `card-reviewer` subagent, its `review` field and its rule; its third FAIL queues a move to Blocked | Same revert. To keep the code and stop the hold: Settings › Sessions, untick "Review every card's diff..." (`sessions.review_before_human_test` = `off`) |
+| `crates\store`: every move into In progress also sets `review` to needed (`RESET_ON_IN_PROGRESS`); `stack_recheck` holds a ready stack until the lead's own test and review passed (`stackHeld` on the lead); the on/off rules are one list (`RULE_KEYS`) | Same revert. The new card fields (`review`, `stackHeld`) and the setting row stay in the board, harmless to an older build, which ignores them |
+| `src-tauri\src\configwatch.rs`: a fingerprint of each account's `settings.json` and the config keys of `.claude.json` when one of the app's subagents starts, compared when it stops; a WARNING log line and a notification on a change. It only reads those files | Same revert |
+| A lead's own verdict passing reruns its stack's rules (`dispatch::after_lead_verdict`); a child sending the stack back keeps the lead's own test and review | `git revert` the commit |
+| A subagent's verdict text is masked before it is stored (`kanban_store::mask_secrets`, in `record_of`): sign-in links, `Bearer` values and tokens become hidden, "password" becomes "pass word" | `git revert` the commit |
+| A capped review (`capped: true`, carried until the In progress reset) stops a card session moving the card from a column before Human test into In progress, Human test or Deploy complete (`agents::capped_hold`), and a capped lead holds its stack (`lead_missing`); the session is told to stop | `git revert` the commit, or untick the review switch |
+| `build.rs` compiles in `KANBAN_PROMPTS_DIR`: for a test build, the prompts folder of the checkout being built; for a live build, always main's. `BACK_FROM_TEST` and the stack-join message use it | Same revert (the strings go back to `~\claude-kanban-dsh\prompts`) |
+| UI: the review chip and the panel rows from one list (`CHECKS` in `ui\board.js`); the subagent rules' checkboxes from one list (`SUBAGENT_RULES` in `ui\settings.js`) | Same revert |
+| Prompts: `in-progress.md` "Review and test it with subagents" and `kanban-app.md` steps 4a, 5 and 6a, each new step conditional on the session having the subagent | Same revert |
+
+## Card #97: the card-critic subagent that checks the plan before building (6 Nov 2026, branch `dsh-97`)
+
+Built in the worktree `~\kanban-app-97` on the branch `dsh-97`, from `dsh-agents` at #96's 146e29d; main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-97 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-97` (only before it ships) |
+| `src-tauri\src\critic.rs`: the `card-critic` subagent (effort high), its `critique` field and its rule (`gate`); one line each in `agents::AGENTS` and `agents::GATES` | `git revert` the commit. Sessions started or resumed after it no longer get the critic. To keep the code and stop the hold: Settings › Sessions, untick "Critique every plan..." (`sessions.critic_before_build` = `off`) |
+| `crates\store`: `critique` resets (into Planning; a summary edit in Planning or in Blocked before the build; `started` on every move into In progress) in `cards.rs` `apply`; the rule `CRITIC_RULE_KEY` in `RULE_KEYS` | Same revert. The `critique` card field and the setting row stay in the board, harmless to an older build, which ignores them |
+| `dispatch.rs`: the Take it to notes name the critic; a move into Planning says so when the rule is off (`CRITIQUE_OFF`) | Same revert |
+| UI: the critique chip and panel row (one entry in `CHECKS`, `ui\board.js`); its checkbox (one entry in `SUBAGENT_RULES`, `ui\settings.js`) | Same revert |
+| Prompts: `planning.md` "Check the plan with a subagent" (step 6, the stack lead's line, the Take it to line) and `kanban-app.md` Planning step 6, each conditional on the session having the subagent | Same revert |
+
+## Card #98: the card-router subagent sizes each card in Planning (6 Nov 2026, stack A, branch `dsh-98`)
+
+Built in the worktree `~\kanban-app-98` on the branch `dsh-98`, from `dsh-agents` (card #96's commits); main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-98 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-98` (only before it ships) |
+| `src-tauri\src\router.rs`: the `card-router` subagent (effort low, one line in `agents.rs` `AGENTS`); its report's ROUTE lines are recorded on the card as `route`, once per card | `git revert` the commit. Sessions started or resumed after it no longer get the router |
+| The route's model and effort apply in Planning and In progress (`router::settings_for`, which `session_settings` now calls), and the dispatcher restarts a routed card's free session onto them and back, resuming its conversation (`router::restart_if_due` in `dispatch::run`; Route again leaves `routeCleared`). It never types `/model` or `/effort`. Cards with no route are unchanged | Same revert. To stop it on one card without a revert, set its model and effort in the panel: Hugh's choice beats the route |
+| A card routed small goes on from Planning to In progress by itself once its plan critique passed: a held move queued by the app (`router::go_on_if_ready`, called from `agents.rs` `record_check` and when a route is recorded; the held-move path reads its `by` and sends the In progress prompt, `dispatch::app_move_message`) | Settings › Sessions, untick "Let a card routed small start building once its plan critique passes" (`sessions.small_go_on` = `off`). Or the same revert |
+| `crates\store`: `ROUTE_KEY` (`route`) and the setting `sessions.small_go_on` (`SMALL_GO_ON_KEY`, in `RULE_KEYS` and `PAGE_SETTINGS`) | Same revert. The `route` field and the setting row stay in the board, harmless to an older build, which ignores them |
+| The panel's Route again (`route_again` in `session_cmds.rs`): clears `route` and asks the session to run the router again; Planning only | Same revert |
+| UI: the Small / Normal / Split chip and the panel's Route row (`ui\board.js`), the setting's checkbox (`ui\settings.js`), the "route" mark by the model and effort (`ui\live-switch.js`) | Same revert |
+| Prompts: `planning.md` "Route it first" and `kanban-app.md` Planning step 0, each conditional on the session having the router | Same revert |
+
+## Card #99: the stuck-session monitor (6 Nov 2026, stack A, branch `dsh-99`)
+
+Built in the worktree `~\kanban-app-99` on the branch `dsh-99`; main is untouched until Hugh ships. No migration.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-99 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-99` (only before it ships) |
+| `src-tauri\src\monitor.rs` and its thread (`dispatch::run` starts it), `Sessions::watch` and the StopFailure `error` (`sessions.rs`), `Subagent::stopped` (`transcript.rs`), `tools::UPDATABLE` made `pub(crate)` | `git revert` the commit. To keep the code and stop the monitor: Settings › Sessions, "Look for stuck card sessions every" 0, which also clears every chip |
+| The setting `sessions.stuck_check_minutes` (`crates\store\src\config.rs`) | Same revert. A saved value stays in the settings table, ignored by an older build |
+| The `stuck` card field | An older build ignores it. To clear it with the monitor still in: set the setting to 0 |
+| UI: the May be stuck chip and panel row (`ui\board.js`, `ui\board.css`), the setting's box (`ui\settings.js`) | Same revert |
+| Comparing calls without their `description` (6 Nov, branch `dsh-99-desc` from `dsh-integration` 7e06adc): `LABELS` and `compared` in `monitor.rs` | `git revert` that commit (card #99, "description") |
+| The idle check (6 Nov, branch `dsh-99-idle` from `dsh-integration` 2b0fb0e): `check`'s "idle" kind, `idle_text`, `IDLE_COLUMNS`, `View::blocked` (`monitor.rs`), its label in `ui\board.js` | `git revert` that commit (card #99, "idle"). A card's `stuck` field of kind "idle" clears at the next check of an older build |
+
+## Card #111: time in each column (6 Nov 2026)
+
+No migration, no new table and no new card fields. Everything is read from the revisions the board
+already keeps.
+
+| Change | Undo |
+|---|---|
+| The panel's "Time in columns" section and the column headers' median tooltips (`ui\times.js`, `ui\times.css`, a script and a stylesheet line in `ui\index.html`, one hook line each in `ui\board.js` `render` and `renderDetail`) | `git revert` the commit |
+| The read-only commands `card_times` and `column_medians` (`src-tauri\src\times.rs`, two lines in `src-tauri\src\main.rs`) and the store's rebuild (`crates\store\src\times.rs`, `crates\store\tests\times.rs`, two lines in `crates\store\src\lib.rs`) | Same revert |
+| A new card's create revision records the column it was made in (`{"created":true,"column":"Backlog"}`, `Store::create` in `crates\store\src\cards.rs`), and an import's revision the column and archive state it wrote (`crates\store\src\import.rs`) | Same revert. The create revisions written meanwhile keep the extra `column` key: revisions are append-only, nothing else reads that JSON, and an older build ignores it, so they are left as they are |
+
+## Card #102: step through Human test cards with Previous and Next (6 Nov 2026, branch `dsh-102`)
+
+Built in the worktree `~\kanban-app-102` on the branch `dsh-102`, from `dsh-agents`; main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-102 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-102` (only before it is merged) |
+| `ui\review.js` and `ui\review.css` (loaded in `ui\index.html`): the Human test queue, the review bar, Pass with its confirm and 5-second Undo, Fail mode, the Human test box, and the one key handler (`htKeys`) that card #116 reuses | `git revert` the commit. Nothing is stored: a Pass still waiting is dropped |
+| `ui\panel.js`: `openPanel(id, {step})` and `closePanel(step)` switch card in place; the review hooks (`reviewOpened`, `reviewClosed`, `reviewOwnsFocus`, `reviewFailing`, `reviewFailSend`, `reviewFailEnd`); no focus on the message box for a Human test card | Same revert |
+| `src-tauri\src\session_cmds.rs`: the `human_test_fail` command; `src-tauri\src\dispatch.rs`: `fail_plan`, `failed_log`, `failed_message`, `lead_failed_message` and their tests; `src-tauri\src\main.rs`: `problem_back`, the steps `stack_problem` and a lead's Fail share | Same revert. "Failed in Human test: ..." log lines already written stay on the cards (append-only) |
+
+## Card #103: Time to check on Human test cards (6 Nov 2026, branch `dsh-103`)
+
+Built in the worktree `~\kanban-app-103` on the branch `dsh-103` (from `dsh-agents`); main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-103 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-103` (only before it ships) |
+| `crates\store`: every move into Human test removes `checkSize` (`RESET_ON_HUMAN_TEST`); `Store::check_size_due` | `git revert` the commit. The `checkSize` field stays on cards, harmless to an older build, which ignores it |
+| `src-tauri\src\check_size.rs`: the app reads each Human test card's diff with git (read-only) and writes `checkSize` and a log line; `dispatch::run` calls it every 3 s; the `check_size_again` command; `regex` in `src-tauri\Cargo.toml` | Same revert |
+| UI: `ui\check-size.js`, `ui\check-size.css` and its script line in `ui\index.html` | Same revert, or delete the script line in `index.html` to hide it all |
+| The chip's tooltip and the Time to check box no longer repeat the headline reason (branch `dsh-103-tooltip`, from `dsh-integration` 27fe0a8) | `git revert` that commit |
+
+## Card #107: what a card is waiting on Hugh for (6 Nov 2026, branch `dsh-107`, from `dsh-agents`)
+
+Built in the worktree `~\kanban-app-107` on the branch `dsh-107`; main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-107 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-107` (only before it ships) |
+| Shared board hooks (`boardHooks` with `filters`, `decorate`, `details` in `ui\board.js`); the filter box splits on spaces and every term must match; a label click adds or removes its own term (`ui\labels.js`) | `git revert` the "shared hooks" commit. Revert the cards that push onto `boardHooks` first, or their files throw on load |
+| `src-tauri\src\needs.rs`: `ask` on each need, `redact()`, an in-memory reply cache and its background threads; `compute` takes the sessions' waits and the cache | `git revert` the card #107 commit. Nothing is stored, so there is nothing to clean up |
+| `src-tauri\src\sessions.rs`: one `waits` field on a running session (prompt text, StopFailure error), `Sessions::waits`, `prompt_wait`, `set_prompt_call` | Same revert |
+| `src-tauri\src\dispatch.rs` `on_hook`: hands the Stop hook's reply to `needs::turn_ended`; a permission Notification starts the transcript read | Same revert |
+| `src-tauri\src\transcript.rs`: reply and open-call readers at the end of the file | Same revert |
+| `src-tauri\Cargo.toml`: `regex` added (already in the workspace) | Same revert |
+| UI: the line on the card, the panel's "Waiting on you" box, the `is:waiting` filter and the header button (`ui\needs.js`, new `ui\needs.css`, its link in `ui\index.html`) | Same revert |
+
+## Card #112: the card-reproducer subagent (6 Nov 2026, branch `dsh-112`)
+
+Built in the worktree `~\kanban-app-112` on the branch `dsh-112`, from `dsh-agents`; main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-112 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-112` (only before it ships) |
+| `src-tauri\src\repro.rs`: the `card-reproducer` subagent, its `repro` field, its report reader, the shot copy and its rule; one line each in `agents.rs` `AGENTS` and `GATES` | `git revert` the commit. Sessions started or resumed after it no longer get the reproducer |
+| Bug reports set `repro` to needed: Found a problem (`main.rs` `stack_problem`), Report a bug (`session_send`'s `bug`), a card-tester FAIL with a `- BUG:` line (`agents.rs` `record_check`); a stack waits for its lead's open bug report (`crates\store\src\stacks.rs` `stack_recheck`, `repro_open` in `cards.rs`) | Same revert. To keep the code and stop the hold: Settings › Sessions, untick "Prove reported bugs with the reproducer" (`sessions.repro_before_human_test` = `off`) |
+| The setting `sessions.repro_before_human_test` (`REPRO_RULE_KEY` in `crates\store\src\config.rs`) | Same revert. The setting row and the cards' `repro` fields stay in the board, harmless to an older build, which ignores them |
+| Kept screenshots in the data folder's `repro\<card id>\` | Plain files the app only adds; to remove them, `Remove-Item -Recurse "$env:USERPROFILE\.claude-kanban-dsh-test\repro"` (test) once the app has quit. Nothing on the board points anywhere else |
+| `session_cmds.rs` `local_image`: the chat's image check, shared with the shot copy | Same revert |
+| A stack's card isn't held for the reproducer: `mark_needed` and `gate` skip cards with `stackOf`; `stack_problem` sends `repro::child_note` and logs on an own-build child's lead; in-progress.md's section is guarded on a `repro` field (whole-build review S4, S8) | `git revert` that commit (card #112's fix on `dsh-112-fix`) |
+| UI: the reproducer chip and Reproducer box (`ui\board.js` `CHECKS`, `reproBox`; `ui\board.css`), Report a bug beside Send (`ui\panel.js` `post`), the rule's checkbox (`ui\settings.js`) | Same revert |
+| Prompts: `in-progress.md` "Prove a reported bug first", `kanban-app.md` 1a and the hand-over line, and `BACK_FROM_TEST` in `dispatch.rs` | Same revert |
+
+## Card #100: the card-merger subagent at ship (6 Nov 2026, branch `dsh-100`)
+
+Built in the worktree `~\kanban-app-100` on the branch `dsh-100`, from `dsh-agents` (card #96's foundation). Main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-100 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-100` (only before it ships) |
+| `src-tauri\src\merger.rs`: the `card-merger` subagent (edits allowed), its report (`CARD`, `VERDICT`, `HEAD`, `ORIGIN`) recorded as the card's `merge` field with a "Merger: ..." log line; a moved origin also tells Hugh. One line in `agents.rs` `AGENTS`, `mod merger` in `main.rs` | `git revert` the commit. Sessions started or resumed after it no longer get the merger, and the Ship it steps say to go on without it |
+| `crates\store`: `MERGE_KEY`; every move into Ship it clears the card's `merge` | Same revert. A `merge` field left on a card is harmless to an older build, which ignores it |
+| UI: the Merged / Merge failed / Merge unclear chip on Ship it and Deploy complete cards, and the Merger row in the panel (one `CHECKS` entry in `ui\board.js`) | Same revert |
+| The shell guard (`src-tauri\src\guard.rs`): each card session's settings get a second `PreToolUse` hook (`Bash\|PowerShell`, to `/hook/<token>/<row>/guard`, `sessions::settings_json`); `api.rs` answers it with `guard::guard`, which refuses every app subagent's `kb` and `claude config`/`mcp`, and a card-merger's `git push`, `gh pr merge` and `gh api`, and logs it on the card | Same revert. Session settings files are written at each start, so sessions started after it lose the hook. A session still running keeps it; its guard calls then reach the generic hook path and get `{}`, so nothing is refused |
+| Prompts: `ship-it.md` step 1a and `kanban-app.md` Ship it step 1a, both conditional on the session having the `card-merger` | Same revert |
+
+## Card #113: a stack's cards build in parallel, with the lead as integrator (6 Nov 2026, branch `dsh-113`)
+
+Built in the worktree `$HOME\kanban-app-113` on the branch `dsh-113`, from `dsh-agents` at `6a0245c`; main is untouched until Hugh ships. **No migration and no data change:** a child's merge record (`merge`) and the start queue's `first` flag are plain fields, and an older build ignores them. Its commits carry `(card #113)` in their messages. Revert them all, newest first: `git -C $HOME\kanban-app-113 log --format=%H -F --grep="(card #113)" | ForEach-Object { git -C $HOME\kanban-app-113 revert --no-edit $_ }` (on whichever branch holds them; after a ship, run it in `$HOME\claude-kanban-dsh` on `main`).
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-113 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-113` (only before it ships) |
+| `crates\store`: a child's stage (`stack_stage`), merged (`stack_merged`), readiness counting merged children only (`stack_ready(lead, ..)`), the lead's review counted from its children's (`lead_missing_in_stack`), Passed refused before the merge, the merge record cleared when a child goes back; the lead's start first in the queue (`StartQueue::push_first`, `Store::queue_start_first`) | The revert above. A `merge` field left on a card and a `first` flag left in `sessions.start_queue` are ignored by the older build |
+| `src-tauri\src\stackrun.rs` and its calls in `dispatch.rs`, `main.rs`, `session_cmds.rs`, `tools.rs`: children started when Hugh moves the lead, the child's note, the lead woken with a merge brief, `after_child_merge`, a child's session stopped at Human test, Detach refused for a merged child, the lead on low effort, `stack_stages`, the new `kanban_stack_list` fields | The revert above. Children that already have sessions keep them: stop one from its card if it should not run. A lead on low effort: set Effort on its card |
+| Prompts: `planning.md` and `in-progress.md` stack sections, `kanban-app.md` "A stack card". Each new step starts "If `kanban_stack_list` shows a `stage` for each child", so an older build takes the old way | The revert above |
+| Docs: `PLAN.md` Decisions 15 to 20 (R1 to R6), `design\stacked-cards\SPEC.md` "Parallel build", `README.md` "Stacked cards", `HANDOVER.md` "Stacks build in parallel" | The revert above |
+
+## Card #108: what changed on each card (6 Nov 2026)
+
+No migration. Two new card fields in the free JSON: `changesOutputs` (a session's handed-over
+files) and `changesSaved` (the figures the app saves when a card enters Human test). Older builds
+carry both through unchanged.
+
+| Change | Undo |
+|---|---|
+| Read-only git figures for a card, the commands `card_changes`, `card_changes_brief` and `changes_open`, and the save on entering Human test (`src-tauri\src\changes.rs`; `mod changes` and three handler lines in `src-tauri\src\main.rs`; three one-line hooks in `src-tauri\src\dispatch.rs` `after_move` and `after_stack_move`) | `git revert` the commit |
+| `changesOutputs` cleaned by the store (`clean_changes_outputs` in `crates\store\src\cards.rs`, re-exported from `crates\store\src\lib.rs`) and settable by sessions (`UPDATABLE` in `src-tauri\src\tools.rs`) | Same revert. Cards that already have the fields keep them harmlessly; to clear one: `kb update <n> --changesOutputs null` |
+| The card tag and the panel's "What changed" box (`ui\changes.js`, `ui\changes.css`, one script line in `ui\index.html`) | Same revert |
+| The guarded `changesOutputs` line in `prompts\in-progress.md` (hand-over) and `prompts\kanban-app.md` (Human test) | Same revert |
+| Fix from the whole-build review (branch `dsh-108-fix`): a Done card's tag comes from its saved figures, and the board runs no git for Done cards (`chgLocalBrief` in `ui\changes.js`, `asks_git` in `src-tauri\src\changes.rs`) | `git revert` that commit |
+| Final-test nit (branch `dsh-108-fix2`): the "What changed" box names a branch's base ("against main"), not its 40-character commit id (`baseName` from `base_name` in `src-tauri\src\changes.rs`, read in `chgSource` in `ui\changes.js`; figures saved before it show a 7-character id) | `git revert` that commit |
+
+## Card #101: before-and-after evidence on the card (6 Nov 2026, branch `dsh-humantest`)
+
+Built in the worktree `~\kanban-app-humantest` on the branch `dsh-humantest`, made from `dsh-agents`; main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-humantest --force; git -C $HOME\claude-kanban-dsh branch -D dsh-humantest` (only before it ships) |
+| The app-only card field `evidence`, written by the app with the card-tester's verdict (`Check.evidence`, `agents::record_check`, `src-tauri\src\evidence.rs`, `crates\store\src\evidence.rs`). No migration | `git revert` the commit. The field stays on cards that have it, harmless: an older build ignores it |
+| Shot files copied into the data folder, `%USERPROFILE%\.claude-kanban-dsh(-test)\evidence\<run>\` | Leave them: the board is append-only. After the revert nothing reads them. If Hugh wants the disk back, he deletes the `evidence` folder himself (only the shots go; the cards keep their field) |
+| The tester prompt's step 5 (`tester.rs`): shots for `hughht5/kanban-app` cards | Same revert. Sessions started or resumed after it get the old prompt |
+| `tools\cdp.mjs shot`: needs `CDP_PORT`, crops to a selector, hides the terminal, chat and masked inputs, resets the colour scheme, refuses a blank shot | `git checkout dsh-agents -- tools/cdp.mjs` (or the revert). Until then, run `shot` with `$env:CDP_PORT = '9334'` (or `'9333'` for live, with Hugh's say-so) |
+| `src-tauri\tauri.test.conf.json`: the test window's `additionalBrowserArgs` (`--remote-debugging-port=9334 --remote-allow-origins=http://127.0.0.1:9334` and wry's defaults), so the test app always has its DevTools port. Test build only | Same revert, then reinstall the test app (`scripts\install.ps1 -Channel test`); the installed test app keeps its port until it is reinstalled. The live app never had it |
+| `cdp.mjs shot` stamps the test app's build commit into each PNG (`tEXt` chunk `kanban-build`), read back as the shot's `build` | Same revert |
+| `update_status` (`src-tauri\src\update.rs`) announces a staged-update change it finds (`update-ready`), as the 30 s watcher does, so a shot reading the build can't hide the "Update ready" bar | Same revert |
+| The tester's step 5 takes the port of the test app it tests from the brief (test 9334, test N 9333+N, 9334 by default, never 9333); `kanban-app.md` 6 and 6a and `in-progress.md` put the test app and its port in the brief and `CDP_PORT` on the shot command | `git revert` that commit (the step goes back to a fixed 9334) |
+| UI: `ui\evidence.js`, `ui\evidence.css`, two lines in `ui\index.html`, the Evidence box and "first .ev wins" in `renderDetail` (`ui\board.js`) | Same revert |
+| `prompts\in-progress.md`: one guarded hand-over sentence (the shots as Markdown images) | Same revert |
+
+## Card #104: small, fully checked cards go on by themselves (6 Nov 2026, branch `dsh-104`)
+
+Built in the worktree `~\kanban-app-104` on the branch `dsh-104` (from `dsh-agents`); main is untouched until Hugh ships. It is off until Hugh lists a repo.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-104 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-104` (only before it is merged) |
+| To stop it without a revert | Settings › Sessions, remove every row under "Let small, fully checked cards go on to Ship it by themselves" and Save (`sessions.small_goes_on_repos` = `[]`). A card already waiting stops at its next check, because its repo is no longer listed |
+| Migration 11 (`crates\store\src\schema11.sql`): the append-only `settings_log` table, and every change of a page setting written to it (`set_page_setting_by`; `Store::log_setting`, `setting_log`) | `git revert` the commit. The table and its rows stay in the board (append-only; an older build never reads it). The pre-migration backup is in `%USERPROFILE%\.claude-kanban-dsh\backups` |
+| The repo list setting (`SMALL_REPOS_KEY`, `SmallRepo`, `check_small_repos`, `small_repos`, `small_repo_for` in `crates\store\src\config.rs`) | Same revert. The setting row stays, ignored |
+| A card waiting to go on stops waiting when it leaves Human test (`SMALL_KEY` in `crates\store\src\cards.rs` `apply`) | Same revert. Cards keep their `smallChange` and `smallOptOut` fields, which an older build ignores |
+| `src-tauri\src\small.rs` (the git facts, with replace objects, attributes, external diffs, textconv and fsmonitor turned off, and the rules) and `src-tauri\src\goes_on.rs` (the check after a session's move into Human test, the 10-minute wait, the move into Ship it, the checks at the ship's release and its report, Stop and the opt-out) | Same revert |
+| The tester's and reviewer's records also hold `tools`, `checkout`, `head` and `statusHash`, and the reviewer's `scope` from a new `SCOPE:` line (`src-tauri\src\agents.rs` `record_of`, `record_check`; `src-tauri\src\reviewer.rs`) | Same revert. Old records keep the extra fields, harmless |
+| Dispatch: the held move into Human test calls the check, the loop looks for waits that are over every 20 s, `after_move` checks a released ship first, the Ship it message says to push exactly the checked commit, and `kanban_ship_result` shipped checks the push | Same revert |
+| UI: `ui\small.js` (the chips, Stop, the panel's Small change row), its hooks in `ui\board.js` and `ui\index.html`, its styles in `ui\board.css`, and the Settings box with its change list (`smallReposBox` in `ui\settings.js`) | Same revert |
+| The hard rule's wording ("Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo.") in `AGENTS.md`, `README.md`, `prompts\planning.md`, `prompts\kanban-app.md`, `prompts\in-progress.md`, `src-tauri\src\api.rs` and the refusals in `src-tauri\src\tools.rs` | Same revert |
+
+## Card #106: step progress on each card (6 Nov 2026, stack C, branch `dsh-106`)
+
+Built in the worktree `~\kanban-app-106` on the branch `dsh-106` (from `dsh-agents`); main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-106 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-106` (only before it ships) |
+| Card sessions start with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` while `sessions.todo_tools` is on, its default (`build_env`'s `todo_tools`, `Plan::todo_tools`, `Sessions::start`) | Settings › Sessions, untick "Card sessions keep a to-do list" (`sessions.todo_tools` = `off`). Sessions started after that have no to-do tools. Or `git revert` the commit |
+| The setting `sessions.todo_tools`, one of the on/off `RULE_KEYS` (`crates\store\src\config.rs`), `kanban_store::mask_tokens` (`secret.rs`) and `Store::entered_at` (`cards.rs`); no migration, nothing written to the board but the setting's row when Hugh saves it | Same revert. A saved setting row stays, harmless to an older build, which ignores it |
+| `src-tauri\src\steps.rs` (the reader, the worker, `card_steps`), its line in `dispatch::on_status`, its state and command in `main.rs`, `steps` in `kanban_get_card` | Same revert |
+| `ui\steps.js`, `ui\steps.css`, their two lines in `ui\index.html`, the setting's box in `ui\settings.js` | Same revert |
+| `prompts\in-progress.md`: the "Keep your steps as a to-do list" paragraph, which a session without the tools skips | Same revert |
+| Claude Code's own task files under `~\.claude\tasks\` and `~\.claude-max2\tasks\` (written by the sessions, read only by the app) | Nothing to undo: Claude Code owns them |
+
+## Card #116: review a stack in Human test in its overlay (6 Nov 2026, branch `dsh-116`)
+
+Built in the worktree `~\kanban-app-116` on the branch `dsh-116`, from `dsh-102` (8cf4fd5); main is untouched until Hugh ships. UI only: no Rust, no data, no prompt.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-116 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-116` (only before it is merged) |
+| `ui\stacks.js`: the stack's stop in #102's queue opens the overlay (`stkStackStop`, set as `reviewStackStop`), with a review bar, Previous and Next through the stack's children and a stack page, Pass (P then Enter) and Fail, a key target for #102's handler (`STK_KEYS`), the checks rows and #101's evidence; a click or Enter on a stack card in Human test opens it (`stkReviewEntry`); the overlay is drawn in parts and steps in place | `git revert` the commit. The overlay goes back to Passed, Found a problem and answers, and #102 steps a stack through its lead's panel |
+| `ui\stacks.css`: the bar, checks, stack page and Fail line in the overlay | Same revert |
+| `ui\panel.js` `openShot`: a full-size screenshot opens inside an open dialog, and the focus goes back where it was | Same revert |
+
+## Card #105: "Done when" and acceptance checks (6 Nov 2026)
+
+No migration: two new card fields, `doneWhen` and `doneWhenChecks`, in each card's JSON. #105 adds
+no schema file. Nothing in the data folder changes.
+
+| Change | Undo |
+|---|---|
+| The fields cleaned, and each check's who and when set by the store (`crates\store\src\done_when.rs`; `crates\store\src\cards.rs` the `apply` arm, `fill_pending` in `write_tx` and `create`; `crates\store\src\lib.rs`) | `git -C $HOME\claude-kanban-dsh revert <commit>`. Cards that have the fields keep them; an older build ignores them and keeps them on every write. To clear one card: `kb update <n> --doneWhen null --doneWhenChecks null` |
+| Sessions and `kb` may set them (`src-tauri\src\tools.rs` `UPDATABLE`, `DONE_WHEN_HINT`; `crates\kb\src\main.rs` usage line) | Same revert |
+| The card-tester's CHECK lines mark the checks (`src-tauri\src\done_when.rs`; `src-tauri\src\agents.rs` `record_check`, `pass_fails_on_checks`, `mark_checks`; the prompts in `src-tauri\src\tester.rs`, `reviewer.rs` and `critic.rs`; `src-tauri\src\main.rs`) | Same revert. A session started on the new build keeps its tester prompt until it restarts |
+| Hugh's edits of them are told to the session, except in Human test, Ship it and Deploy complete (`src-tauri\src\dispatch.rs` `TOLD_DONE_WHEN`, `DONE_WHEN_QUIET`, `checks_text`) | Same revert |
+| The card-face line and the panel block (`ui\done-when.js`, `ui\done-when.css`, `ui\index.html`) and the shared hook (`ui\board.js` `CARD_PARTS`, `addCardPart`, `cardLines`, `panelParts`, `panelPartsWire`) | Same revert. Revert any later card that registers a part with `addCardPart` first |
+| Guarded prompt steps (`prompts\planning.md` 5a, `prompts\in-progress.md`, `prompts\kanban-app.md` 5a and 6b) | Same revert. Live reads main's prompt files at once, so after the revert sessions stop being asked to write the fields |
+
+## Card #118: several test apps side by side (6 Nov 2026, branch `dsh-118`)
+
+Built in the worktree `$HOME\kanban-app-118` on the branch `dsh-118`, from `dsh-integration` at `f958734`. **No migration and no data change.** Live and `test` keep every name they had. Its commits carry `(card #118)`. Revert them, newest first: `git -C $HOME\kanban-app-118 log --format=%H -F --grep="(card #118)" | ForEach-Object { git -C $HOME\kanban-app-118 revert --no-edit $_ }` (after a ship, run it in `$HOME\claude-kanban-dsh` on `main`).
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-118 --force; git -C $HOME\claude-kanban-dsh branch -D dsh-118` (only before it ships) |
+| `crates\store\src\channel.rs`: test slots `test2`..`test10` and the name derivation; a bad `KANBAN_CHANNEL` stops the build; `crates\store\tests\channels.rs` | The revert above |
+| `scripts\install.ps1`: `-Channel testN`, `-NamesOnly`, the generated config and hooks in `target\testN` | The revert above. `Remove-Item $HOME\claude-kanban-dsh\target\test2, $HOME\claude-kanban-dsh\target\test3 -Recurse -Force` removes the build folders |
+| `ui\board.js` bar and titles, `notify.rs` toast prefix, `build.rs` prompts folder for any test slot, kb usage text, README, AGENTS, HANDOVER | The revert above |
+| Final-test finding F1 (branch `dsh-118-f1`, from `dsh-integration` 27fe0a8): a test app's sessions get `KANBAN_DATA_DIR` (its data folder) and its install folder first on PATH (`build_env_for` in `sessions.rs`); `kb` and `kb mcp` read `KANBAN_DATA_DIR` first (`kanban_store::kb_data_dir`); tests in `sessions.rs`, `channel.rs` and `crates\kb\tests\session_board.rs` | The revert above. The live app never sets the variable, so live sessions are unchanged either way |
+| An installed slot (when the router installs test 2 or test 3) | Quit it from its tray, then `& "$env:USERPROFILE\Programs\Claude Kanban DSH Test 2\uninstall.exe" /S` (the NSIS uninstaller in its folder). Its data folder `%USERPROFILE%\.claude-kanban-dsh-test2` holds only a copy of the board: rename it rather than delete it if it should go. Same for test 3 |
+
+## Turns on the test app (6 Nov 2026, card #115)
+
+| Change | Undo |
+|---|---|
+| Card #115's commit on branch `dsh-115` (the queue, `kanban_test_app`, `kb testapp`, the chip and banner, `install.ps1`'s lock and waits, the prompt step) | `git revert <sha>` on the branch it was merged into, then reinstall the test app (and stage live, if it shipped). |
+| The setting `testapp.queue` (and `testapp.turn_minutes`, if set) on each board | Nothing to do: older builds ignore them. No migration, no row removed. |
+| The folder `%USERPROFILE%\.claude-kanban-dsh-shared\testapp\` (`install.lock`, `turn-*.json`, `hold.json`, `input-test.json`) | With both apps closed and no install running: `Remove-Item "$env:USERPROFILE\.claude-kanban-dsh-shared" -Recurse -Force`. |
+| Old DSH lock folders renamed by Release: `%USERPROFILE%\.dsh-test-app.lock.released-*` | `Remove-Item "$env:USERPROFILE\.dsh-test-app.lock.released-*" -Recurse -Force` once DSH is over. |
+| A Hold that blocks installs | Click **Let it restart**, or `Remove-Item "$env:USERPROFILE\.claude-kanban-dsh-shared\testapp\hold.json"`. |
+| An install turn or tester turn stuck | **Release** on the Test app chip, or `kb testapp release --force` from outside a card session. |
+
+## Wave 3 merge fixes on `dsh-integration` (6 Nov 2026, the merger)
+
+| Change | Undo |
+|---|---|
+| `scripts\install.ps1`, slot N build (#101 with #118): the slot's own DevTools port (9333 + N) in the generated window config's `additionalBrowserArgs` | `git revert` the `Integrate dsh-118 (wave 3)` merge, or delete the six lines after `$Conf.app.windows[0].title = $Name` |
+| `scripts\install.ps1`, `Get-TurnWait` (#115 with #118): reads `turn-live.json` and this run's own slot's `turn-<channel>.json`, not always `turn-test.json` | Put back `foreach ($ch in 'live', 'test')` |
+| `src-tauri\src\critic.rs` `CHECK`: `evidence: false` (#97 with #101's new `Check` field) | None needed: the build needs it |
+
+## Card #110: search every card's session history (6 Nov 2026)
+
+No board migration: `board.db` doesn't change. The index is its own
+file, `search.db`, in the data folder (`%USERPROFILE%\.claude-kanban-dsh`, or `.claude-kanban-dsh-test` for
+the test app), with its own migrations (`search1.sql`).
+
+| Change | Undo |
+|---|---|
+| The index file and its rebuilds: `search.db` (and `search.new.db` while a month's new file is built) in the data folder, and one copy in `backups\search` | Quit the app (Hugh's say-so for live), then `Remove-Item "$env:USERPROFILE\.claude-kanban-dsh\search.db*", "$env:USERPROFILE\.claude-kanban-dsh\search.new.db*"; Remove-Item "$env:USERPROFILE\.claude-kanban-dsh\backups\search" -Recurse`. The index is only a copy: it is rebuilt from the transcripts on the next start |
+| The index (`crates\store\src\search.rs`, `search1.sql`, `Store::all_sessions` in `sessions.rs`; tests in `crates\store\tests\search.rs`) | `git revert` the commit |
+| The indexer thread, the hook nudge and the searches (`src-tauri\src\search.rs`; `search::on_hook` in `dispatch::on_hook`; the `search_sessions` and `search_status` commands in `main.rs`) | Same revert |
+| `kanban_search` for callers outside a card session (`control.rs` `CONTROL`; `api.rs` `tool_list`) and `kb search` (`crates\kb\src\main.rs`) | Same revert |
+| The Search sessions dialog (`ui\search.js`, `ui\search.css`, the button and dialog in `ui\index.html`) and Ctrl+F in a card panel no longer taking Ctrl+Shift+F (`ui\panel.js` `panelKeys`) | Same revert |
+| SQLite built optimised in dev and test builds (`[profile.dev.package.libsqlite3-sys]` in `Cargo.toml`) | Same revert, or delete those three lines. Release builds were already optimised |
+## Card #109: cards that wait on others (6 Nov 2026, branch `dsh-order`)
+
+Built in the worktree `~\kanban-app-order` on the branch `dsh-order` (from
+`dsh-agents`); main is untouched until Hugh ships.
+
+| Change | Undo |
+|---|---|
+| The worktree and branch | `git -C $HOME\claude-kanban-dsh worktree remove $HOME\kanban-app-order --force; git -C $HOME\claude-kanban-dsh branch -D dsh-order` (only before it ships) |
+| `crates\store\src\waits.rs`; the `blockedBy` and `waitedOn` cleaning in `cards.rs` (`apply`, `create`), the check in `write_tx`, `move_after_waits` and the private `How` in `move_as`; the join refusal in `stacks.rs` | `git revert` the commit. Waits already on cards stay in their fields, harmless: an older build shows and moves those cards as before and never acts on them |
+| Migration 12 (`schema12.sql`): the partial index `cards_waiting` | Nothing to undo: it changes no row, and an older build keeps it up to date and ignores it. It is never dropped by hand (no direct edits of `board.db`) |
+| `dispatch::pump_waits` in the 2-second tick, `wait_move_refused`, `TOLD` and `edit_message` for `blockedBy`, the note in `move_message` | Same revert. To stop the app acting on waits without a revert, take the waits off the cards (the ✕ in the panel, or `kb update <n> --blockedBy null`) |
+| `tools.rs`: `blockedBy` in `UPDATABLE`, `waits_refused`, `blockedBy`/`waitedOn` in the list and stack output; `kb`'s usage line | Same revert |
+| `ui\waits.js`, `ui\waits.css` and their two lines in `ui\index.html` | Same revert |
+| `prompts\planning.md`: the guarded `blockedBy` line | Same revert |
+
+## Card #114: the platform layer (6 Nov 2026)
+
+No migration in this commit, and nothing in the data folder changes. Windows behaves as before:
+the code was moved, not changed. (The `{prompts}` commit below is a change on purpose: the
+prompt paths are built at run time from the home folder, and read the same on Hugh's PC.)
+
+| Change | Undo |
+|---|---|
+| Windows-only code moved into `src-tauri\src\platform\windows.rs` behind the interface in `platform\mod.rs`; the call sites in `sessions.rs`, `tray.rs`, `place.rs`, `notify.rs`, `update.rs`, `launch.rs`, `slash.rs`, `stack.rs`, `session_cmds.rs`, `api.rs`, `transcript.rs` and `main.rs` call it | `git revert` the commit |
+| `kanban_store::home_var()` (`crates\store\src\channel.rs`), the one place the home folder is read | Same revert |
+| `windows` and `tauri-winrt-notification` are Windows-only dependencies (`src-tauri\Cargo.toml`) | Same revert |
+| The guard test (`src-tauri\tests\platform_guard.rs`, `platform-allow.txt`) and the WSL tests in `stack.rs` marked Windows-only | Same revert |
+| CI (`.github\workflows\ci.yml`) on branch `dsh-114` | Same revert. To stop it running on GitHub at once: `git push origin --delete dsh-114` (the branch only; never `main`) |
+| Wave 5 merge (dsh-integration): the newer cards' Windows-only calls go through the platform module too: `no_window()` in `changes.rs`, `check_size.rs` and `small.rs`; `home_var()` in `configwatch.rs` and `testapp.rs`; `share_all`, `process_start` and `PID_LOCKS` (moved from `testapp.rs`); the toast's no-card click (card #104) in `platform\windows.rs`; text-only hits in `platform-allow.txt` | `git revert -m 1` the merge commit |
+| Wave 5 merge: `{prompts}` in the board's prompts is filled from `repo_folder` (as #114 had it); the app's own messages (`back_from_test`, the stack plan message) from `PROMPTS_DIR` (card #96), so a test build still reads its own checkout's prompts | Same revert |
+
+### Card #114: `{prompts}` (6 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `{prompts}` is filled in by `dispatch::with_prompts` (`fill`, `back_from_test`, the stack plan message in `src-tauri\src\dispatch.rs`) | `git revert` the commit |
+| Migration 13, `crates\store\src\schema13.sql` (the shipped column prompts and the "Kanban app" template name `{prompts}`; 11 is card #104's, 12 is card #109's). It runs after the pre-migration backup in `%USERPROFILE%\.claude-kanban-dsh\backups` | An older build opens the board (it ignores a newer version) but would send `{prompts}` as it is, so in that build press **Reset** on Planning, In progress, Ship it and Deploy complete (Settings › Columns), and edit the "Kanban app" template's start prompt back to the full path. Never edit `board.db` by hand |
+
+## Card #117: macOS (6 Nov 2026)
+
+No migration. On Windows nothing changes but two small things below. On a Mac, everything is
+new; nobody has a Mac yet.
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\platform\macos.rs`, the `kanban-unix` crate (`crates\unix`), kb's hidden `reap` and `install-lock` commands, the macOS dependencies and the `mac-devtools` feature in `src-tauri\Cargo.toml` | `git revert` the commit |
+| Hooks that do nothing on Windows: `platform::builder` (main.rs), `tray_style`, `tray_count`, `TRAY_LEFT_CLICK_SHOWS` (tray.rs), `SECOND_ACCOUNT` (dispatch.rs, sessions.rs), `write_private` (api.rs, sessions.rs); the `app_platform` command; Mac branches in `ui\panel.js`; `ui\quit.js`; the failed-update notice in `update.rs` and `ui\update.js` | Same revert |
+| Windows-visible: `api.json` has a `pid` field; Sessions reaps a dead session's child with `try_wait` when it drops it | Same revert |
+| Guarded "On a Mac only" lines in `prompts\kanban-app.md`, `in-progress.md` and `ship-it.md` | Same revert (Windows sessions skip them) |
+| `scripts\install.sh`, `mac-kb.sh`, `smoke-macos.sh`, `smoke\`, `mac-signing-cert.sh`; `src-tauri\tauri.macos*.json`, `tauri.smoke.conf.json`, `icons\tray-template.png` | Same revert |
+| The Mac jobs in `.github\workflows\ci.yml` (only on `dsh-117` and manual runs) | Same revert. To stop them at once: `git push origin --delete dsh-117` (the branch only; never `main`) |
+| On a Mac (when someone installs): `~/Applications/Claude Kanban DSH.app` and `Claude Kanban DSH Test.app`, `~/.local/bin/kb`, the data folders | Quit the app from the menu bar, then `rm -rf "$HOME/Applications/Claude Kanban DSH.app" "$HOME/Applications/Claude Kanban DSH Test.app" "$HOME/.local/bin/kb"`. Keep the data folders unless the board is no longer wanted |
+| On a Mac, if `scripts/mac-signing-cert.sh` was run: the "Claude Kanban DSH Local" certificate and its trust | `security delete-identity -c "Claude Kanban DSH Local"` in Terminal (it also removes the trust setting) |
+| This PC: the rustup targets `aarch64-apple-darwin` and `x86_64-apple-darwin` (INSTALLED.md) | `rustup target remove aarch64-apple-darwin x86_64-apple-darwin` |
+| Wave 5 merge: `share_all`, `PID_LOCKS` and `process_start` for macOS (`src-tauri\src\platform\macos.rs`, as testapp.rs had them off Windows); a notification with no card shows the board only; `changes::is_wsl` takes a `/` path as WSL only where `DEV_STACKS` (Windows) | `git revert -m 1` the merge commit |
+
+## Card #120: review mode, session search and the Agents feed (6 Nov 2026, panel part, branch `dsh-120`)
+
+The page parts below change no data. The Rust parts ("Card #120: the Rust parts", below) read
+data only: no migration, no schema change. Undo in PowerShell 5.1 from the repo folder, then
+install the test app again (`scripts\install.ps1 -Channel test`).
+
+| Change | Undo |
+|---|---|
+| Human test review mode over the whole panel (`ui\review.js`: the bar's head and actions, the review box, the Review/Chat tabs, Open the card; `htLive` skips card #0) and `ui\review-mode.css` | `git checkout main -- ui/review.js; Remove-Item ui\review-mode.css` |
+| The check marks (✓ ✗ ○) in the "Done when" block, shown only in review mode (`ui\done-when.js`, `dwPanel`) | `git checkout main -- ui/done-when.js` (also drops the face agent's line change: re-apply it, or edit the one `mk` line out by hand) |
+| The Agents feed and its drawer, the header's Agents button and Ctrl+Shift+A (`ui\agents-feed.js`, `ui\agents-feed.css`, `ui\rpane.css`), and its test `tools\ui-tests\feed.test.mjs` | `Remove-Item ui\agents-feed.js, ui\agents-feed.css, ui\rpane.css, tools\ui-tests\feed.test.mjs` |
+| Session search restyled as the mockup's rows, and the median time bar under the results (`ui\search.js`, `ui\search.css`, `ui\times.js` `timesBarHtml`, `ui\times.css`) | `git checkout main -- ui/search.js ui/search.css ui/times.js ui/times.css` |
+| `ui\index.html`: the block `<!-- card #120: review, search, feed -->` (three `<link>` and one `<script>`) | Delete those lines by hand (the face block beside it is another part of the card) |
+
+## Card #120: the board face (6 Nov 2026)
+
+No migration, no data change from the page. The Rust parts of card #120 have their own rows.
+
+| Change | Undo |
+|---|---|
+| New `ui\face.js`, `ui\face.css`, `ui\filterbar.js`, `ui\filterbar.css` and their tags in the `<!-- card #120: board face -->` blocks of `ui\index.html` | `git revert` the commit, or `Remove-Item ui\face.js,ui\face.css,ui\filterbar.js,ui\filterbar.css -Confirm:$false` and delete both blocks from `ui\index.html` |
+| `ui\board.js`: `isSystemCard` (card #0 never drawn or counted), `boardHooks.final`, the `is:stuck` term, `data-meta` on the meta tags. `ui\board.css`: the `--ask`, `--ask-soft`, `--warn-soft` and `--ag-*` tokens (in all three token blocks), the column head and card sizes | Same revert |
+| `ui\needs.js`, `needs.css`: the wait box and the "To test" chip on the face; "Waiting on you" is a pill (the header button is gone) | Same revert |
+| `ui\check-size.js`, `check-size.css`: "30-second looks" is a pill (the header button is gone) | Same revert |
+| `ui\changes.js` (paths on the face tag), `ui\steps.js`, `steps.css`, `ui\done-when.css` (face styles) | Same revert |
+| Tests: `tools\ui-tests\run.mjs`, `dom.mjs`, `harness.mjs`, `face.test.mjs` and `src-tauri\tests\ui_js.rs` | Same revert, or `Remove-Item tools\ui-tests\face.test.mjs,tools\ui-tests\harness.mjs,tools\ui-tests\dom.mjs -Confirm:$false` (keep `run.mjs` and `ui_js.rs` while other `*.test.mjs` files use them) |
+
+## Card #120: the Rust parts and the tests (6 Nov 2026)
+
+**The simplest correct undo for the whole card is a revert of its commit**, then a test install:
+`git revert <card #120 commit>; powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test`.
+The rows below undo one part at a time.
+
+No migration: the feed's indexes were left out because card #119 takes migration 14 (see HANDOVER).
+
+| Change | Undo |
+|---|---|
+| `crates\store\src\feed.rs` (`Store::agents_feed`, the agent filter as `by IN (...)`) and its `mod feed` / `pub use feed::...` lines in `crates\store\src\lib.rs` | `Remove-Item crates\store\src\feed.rs -Confirm:$false`, then delete the two `feed` lines from `lib.rs` by hand |
+| `crates\store\tests\feed.rs` (the feed tests, the rare-agent page) | `Remove-Item crates\store\tests\feed.rs -Confirm:$false` |
+| `src-tauri\src\feed.rs` (the `agents_feed` command), and `mod feed;` and `feed::agents_feed` in `src-tauri\src\main.rs` | `Remove-Item src-tauri\src\feed.rs -Confirm:$false`, then delete those two lines from `main.rs` by hand |
+| `crates\store\src\times.rs`: `Visit.start`, `column_since`, `iso`, `Store::column_since_all`, `column_since_of`, `history_marker`; `column_since` in its `pub use` in `lib.rs`; their tests in `crates\store\tests\times.rs` | `git checkout main -- crates/store/src/times.rs crates/store/tests/times.rs`, and take `column_since` out of the `pub use times::...` line in `lib.rs` |
+| `src-tauri\src\main.rs`: `list_cards`' `columnSince`, the `ColumnSince` cache (`.manage(ColumnSince::default())`) and `fn column_since` | Put `list_cards` back to returning `doc(&store, c)` for each card, and delete `ColumnSince`, `SinceMap`, `fn column_since` and the `.manage` line by hand (or `git checkout main -- src-tauri/src/main.rs` when the feed lines go too) |
+| `src-tauri\src\changes.rs`: `Brief.paths`, `top_paths`, `BRIEF_PATHS` and their test | `git checkout main -- src-tauri/src/changes.rs` |
+| `src-tauri\tests\ui_js.rs` (runs the UI tests in `cargo test`) and `tools\ui-tests\` (`run.mjs`, `dom.mjs`, `harness.mjs`, `face.test.mjs`, `feed.test.mjs`) | `Remove-Item src-tauri\tests\ui_js.rs -Confirm:$false; Remove-Item tools\ui-tests -Recurse -Confirm:$false` |
+## Card #119: the Router session (6 Nov 2026, branch `dsh-119`)
+
+| Change | Undo |
+|---|---|
+| Migration 14, `crates\store\src\schema14.sql`: the append-only tables `router_sessions` and `router_log`. It runs after the pre-migration backup in `%USERPROFILE%\.claude-kanban-dsh\backups` | An older build opens the board as it is and never reads the tables. Nothing to undo; never edit `board.db` by hand. To go back to the pre-migration board, quit the app and restore that backup (Hugh only) |
+| The Router's settings `router.on`, `router.model`, `router.effort`, `router.may_start_cards`, `router.resume_after`, `router.last_opened` | Press **Stop** in the Router panel (clears `router.on`, so it is not resumed); set the others back in Settings › Router |
+| The Router's folder for each channel, made on its first start: `%USERPROFILE%\kanban-router` (live), `kanban-router-test`, `kanban-router-test2` ... (test slots) | Stop that app's Router, then `Remove-Item "$env:USERPROFILE\kanban-router" -Recurse -Force` (or the test slot's folder) |
+| `src-tauri\src\routersession.rs`, `routertools.rs`, the Router's guard (`guard.rs`), `Plan.router` and `start_as` (`sessions.rs`), the dispatcher's tick (`dispatch.rs`), `own_or_named` (`agents.rs`, `merger.rs`, `repro.rs`, `router.rs`), the Monitor's hand-off (`monitor.rs`), the merger's integrate job (`merger.rs`), `kanban_router` (`tools.rs`, `api.rs`), `kb router` (`crates\kb`) | `git revert` the card's commits |
+| `prompts\router.md` (the Router's system prompt) | Same revert |
+| `ui\router.js`, `ui\router.css`, the Router section in `ui\settings.js`, three lines in `ui\index.html` | Same revert |
+| Final-test fixes (`d71512c` and after): a Router move runs the card's after-move (its session starts or hears the move), `kanban_start_card` without a worktree uses the repo folder, the open-panel rule without focus, the pill, the Router log in `agents_feed` (`crates\store\src\feed.rs`), the trust buttons, `dryRun` on create, the Router toast, `kb sessions` "router", a folder per channel | `git revert` those commits. Nothing in the board to undo: the feed only reads `router_log` |
+| Every event the Router is given is now a `router_log` row (append-only; it grows with the board's activity) | Stop the Router: nothing more is written. The rows stay (the table refuses deletes) |
+
+## Card #120: final-test fixes (6 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `ui\board.css` `.col{flex:1 0 240px;min-width:0;...}` | Set it back to `.col{flex:0 0 240px;...}` (fixed 240 px columns, left-aligned) |
+| `ui\face.css` `.card.face .face-agent{width:0;min-width:100%}` | Delete the line (do not, without `min-width:0` on `.col`: a long agent line then stretches its column) |
+| `crates\store\src\feed.rs`: log rows of a verdict's own write left out (`NOT EXISTS ... card_revisions`) | Set the `card_log` branch's filter back to `"1".to_string()`; delete the test `a_verdict_shows_once_not_also_as_its_own_log_line` in `crates\store\tests\feed.rs` |
+| `ui\agents-feed.js` `verdictHtml`: own field not named | Delete the line under the comment "The field is named only when..." and set the feed test back to `TESTER passed` |
+
+## Card #122: the test-app hang under load (6 Nov 2026, branch `dsh-122`)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\notify.rs`: `looking_at` reads a focus flag (`FOCUSED`, kept by `notify::on_window_event` from `WindowEvent::Focused`) instead of asking the window `is_focused()` | `git revert` the card's commit. Do not put `is_focused()` back on its own: under the board lock it deadlocks the app |
+| `src-tauri\src\lockwatch.rs` (`Watched<T>`, the watchdog) and `Board` / `Sessions.live` using it (`main.rs`, `sessions.rs`); `lockwatch::start` in `main.rs` setup | Same revert. The watchdog writes `locks.log` in the data folder; deleting that file by hand is not needed (it is only appended to) |
+| `src-tauri\src\hang_tests.rs`, the test `no_window_getter_off_the_main_thread` in `notify.rs`, `tools\stress-api.mjs` | Same revert, or `Remove-Item src-tauri\src\hang_tests.rs, tools\stress-api.mjs -Confirm:$false` and delete `mod hang_tests;` from `main.rs` |

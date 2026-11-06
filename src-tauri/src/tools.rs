@@ -8,26 +8,61 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Fields a session may set with kanban_update_card. The column, ship and plan
 /// states and the number belong to moves, ship results and the board.
-const UPDATABLE: &[&str] = &[
+pub(crate) const UPDATABLE: &[&str] = &[
     "title", "summary", "nextStep", "blockedReason", "repo", "issue", "pr", "branch", "worktreePath",
     "devStack", "persona", "logins", "links", "dryRun", "choices", "labels",
+    "changesOutputs",
+    "doneWhen", // card #105: one line, the card is done when ...
+    "doneWhenChecks", // card #105: its acceptance checks
+    "blockedBy",
 ];
 
+/// How to write the card #105 fields, for kanban_update_card's description.
+const DONE_WHEN_HINT: &str = "doneWhen is one plain line (the card is done when ...); doneWhenChecks is a list of up to 10 acceptance checks, each a string or {text, state: open|met|failed, note}, and the app records who changed each state and when.";
+
+/// May this caller set `blockedBy` (card #109) on a card whose lead is `lead`? Hugh (in the app)
+/// and sessions outside the app may. A card's own session may only order the children of the
+/// stack its card leads: on such a child, with every wait inside that stack.
+fn waits_refused(store: &Store, own: Option<&str>, lead: Option<i64>, v: &Value) -> Option<String> {
+    let me = store.get(own?).ok()?;
+    let list: Vec<i64> = kanban_store::clean_blocked_by(v)
+        .ok()
+        .flatten()
+        .and_then(|l| l.as_array().map(|a| a.iter().filter_map(Value::as_i64).collect()))
+        .unwrap_or_default();
+    if lead == Some(me.number) && list.iter().all(|n| me.stack().contains(n)) {
+        return None;
+    }
+    Some(format!(
+        "a card's session sets blockedBy only on the children of the stack its own card leads, each wait inside that stack (card #{} {}). Say in nextStep which cards this one waits on, and Hugh sets it",
+        me.number,
+        if me.is_lead() { "leads a stack" } else { "leads no stack" }
+    ))
+}
+
 pub fn schemas() -> Value {
+    let mut list = base_schemas();
+    if let Some(a) = list.as_array_mut() {
+        a.push(crate::testapp::schema());
+    }
+    list
+}
+
+fn base_schemas() -> Value {
     let card = json!({ "type": "integer", "description": "The card's number. Leave it out for your own card." });
     json!([
         { "name": "kanban_get_card", "description": "Read a card: your own, or one by number.",
           "inputSchema": { "type": "object", "properties": { "card": card } } },
-        { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, and for stacks: stack, stackOf, passed).",
+        { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, blockedBy and waitedOn, and for stacks: stack, stackOf, passed).",
           "inputSchema": { "type": "object", "properties": { "column": { "type": "string" }, "include_archived": { "type": "boolean" } } } },
-        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. Pass if_version to refuse the write if the card changed since you read it.", UPDATABLE.join(", ")),
+        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it.", UPDATABLE.join(", ")),
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
         { "name": "kanban_add_log", "description": "Add a line to a card's log.",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
-        { "name": "kanban_move_card", "description": "Move a card to another column, with a one-line reason. A move of your own card waits until your turn ends. Never Ship it. A stack's lead goes to Human test only when its children are ready; the app moves it then.",
+        { "name": "kanban_move_card", "description": "Move a card to another column, with a one-line reason. A move of your own card waits until your turn ends. Never Ship it. A stack's lead goes to Human test only when its children are ready; the app moves it then. A card that waits on cards not ready yet (blockedBy) goes into Planning or later only once they are.",
           "inputSchema": { "type": "object", "properties": { "card": card, "column": { "type": "string", "enum": kanban_store::COLUMNS }, "reason": { "type": "string" } }, "required": ["column"] } },
         { "name": "kanban_create_card", "description": "Add a card. It gets the next number. Pass `stack` (a lead card's number) to create it straight into that stack.",
-          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "column": { "type": "string" }, "repo": { "type": "string" }, "summary": { "type": "string" }, "issue": { "type": "object" }, "labels": { "type": "array", "items": { "type": "string" }, "description": "Short labels, like [\"BUG\", \"RCS\"]." }, "stack": { "type": "integer", "description": "The lead card's number: the new card joins its stack, at the end." }, "template": { "type": "string", "description": "A card template's id (e.g. kanban-app, bug): its starting prompt opens the card's first session." }, "to": { "type": "string", "enum": ["Planning", "Human test"], "description": "Only for Hugh's own sessions, when he asked: start the card now (it goes into Planning and its session starts). \"Human test\" also sets it to go on by itself to Human test. A card's own session can't use it." } }, "required": ["title"] } },
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "column": { "type": "string" }, "repo": { "type": "string" }, "summary": { "type": "string" }, "issue": { "type": "object" }, "labels": { "type": "array", "items": { "type": "string" }, "description": "Short labels, like [\"BUG\", \"RCS\"]." }, "dryRun": { "type": "boolean", "description": "A test card: its sessions change nothing real." }, "stack": { "type": "integer", "description": "The lead card's number: the new card joins its stack, at the end." }, "template": { "type": "string", "description": "A card template's id (e.g. kanban-app, bug): its starting prompt opens the card's first session." }, "to": { "type": "string", "enum": ["Planning", "Human test"], "description": "Only for Hugh's own sessions, when he asked: start the card now (it goes into Planning and its session starts). \"Human test\" also sets it to go on by itself to Human test. A card's own session can't use it." } }, "required": ["title"] } },
         { "name": "kanban_stack_list", "description": "A stack: its lead card (number, title, column, branch, pr, devStack, logins) and its children in order (number, title, column, passed, nextStep, blockedReason, choices), plus the board's rule for when the stack goes to Human test (\"all\" or \"first\") and whether it is ready.",
           "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number. Leave it out for your own card's stack (the one it leads or is in)." } } } },
         { "name": "kanban_stack_add", "description": "Put a card into a stack (at the end), making the lead a stack if it isn't one. A card is in at most one stack, and a stack is one repo; a lead can't be a child; a card in Ship it or archived can't join, and nothing joins a stack in Ship it (only Hugh does that, by dropping a card on it in the app).",
@@ -44,7 +79,14 @@ pub fn schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "state": { "type": "string", "enum": ["shipping", "shipped", "failed", "needs-hugh"] }, "detail": { "type": "string" } }, "required": ["state"] } },
         { "name": "kanban_notify", "description": "Tell Hugh something about a card (a Windows notification and a log line).",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
+        { "name": "kanban_router", "description": "Talk to the Router, the long-running session that routes and checks the board's cards (card #119). Pass text to send it a message (data for it, about your card), and/or replies: n to read its last n replies. Refused while the Router isn't running; nothing but Hugh starts it.",
+          "inputSchema": { "type": "object", "properties": { "text": { "type": "string" }, "replies": { "type": "integer", "description": "How many of its latest replies to read (1 to 20)." } } } },
     ])
+}
+
+/// The first field in `fields` that kanban_update_card may not set.
+fn not_updatable(fields: &serde_json::Map<String, Value>) -> Option<&String> {
+    fields.keys().find(|k| !UPDATABLE.contains(&k.as_str()))
 }
 
 /// Tools only `kb` reaches (over /tool), never listed for or callable by a card session's MCP.
@@ -64,7 +106,7 @@ pub fn ship_request_allowed(own: Option<&str>, args: &Value) -> Result<(), Strin
     Ok(())
 }
 
-fn caller_card(app: &AppHandle, store: &Store, caller: Option<&str>) -> Option<String> {
+pub(crate) fn caller_card(app: &AppHandle, store: &Store, caller: Option<&str>) -> Option<String> {
     let row = caller?;
     app.state::<Arc<Sessions>>().card_of_row(row).or_else(|| store.session_card(row).ok().flatten())
 }
@@ -88,35 +130,122 @@ fn doc(store: &Store, c: &Card) -> Value {
     d
 }
 
-/// A stack as kanban_stack_list shows it.
-fn stack_json(store: &Store, lead: &Card) -> Result<Value, String> {
+/// A stack as kanban_stack_list shows it. Card #113 adds, per child, its stage, session,
+/// branch, waits and the state of its test, review and merge, and the merged count.
+fn stack_json(app: &AppHandle, store: &Store, lead: &Card) -> Result<Value, String> {
     let f = |c: &Card, k: &str| c.fields.get(k).cloned().unwrap_or(Value::Null);
+    let st = |c: &Card, k: &str| c.fields.get(k).and_then(|v| v.get("state")).cloned().unwrap_or(Value::Null);
     let kids = store.stack_children(lead).map_err(|e| e.to_string())?;
+    let live = app.state::<std::sync::Arc<crate::sessions::Sessions>>();
+    let queue = store.start_queue().unwrap_or_default();
+    let session = |c: &Card| {
+        if live.is_live(&c.id).is_some() {
+            "running"
+        } else if queue.position(&c.id).is_some() {
+            "queued"
+        } else if store.latest_session(&c.id).ok().flatten().is_some() {
+            "paused"
+        } else {
+            "none"
+        }
+    };
     let children: Vec<Value> = kids
         .iter()
         .map(|k| json!({ "number": k.number, "title": k.title(), "column": k.column, "archived": k.archived, "passed": k.passed(),
-                         "nextStep": f(k, "nextStep"), "blockedReason": f(k, "blockedReason"), "choices": f(k, "choices") }))
+                         "nextStep": f(k, "nextStep"), "blockedReason": f(k, "blockedReason"), "choices": f(k, "choices"),
+                         "stage": crate::stackrun::stage(store, k, lead), "session": session(k), "branch": f(k, "branch"),
+                         "waitsOn": crate::stackrun::waits_on(k), "test": st(k, kanban_store::TEST_KEY), "review": st(k, kanban_store::REVIEW_KEY),
+                         "merge": st(k, "merge"),
+                         "blockedBy": f(k, kanban_store::BLOCKED_KEY) }))
         .collect();
+    let merged = kids.iter().filter(|k| !k.archived && kanban_store::STACK_READY.contains(&k.column.as_str()) && kanban_store::stack_merged(k, lead)).count();
     let rule = store.stack_rule();
     Ok(json!({
         "lead": { "number": lead.number, "title": lead.title(), "column": lead.column, "branch": f(lead, "branch"), "pr": f(lead, "pr"),
-                  "devStack": f(lead, "devStack"), "logins": f(lead, "logins") },
+                  "worktreePath": f(lead, "worktreePath"), "devStack": f(lead, "devStack"), "logins": f(lead, "logins") },
         "children": children,
+        "merged": merged,
         "rule": rule,
-        "ready": kanban_store::stack_ready(&kids, &rule),
+        "ready": kanban_store::stack_ready(lead, &kids, &rule),
     }))
 }
 
 pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> Result<Value, String> {
+    // The Router's calls (card #119) are held to its own rules first.
+    if let Some(row) = caller.filter(|r| crate::routersession::is_router_row(app, r)) {
+        return crate::routertools::call(app, row, name, args);
+    }
+    // A message to the Router, or its replies, from any session or kb (card #119).
+    if name == "kanban_router" {
+        return router_tool(app, caller, args);
+    }
+    // Test-app turns read files, so they take the board's lock themselves, after (card #115).
+    if name == "kanban_test_app" {
+        return crate::testapp::tool(app, caller, args);
+    }
+    call_inner(app, caller, name, args, false)
+}
+
+/// A card tool for the Router, after `routertools` checked its rules: no own card, its writes by
+/// "the router", and held to the subagent gates and waits as a card session is.
+pub fn call_as_router(app: &AppHandle, _row: &str, name: &str, args: &Value) -> Result<Value, String> {
+    call_inner(app, None, name, args, true)
+}
+
+/// `kanban_router`: send the Router a message (`text`), or read its last replies (`replies`).
+fn router_tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value, String> {
+    // A card session's words are data for the Router; Hugh's own (kb, or his sessions outside the
+    // app) are his instructions, as in the panel.
+    let (from, card_from) = {
+        let board = app.state::<Board>();
+        let store = board.0.lock().map_err(|e| e.to_string())?;
+        match caller_card(app, &store, caller).and_then(|id| store.get(&id).ok()) {
+            Some(c) => (format!("card #{}", c.number), Some(c.number)),
+            None if caller.is_some() => ("Hugh's session outside the app".to_string(), None),
+            None => ("Hugh (kb)".to_string(), None),
+        }
+    };
+    let mut out = serde_json::Map::new();
+    if let Some(t) = args.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+        match card_from {
+            Some(n) => crate::routersession::send_by(app, t, Some(&from), Some(n), &format!("card #{n}'s session"))?,
+            None => crate::routersession::send_by(app, &format!("From {from}: {t}"), None, None, if caller.is_some() { "Hugh (session)" } else { "Hugh (kb)" })?,
+        }
+        out.insert("sent".into(), json!(true));
+    }
+    let n = args.get("replies").and_then(Value::as_u64).map(|n| n.clamp(1, 20) as usize);
+    if let Some(n) = n.or(if out.is_empty() { Some(1) } else { None }) {
+        let board = app.state::<Board>();
+        let store = board.0.lock().map_err(|e| e.to_string())?;
+        out.insert("replies".into(), json!(crate::routersession::replies(&store, n)));
+    }
+    out.insert("running".into(), json!(app.state::<Arc<Sessions>>().is_live(crate::routersession::KEY).is_some()));
+    Ok(Value::Object(out))
+}
+
+fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, as_router: bool) -> Result<Value, String> {
     let board = app.state::<Board>();
     let mut store = board.0.lock().map_err(|e| e.to_string())?;
     let own = caller_card(app, &store, caller);
     let by = match own.as_ref().and_then(|id| store.get(id).ok()) {
         Some(c) => format!("card #{}'s session", c.number),
+        None if as_router => kanban_store::ROUTER_BY.to_string(),
         None => "a session outside the app".to_string(),
     };
+    // Held to Hugh's rules as a card session is: its own session, or the Router.
+    let held = own.is_some() || as_router;
     let out = match name {
-        "kanban_get_card" => doc(&store, &target(&store, own.as_deref(), args)?),
+        "kanban_get_card" => {
+            let c = target(&store, own.as_deref(), args)?;
+            let mut d = doc(&store, &c);
+            // The card's step progress (card #106), when its session keeps a to-do list. Read
+            // under the board lock is allowed: the steps worker never takes the board lock while
+            // it holds the summaries' lock.
+            if let Some(s) = app.try_state::<Arc<crate::steps::Steps>>().and_then(|st| st.get(&c.id)) {
+                d["steps"] = json!({ "done": s.done, "total": s.total, "current": s.current, "line": s.line });
+            }
+            d
+        }
         "kanban_list_cards" => {
             let all = args.get("include_archived").and_then(Value::as_bool).unwrap_or(false);
             let col = args.get("column").and_then(Value::as_str);
@@ -127,14 +256,15 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
                     .filter(|c| col.map_or(true, |x| c.column == x))
                     .map(|c| json!({ "card": c.number, "id": c.id, "title": c.title(), "column": c.column, "archived": c.archived,
                                      "summary": c.fields.get("summary"), "nextStep": c.fields.get("nextStep"), "labels": c.fields.get("labels"),
-                                     "stack": c.fields.get("stack"), "stackOf": c.fields.get("stackOf"), "passed": c.passed() }))
+                                     "stack": c.fields.get("stack"), "stackOf": c.fields.get("stackOf"), "passed": c.passed(),
+                                     "blockedBy": c.fields.get(kanban_store::BLOCKED_KEY), "waitedOn": c.fields.get(kanban_store::WAITED_KEY) }))
                     .collect(),
             )
         }
         "kanban_update_card" => {
             let c = target(&store, own.as_deref(), args)?;
             let fields = args.get("fields").and_then(Value::as_object).ok_or("pass the fields to change as `fields`")?;
-            if let Some(bad) = fields.keys().find(|k| !UPDATABLE.contains(&k.as_str())) {
+            if let Some(bad) = not_updatable(fields) {
                 return Err(format!("\"{bad}\" can't be set this way (allowed: {})", UPDATABLE.join(", ")));
             }
             if let Some(ch) = fields.get("choices") {
@@ -142,6 +272,9 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
                 if !ok {
                     return Err("choices is a list of answer strings (or null to clear it)".into());
                 }
+            }
+            if let Some(why) = fields.get(kanban_store::BLOCKED_KEY).and_then(|v| waits_refused(&store, own.as_deref(), c.stack_of(), v)) {
+                return Err(format!("refused: {why}"));
             }
             let version = args.get("if_version").and_then(Value::as_i64).unwrap_or(c.version);
             let card = store.update(&c.id, version, &fields.clone(), &by).map_err(|e| e.to_string())?;
@@ -158,7 +291,7 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
             let to = args.get("column").and_then(Value::as_str).ok_or("pass the column")?;
             let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
             if to == "Ship it" {
-                return Err("only Hugh moves a card into Ship it; say in nextStep that it is ready".into());
+                return Err("only Hugh moves a card into Ship it (or the app for him: Take it to, or small-change auto-ship); say in nextStep that it is ready".into());
             }
             if c.column == to {
                 return Ok(json!(format!("Card #{} is already in {to}.", c.number)));
@@ -166,9 +299,14 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
             if let Some(why) = dispatch::stack_move_refused(&store, &c, to) {
                 return Err(format!("refused: {why}"));
             }
-            // Hugh's rule holds card sessions to the subagent test; his own sessions' moves aren't.
-            if let Some(why) = own.as_ref().and_then(|_| crate::tester::move_refused(&store, &c, to)) {
-                let _ = store.add_log(&c.id, &format!("Refused a move to {to} by {by}: it hasn't passed a subagent test"), "the app");
+            // Hugh's rules hold card sessions to the subagent review and test; his own sessions'
+            // moves aren't.
+            if let Some(why) = held.then(|| crate::agents::move_refused(&store, &c, to)).flatten() {
+                let _ = store.add_log(&c.id, &format!("Refused a move to {to} by {by}: its subagent checks haven't passed"), "the app");
+                return Err(format!("refused: {why}"));
+            }
+            if let Some(why) = held.then(|| dispatch::wait_move_refused(&store, &c, to)).flatten() {
+                let _ = store.add_log(&c.id, &format!("Refused a move to {to} by {by}: it waits on cards that aren't ready"), "the app");
                 return Err(format!("refused: {why}"));
             }
             if own.as_deref() == Some(c.id.as_str()) {
@@ -185,13 +323,13 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
             let title = args.get("title").and_then(Value::as_str).ok_or("pass a title")?;
             let mut fields = Patch::new();
             fields.insert("title".into(), json!(title));
-            for k in ["column", "repo", "summary", "issue", "labels"] {
+            for k in ["column", "repo", "summary", "issue", "labels", "dryRun"] {
                 if let Some(v) = args.get(k) {
                     fields.insert(k.into(), v.clone());
                 }
             }
             if fields.get("column").and_then(Value::as_str) == Some("Ship it") {
-                return Err("only Hugh moves a card into Ship it".into());
+                return Err("only Hugh moves a card into Ship it (or the app for him: Take it to, or small-change auto-ship)".into());
             }
             // Starting it (card #76): `to`, or a column that starts a session, from Hugh's own
             // session only; a card's session only places cards.
@@ -230,7 +368,11 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
                         return Err("a card made into a stack gets its id from the board; leave out `id`".into());
                     }
                     let lead = v.as_i64().ok_or("stack is the lead card's number")?;
-                    store.create_in_stack(fields, lead, &by).map_err(|e| e.to_string())?
+                    let c = store.create_in_stack(fields, lead, &by).map_err(|e| e.to_string())?;
+                    // Into a stack Hugh has started, it starts as its siblings did (card #113).
+                    crate::stackrun::joined_started_stack(app, &mut store, &c.id);
+                    crate::stackrun::lead_effort(app, &mut store, lead);
+                    store.get(&c.id).map_err(|e| e.to_string())?
                 }
                 None => store.create(id, fields, &by).map_err(|e| e.to_string())?,
             };
@@ -260,7 +402,7 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
             if !lead.is_lead() {
                 return Err(format!("#{} isn't a stack (it has no cards in it)", lead.number));
             }
-            stack_json(&store, &lead)?
+            stack_json(app, &store, &lead)?
         }
         "kanban_stack_add" | "kanban_stack_remove" => {
             let lead = args.get("stack").and_then(Value::as_i64).ok_or("pass the lead card's number as `stack`")?;
@@ -271,14 +413,21 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
                 store.stack_remove(lead, child, &by)
             }
             .map_err(|e| e.to_string())?;
-            stack_json(&store, &l)?
+            if name == "kanban_stack_add" {
+                if let Ok(c) = store.get_by_number(child) {
+                    crate::stackrun::joined_started_stack(app, &mut store, &c.id);
+                }
+                crate::stackrun::lead_effort(app, &mut store, lead);
+            }
+            let l = store.get_by_number(l.number).map_err(|e| e.to_string())?;
+            stack_json(app, &store, &l)?
         }
         "kanban_stack_join" | "kanban_stack_detach" => {
             let lead = args.get("stack").and_then(Value::as_i64).ok_or("pass the lead card's number as `stack`")?;
             let child = args.get("card").and_then(Value::as_i64).ok_or("pass the card's number as `card`")?;
             if name == "kanban_stack_join" {
                 let l = crate::stack_join_op(app, &mut store, lead, child, &by, false)?;
-                stack_json(&store, &l)?
+                stack_json(app, &store, &l)?
             } else {
                 let (c, from) = crate::stack_detach_op(app, &mut store, lead, child, &by)?;
                 if let Some(from) = from {
@@ -299,7 +448,12 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
             let c = target(&store, own.as_deref(), args)?;
             let state = args.get("state").and_then(Value::as_str).ok_or("pass the state")?;
             let detail = args.get("detail").and_then(Value::as_str).unwrap_or("");
-            dispatch::ship_result(app, &mut store, &c, state, detail, &by)?
+            let out = dispatch::ship_result(app, &mut store, &c, state, detail, &by)?;
+            // A card that went on by itself: is what was pushed the commit the app checked?
+            if state == "shipped" {
+                crate::goes_on::after_shipped(app, &c.id);
+            }
+            out
         }
         "kanban_request_ship" => {
             ship_request_allowed(own.as_deref(), args)?;
@@ -352,8 +506,45 @@ mod tests {
         }
         assert!(UPDATABLE.contains(&"choices"));
         assert!(UPDATABLE.contains(&"labels"));
+        // What the app's checks rest on is never a session's to write (cards #76, #96, #104, #112).
+        for k in ["test", "review", "repro", "smallChange", "smallOptOut", "autoTo", "ship", "column"] {
+            assert!(!UPDATABLE.contains(&k), "{k}");
+        }
+        assert!(UPDATABLE.contains(&"blockedBy"));
+        assert!(!UPDATABLE.contains(&"waitedOn"), "the app writes waitedOn");
         let create = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_create_card").cloned().unwrap();
         assert!(create["inputSchema"]["properties"].get("stack").is_some());
+    }
+
+    #[test]
+    fn update_card_takes_changes_outputs_but_not_saved_figures() {
+        let ok = json!({ "changesOutputs": [{ "path": "C:\\x\\report.md", "label": "Report" }], "summary": "s" });
+        assert_eq!(not_updatable(ok.as_object().unwrap()), None);
+        let saved = json!({ "changesOutputs": null, "changesSaved": {} });
+        assert_eq!(not_updatable(saved.as_object().unwrap()).map(String::as_str), Some("changesSaved"));
+        let unknown = json!({ "noSuchField": 1 });
+        assert_eq!(not_updatable(unknown.as_object().unwrap()).map(String::as_str), Some("noSuchField"));
+        assert!(not_updatable(json!({ "column": "Done" }).as_object().unwrap()).is_some());
+    }
+
+    #[test]
+    fn a_session_cant_set_the_evidence() {
+        // The card-tester's shots (card #101) are the app's own field: only the tester's verdict
+        // write adds a run, so kanban_update_card and `kb update` refuse "evidence".
+        assert!(!UPDATABLE.contains(&kanban_store::EVIDENCE_KEY));
+        assert!(!UPDATABLE.contains(&"evidence"));
+        let update = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_update_card").cloned().unwrap();
+        assert!(!update["description"].as_str().unwrap().contains("evidence"));
+    }
+
+    #[test]
+    fn done_when_fields_are_updatable() {
+        // Card #105. The prompts' guard reads the description: "If kanban_update_card lists doneWhen ...".
+        assert!(UPDATABLE.contains(&"doneWhen") && UPDATABLE.contains(&"doneWhenChecks"));
+        let upd = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_update_card").cloned().unwrap();
+        let d = upd["description"].as_str().unwrap();
+        assert!(d.contains("Allowed: title,") && d.contains(", doneWhen, doneWhenChecks"), "{d}");
+        assert!(!kanban_store::looks_like_token(d));
     }
 
     #[test]

@@ -180,7 +180,7 @@ fn t1_11_wal_and_backup_before_migration() {
     let (dir, path) = temp_board();
     let s = Store::open(&path).unwrap();
     assert_eq!(s.journal_mode().unwrap().to_lowercase(), "wal");
-    assert_eq!(s.schema_version().unwrap(), 10);
+    assert_eq!(s.schema_version().unwrap(), kanban_store::SCHEMA_VERSION);
     let out = s.backup("manual").unwrap();
     assert!(out.exists());
     assert!(dir.path().join("backups").is_dir());
@@ -564,6 +564,7 @@ fn column_prompts_are_the_boards_own() {
     let s = Store::open(&path).unwrap();
     for (name, file) in [("Planning", "planning.md"), ("In progress", "in-progress.md"), ("Ship it", "ship-it.md"), ("Deploy complete", "deploy-complete.md")] {
         let p = s.column(name).unwrap().unwrap().prompt_text.unwrap();
+        // Migration 13 (card #114) names the folder as {prompts}; the app fills it in.
         assert!(p.contains(&format!(r"{{prompts}}\{file}")), "{name}: {p}");
         let low = p.to_lowercase();
         assert!(!low.contains("kangentic") && !low.contains(r".claude\prompts\v2"), "{name}: {p}");

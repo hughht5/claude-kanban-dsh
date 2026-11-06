@@ -10,4 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 kanban-store = { path = "../store" }
+# kb reap and kb install-lock on Unix (card #117).
+kanban-unix = { path = "../unix" }
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

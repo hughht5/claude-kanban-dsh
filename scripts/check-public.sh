@@ -17,7 +17,7 @@ if [ -f "$deny_file" ]; then
 fi
 
 # Test data may use made-up home folders (C:\Users\me, C:\Users\h); list allowed lines here.
-allow='(C:[\/]+Users[\/]+|/mnt/c/Users/)(me|h|u|o.neil|someone|you)[\/]'
+allow='(C:[\/]+Users[\/]+|/mnt/c/Users/)(me|h|u|x|o.neil|someone[a-z-]*|you)[\/]'
 
 if [ "$1" = "--all" ]; then
   hits=$(git grep -nIiE "$pattern" -- . ':!scripts/check-public.sh' | grep -viE "$allow")

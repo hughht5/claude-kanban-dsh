@@ -20,10 +20,13 @@ pub struct Repo {
     pub folder: String,
     #[serde(default)]
     pub label: String,
+    /// Top-level folders a user signs in to: a change there needs a sign-in to check.
+    #[serde(default, rename = "loginDirs")]
+    pub login_dirs: Vec<String>,
 }
 
 pub fn home() -> PathBuf {
-    std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\"))
+    kanban_store::home_var().unwrap_or_else(crate::platform::no_home)
 }
 
 /// `~` or `~\x` under `home`; anything else as it is.
@@ -47,12 +50,18 @@ pub fn dir() -> Option<PathBuf> {
     DIR.read().ok().and_then(|d| d.clone())
 }
 
-/// The bundled example prompts: `prompts\` beside the installed exe, else this repo's own.
+/// The prompts this build carries. A test build: the checkout it was built from (`PROMPTS_DIR`,
+/// card #96), so the test app runs the prompts under test. Otherwise `prompts\` beside the
+/// installed exe (the installer puts them there), else the checkout it was built from.
 fn bundled_prompts() -> PathBuf {
+    let built = PathBuf::from(crate::dispatch::PROMPTS_DIR);
+    if kanban_store::is_test() && built.is_dir() {
+        return built;
+    }
     let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("prompts")));
     match beside {
         Some(p) if p.is_dir() => p,
-        _ => Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("prompts"),
+        _ => built,
     }
 }
 
@@ -92,6 +101,11 @@ pub fn repos() -> Vec<Repo> {
     repos_in(dir().as_deref())
 }
 
+/// The folders of `repo` a user signs in to (its `loginDirs` in `repos.json`), none if unlisted.
+pub fn login_dirs(repo: &str) -> Vec<String> {
+    repos().into_iter().find(|r| r.repo.eq_ignore_ascii_case(repo.trim())).map(|r| r.login_dirs).unwrap_or_default()
+}
+
 /// The folder a repo's card sessions start in: its `folder` in `repos.json` (repo names compare
 /// without case), else the home folder.
 pub fn repo_folder_in(list: &[Repo], repo: Option<&str>, home: &Path) -> PathBuf {
@@ -129,13 +143,15 @@ mod tests {
         assert!(repos_in(Some(t.path())).is_empty());
         std::fs::write(
             t.path().join("repos.json"),
-            r#"[{ "repo": "acme/web", "folder": "~\\web-main" }, { "repo": "acme/docs", "label": "Docs" }, { "repo": " " }]"#,
+            r#"[{ "repo": "acme/web", "folder": "~\\web-main", "loginDirs": ["server"] }, { "repo": "acme/docs", "label": "Docs" }, { "repo": " " }]"#,
         )
         .unwrap();
         let list = repos_in(Some(t.path()));
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].label, "web");
         assert_eq!(list[1].label, "Docs");
+        assert_eq!(list[0].login_dirs, vec!["server".to_string()]);
+        assert!(list[1].login_dirs.is_empty());
         let h = Path::new(r"C:\Users\u");
         assert_eq!(repo_folder_in(&list, Some("ACME/Web"), h), h.join("web-main"));
         assert_eq!(repo_folder_in(&list, Some("acme/docs"), h), h.to_path_buf());

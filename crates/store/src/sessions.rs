@@ -79,6 +79,19 @@ impl Store {
             .optional()?)
     }
 
+    /// One session row by its id (status left out).
+    pub fn session(&self, id: &str) -> Result<Option<SessionRow>> {
+        Ok(self.conn.query_row("SELECT s.*, NULL AS status FROM sessions s WHERE s.id = ?1", [id], session_row).optional()?)
+    }
+
+    /// Every session row, oldest first (archived cards' included), for the search indexer.
+    /// Read-only; `status` is left out.
+    pub fn all_sessions(&self) -> Result<Vec<SessionRow>> {
+        let mut st = self.conn.prepare("SELECT s.*, NULL AS status FROM sessions s ORDER BY s.rowid")?;
+        let rows = st.query_map([], session_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Sessions whose latest status is still `running`, for marking orphans after a crash.
     pub fn running_sessions(&self) -> Result<Vec<String>> {
         let mut st = self.conn.prepare(

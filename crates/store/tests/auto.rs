@@ -122,6 +122,37 @@ fn a_move_into_in_progress_needs_a_new_test() {
     assert_eq!(c.fields["test"]["state"], "passed");
 }
 
+// Card #96: the subagent review resets with the test, and Hugh's rule for it is its own.
+#[test]
+fn a_move_into_in_progress_needs_a_new_review_too() {
+    let (_d, mut s) = board();
+    let id = card(&mut s, "Human test", Value::Null);
+    let c = s.update(&id, s.get(&id).unwrap().version, &patch(json!({ "review": { "state": "passed", "round": 3, "capped": true } })), "the app").unwrap();
+    let c = s.update(&id, c.version, &patch(json!({ "column": "In progress" })), "Hugh").unwrap();
+    assert!(c.fields["review"].get("capped").is_none(), "the move into In progress clears the cap");
+    assert_eq!(c.fields["review"]["state"], "needed");
+    assert!(c.fields["review"].get("round").is_none(), "the FAIL count starts again");
+    assert_eq!(c.fields["test"]["state"], "needed");
+    // A patch that sets it keeps its own value.
+    let c = s.update(&id, c.version, &patch(json!({ "column": "Human test" })), "x").unwrap();
+    let c = s.update(&id, c.version, &patch(json!({ "column": "In progress", "review": { "state": "passed" } })), "x").unwrap();
+    assert_eq!((c.fields["review"]["state"].as_str(), c.fields["test"]["state"].as_str()), (Some("passed"), Some("needed")));
+}
+
+#[test]
+fn the_review_rule_is_on_unless_hugh_turns_it_off() {
+    let (_d, mut s) = board();
+    assert!(s.review_required());
+    assert_eq!(s.page_setting("sessions.review_before_human_test").unwrap(), "on");
+    assert_eq!(kanban_store::page_default("sessions.review_before_human_test").unwrap(), "on");
+    s.set_page_setting("sessions.review_before_human_test", "off").unwrap();
+    assert!(!s.review_required());
+    assert!(s.test_required(), "the test rule is its own");
+    assert!(s.set_page_setting("sessions.review_before_human_test", "sometimes").is_err());
+    s.set_page_setting("sessions.review_before_human_test", " on ").unwrap();
+    assert!(s.review_required());
+}
+
 #[test]
 fn the_test_rule_is_on_unless_hugh_turns_it_off() {
     let (_d, mut s) = board();
@@ -132,4 +163,65 @@ fn the_test_rule_is_on_unless_hugh_turns_it_off() {
     assert!(s.set_page_setting("sessions.test_before_human_test", "maybe").is_err());
     s.set_page_setting("sessions.test_before_human_test", " on ").unwrap();
     assert!(s.test_required());
+}
+
+// Card #98: a card routed small goes on by itself only while Hugh's rule is on; its route is
+// kept through moves (routed once), and only the app writes it.
+#[test]
+fn the_small_card_rule_is_on_unless_hugh_turns_it_off() {
+    let (_d, mut s) = board();
+    assert!(s.small_go_on());
+    assert_eq!(s.page_setting("sessions.small_go_on").unwrap(), "on");
+    assert_eq!(kanban_store::page_default("sessions.small_go_on").unwrap(), "on");
+    assert!(kanban_store::PAGE_SETTINGS.contains(&kanban_store::SMALL_GO_ON_KEY));
+    s.set_page_setting("sessions.small_go_on", "off").unwrap();
+    assert!(!s.small_go_on());
+    assert!(s.test_required() && s.review_required(), "the other rules are their own");
+    assert!(s.set_page_setting("sessions.small_go_on", "yes").is_err());
+    s.set_page_setting("sessions.small_go_on", "on").unwrap();
+    assert!(s.small_go_on());
+}
+
+#[test]
+fn a_route_stays_on_the_card_through_its_moves() {
+    let (_d, mut s) = board();
+    let id = card(&mut s, "Planning", Value::Null);
+    let route = json!({ "size": "small", "model": "claude-sonnet-5-5", "effort": "medium", "check": "5 min", "reason": "r", "by": "the app (card-router subagent)" });
+    let c = s.update(&id, s.get(&id).unwrap().version, &patch(json!({ kanban_store::ROUTE_KEY: route.clone() })), "the app (card-router subagent)").unwrap();
+    let c = s.update(&id, c.version, &patch(json!({ "column": "In progress" })), "x").unwrap();
+    let c = s.update(&id, c.version, &patch(json!({ "column": "Planning" })), "x").unwrap();
+    assert_eq!(c.fields["route"], route, "a move doesn't clear it: a card is routed once");
+    // Route again clears it.
+    let c = s.update(&id, c.version, &patch(json!({ "route": null })), "Hugh (panel)").unwrap();
+    assert!(c.fields.get("route").map_or(true, Value::is_null));
+}
+
+// Card #112: the reproducer's rule is its own, on by default; and a move into In progress keeps
+// the card's repro (a bug report moves the card there and sets it in the same breath).
+#[test]
+fn the_reproducer_rule_is_on_unless_hugh_turns_it_off() {
+    let (_d, mut s) = board();
+    let key = kanban_store::REPRO_RULE_KEY;
+    assert_eq!(key, "sessions.repro_before_human_test");
+    assert!(s.rule_on(key));
+    assert!(kanban_store::PAGE_SETTINGS.contains(&key) && kanban_store::RULE_KEYS.contains(&key));
+    assert_eq!(s.page_setting(key).unwrap(), "on");
+    assert_eq!(kanban_store::page_default(key).unwrap(), "on");
+    s.set_page_setting(key, "off").unwrap();
+    assert!(!s.rule_on(key));
+    assert!(s.test_required() && s.review_required(), "the other rules are their own");
+    assert!(s.set_page_setting(key, "later").is_err());
+    s.set_page_setting(key, "on").unwrap();
+    assert!(s.rule_on(key));
+}
+
+#[test]
+fn a_move_into_in_progress_keeps_the_repro() {
+    let (_d, mut s) = board();
+    let id = card(&mut s, "Human test", Value::Null);
+    let repro = json!({ "state": "reproduced", "reports": [{ "note": "the chip is wrong" }], "before": { "steps": "1. x" } });
+    let c = s.update(&id, s.get(&id).unwrap().version, &patch(json!({ "repro": repro })), "the app").unwrap();
+    let c = s.update(&id, c.version, &patch(json!({ "column": "In progress" })), "Hugh").unwrap();
+    assert_eq!(c.fields["repro"], repro);
+    assert_eq!(c.fields["test"]["state"], "needed");
 }

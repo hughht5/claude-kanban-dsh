@@ -7,7 +7,7 @@ const MODELS=[["claude-opus-5-5","Opus 5.5"],["claude-fable-5-1","Fable 5.1"],["
 const EFFORTS=["low","medium","high","xhigh","max"];
 // The store refuses these too; checking here keeps the typed text and says why at once.
 const TOKEN=/customtoken|idtoken|eyJ[A-Za-z0-9_-]{6,}|sk_(live|test)/i;
-const SECTIONS=[["columns","Columns"],["templates","Templates"],["profiles","Browser profiles"],["sessions","Sessions"],["stacks","Stacks"]];
+const SECTIONS=[["columns","Columns"],["templates","Templates"],["profiles","Browser profiles"],["sessions","Sessions"],["stacks","Stacks"],["router","Router"]];
 let root=null,section="columns",showArchivedTpl=false;
 try{section=localStorage.getItem("settings.section")||"columns"}catch(e){}
 if(!SECTIONS.some(s=>s[0]===section))section="columns";
@@ -38,7 +38,7 @@ window.openSettings=openSettings;window.closeSettings=closeSettings;
 function show(){
   root.querySelectorAll("[data-sec]").forEach(b=>b.setAttribute("aria-current",b.dataset.sec===section?"page":"false"));
   const m=root.querySelector("#st-main");m.innerHTML=`<p class="meta">Loading…</p>`;
-  ({columns,templates,profiles,sessions,stacks})[section](m).catch(e=>{m.innerHTML=`<p class="msg err">Couldn't load this: ${esc(errText(e))}</p>`});
+  ({columns,templates,profiles,sessions,stacks,router})[section](m).catch(e=>{m.innerHTML=`<p class="msg err">Couldn't load this: ${esc(errText(e))}</p>`});
 }
 const note=(el,t,kind)=>{el.textContent=t;el.className="msg "+(kind||"")};
 const opt=(v,cur,label)=>`<option value="${esc(v)}"${v===cur?" selected":""}>${esc(label??v)}</option>`;
@@ -176,18 +176,86 @@ async function sessions(m){
     if(!/^\d+$/.test(v)||+v>1440){note(im,"Give a whole number from 0 to 1440.","err");return}
     try{const x=await invoke("set_setting",{key:"sessions.idle_pause_minutes",value:v});box.querySelector("#st-idle").value=x;note(im,"Saved","ok")}
     catch(e){note(im,"Not saved: "+errText(e),"err")}};
-  // The subagent test gate (card #76): In progress to Human test only after a card-tester pass. Saved at once.
-  let tg=null,terr="";try{tg=await invoke("get_setting",{key:"sessions.test_before_human_test"})}catch(e){terr=errText(e)}
-  const tb=document.createElement("div");tb.className="st-box";
-  tb.innerHTML=`<label class="st-radio"><input type="checkbox" id="st-test"${tg&&tg.value!=="off"?" checked":""}${tg?"":" disabled"}> Test every card with a subagent before Human test</label>
-  <p class="meta">A card's session can move it from In progress to Human test only after its card-tester subagent has passed it. The app records each verdict on the card. Default on.</p>
-  <div class="row"><span class="msg" id="st-tmsg"></span></div>`;
-  m.appendChild(tb);
-  const tm=tb.querySelector("#st-tmsg"),cb=tb.querySelector("#st-test");
-  if(!tg)note(tm,"Couldn't read this setting: "+terr,"err");
+  // The stuck-session monitor (card #99).
+  const k=await invoke("get_setting",{key:"sessions.stuck_check_minutes"});
+  const kb=document.createElement("div");kb.className="st-box";kb.dataset.setting="stuck";
+  kb.innerHTML=`<label class="f">Look for stuck card sessions every (minutes)<input class="tx st-num" id="st-stuck" type="number" min="0" max="1440" step="1" value="${esc(k.value)}"></label>
+  <p class="meta">A session that makes the same call with the same result over and over gets one nudge, and you are told if it is still at it. You are told about a working session with nothing written for 20 minutes. One idle on a subagent that stopped running gets one message at its prompt. A failed one, or one waiting at a question, gets the chip only. Each shows "May be stuck" on its card. 0 turns it off (default ${esc(k.default)}). A dead subagent is caught only if this is shorter than the idle pause above, because a paused session isn't checked.</p>
+  <div class="row"><button class="btn" id="st-ksave" type="button">Save</button><span class="msg" id="st-kmsg"></span></div>`;
+  m.appendChild(kb);
+  const km=kb.querySelector("#st-kmsg");
+  kb.querySelector("#st-ksave").onclick=async()=>{
+    const v=kb.querySelector("#st-stuck").value.trim();
+    if(!/^\d+$/.test(v)||+v>1440){note(km,"Give a whole number from 0 to 1440.","err");return}
+    try{const x=await invoke("set_setting",{key:"sessions.stuck_check_minutes",value:v});kb.querySelector("#st-stuck").value=x;note(km,"Saved","ok")}
+    catch(e){note(km,"Not saved: "+errText(e),"err")}};
+  // The app's subagent rules (cards #76, #96): each an on/off setting, saved at once. One entry each.
+  for(const r of SUBAGENT_RULES)await ruleBox(m,r);
+  await ruleBox(m,TODO_TOOLS_RULE); // card #106
+  await smallReposBox(m);
+}
+
+// Small-change auto-ship (card #104): the repos whose small, fully checked cards go on to Ship it
+// by themselves. Empty is off. Each row names the checkout and branch that repo's ship pushes.
+// Every change is kept in the settings log, shown here, and Hugh is told by a notification.
+const SMALL_KEY="sessions.small_goes_on_repos";
+async function smallReposBox(m){
+  let g=null,err="";try{g=await invoke("get_setting",{key:SMALL_KEY})}catch(e){err=errText(e)}
+  let rows=[];try{rows=JSON.parse(g&&g.value||"[]")}catch(e){rows=[]}if(!Array.isArray(rows))rows=[];
+  const b=document.createElement("div");b.className="st-box st-small";m.appendChild(b);
+  const row=(r,i)=>`<div class="row st-srow" data-i="${i}"><input class="st-sr" placeholder="owner/name" value="${esc(r.repo||"")}" aria-label="Repo">
+    <input class="st-sc" placeholder="C:\\Users\\you\\repo" value="${esc(r.checkout||"")}" aria-label="Checkout folder">
+    <input class="st-sb" placeholder="main" value="${esc(r.branch||"")}" aria-label="Branch"><button class="btn ghost st-sx" type="button">Remove</button></div>`;
+  async function draw(msgText,kind){
+    let log=[];try{log=await invoke("get_setting_log",{key:SMALL_KEY,limit:5})}catch(e){}
+    b.innerHTML=`<p class="st-radio"><b>Let small, fully checked cards go on to Ship it by themselves</b></p>
+    <p class="meta">For the repos listed here, a card whose change is docs (.md, .rst) or CSS only, at most 30 lines in 5 files, nothing about sign-in, data or migrations, with its card-reviewer and card-tester both passed on its final commit, waits 10 minutes in Human test (with a Stop button) and then goes into Ship it with no human test. Each row names the checkout and branch its ship pushes. Empty is off (the default).</p>
+    ${rows.map(row).join("")||`<p class="meta">No repos: every card stops in Human test for you.</p>`}
+    <div class="row"><button class="btn ghost" id="st-sadd" type="button">Add a repo</button><button class="btn" id="st-ssave" type="button"${g?"":" disabled"}>Save</button><span class="msg" id="st-smsg"></span></div>
+    ${log.length?`<p class="meta">Changes:</p><ul class="log">${log.map(x=>{let v=[];try{v=JSON.parse(x.value)}catch(e){}const list=Array.isArray(v)&&v.length?v.map(r=>esc(r.repo)).join(", "):"none (off)";
+      return`<li><time>${esc(x.at)}</time>${esc(x.by)}: ${list}</li>`}).join("")}</ul>`:""}`;
+    const msg=b.querySelector("#st-smsg");
+    if(!g)note(msg,"Couldn't read this setting: "+err,"err");else if(msgText)note(msg,msgText,kind);
+    const read=()=>{rows=[...b.querySelectorAll(".st-srow")].map(d=>({repo:d.querySelector(".st-sr").value.trim(),checkout:d.querySelector(".st-sc").value.trim(),branch:d.querySelector(".st-sb").value.trim()}))};
+    b.querySelectorAll(".st-sx").forEach(x=>x.onclick=()=>{read();rows.splice(+x.closest(".st-srow").dataset.i,1);draw()});
+    b.querySelector("#st-sadd").onclick=()=>{read();rows.push({repo:"",checkout:"",branch:"main"});draw()};
+    b.querySelector("#st-ssave").onclick=async()=>{read();
+      try{const x=await invoke("set_setting",{key:SMALL_KEY,value:JSON.stringify(rows)});rows=JSON.parse(x);await draw("Saved","ok")}
+      catch(e){note(msg,"Not saved: "+errText(e),"err")}};
+  }
+  await draw();
+}
+
+// Card #106: Claude Code's to-do tools for card sessions, so each card shows its step progress.
+const TODO_TOOLS_RULE={key:"sessions.todo_tools",label:"Card sessions keep a to-do list",
+  help:"Gives card sessions Claude Code's to-do tools (TaskCreate, TaskUpdate), which it no longer offers newer models by itself, so each card shows its progress: \"Step 4 of 7: Writing the tests\" with a bar. It applies to sessions started after the change. Default on."};
+
+const SUBAGENT_RULES=[
+  {key:"sessions.test_before_human_test",label:"Test every card with a subagent before Human test",
+   help:"A card's session can move it from In progress to Human test only after its card-tester subagent has passed it. The app records each verdict on the card. Default on."},
+  {key:"sessions.review_before_human_test",label:"Review every card's diff with a subagent before Human test",
+   help:"A card's session can move it from In progress to Human test only after its card-reviewer subagent has passed its diff: mistakes, risky changes, work the card didn't ask for, the repo's hard rules. Its third FAIL sends the card to Blocked. Default on."},
+  {key:"sessions.critic_before_build",label:"Critique every plan with a subagent before building",
+   help:"At the end of Planning, a card's session has its card-critic subagent check the plan against the card and the code. The session can move the card into In progress only after a pass; your own moves are never held. Its third FAIL sends the card to Blocked. Off: sessions skip the step. Default on."},
+  {key:"sessions.small_go_on",label:"Let a card routed small start building once its plan critique passes",
+   help:"When the card-router subagent sizes a card small and its card-critic passes the plan, the app moves it from Planning to In progress by itself at the end of the session's turn, and says so in its log. Not a stack's cards. Off: small cards wait for you, like the rest. Default on."},
+  {key:"sessions.repro_before_human_test",label:"Prove reported bugs with the reproducer",
+   help:"A bug report on a card (Found a problem, Fail in Human test, Report a bug, or a subagent's FAIL that names a bug) has its card-reproducer subagent reproduce the bug before the fix and rerun the same steps after it. The card's session can move it to Human test only once the latest run says Fixed (or Not reproduced). The steps and screenshots are kept on the card. Off: reports are only logged. Default on."},
+];
+
+// One on/off rule's checkbox, saved as soon as it changes.
+async function ruleBox(m,r){
+  let g=null,err="";try{g=await invoke("get_setting",{key:r.key})}catch(e){err=errText(e)}
+  const b=document.createElement("div");b.className="st-box";b.dataset.rule=r.key;
+  b.innerHTML=`<label class="st-radio"><input type="checkbox"${g&&g.value!=="off"?" checked":""}${g?"":" disabled"}> ${esc(r.label)}</label>
+  <p class="meta">${esc(r.help)}</p>
+  <div class="row"><span class="msg"></span></div>`;
+  m.appendChild(b);
+  const msg=b.querySelector(".msg"),cb=b.querySelector("input");
+  if(!g)note(msg,"Couldn't read this setting: "+err,"err");
   cb.onchange=async()=>{
-    try{const x=await invoke("set_setting",{key:"sessions.test_before_human_test",value:cb.checked?"on":"off"});cb.checked=x!=="off";note(tm,"Saved","ok")}
-    catch(e){cb.checked=!cb.checked;note(tm,"Not saved: "+errText(e),"err")}};
+    try{const x=await invoke("set_setting",{key:r.key,value:cb.checked?"on":"off"});cb.checked=x!=="off";note(msg,"Saved","ok")}
+    catch(e){cb.checked=!cb.checked;note(msg,"Not saved: "+errText(e),"err")}};
 }
 
 // Stacks: when a stack (a lead card and its children) moves to Human test.
@@ -204,6 +272,36 @@ async function stacks(m){
   m.querySelectorAll('input[name="st-stk"]').forEach(r=>r.onchange=async()=>{
     try{await invoke("set_setting",{key:"stacks.human_test_when",value:r.value});note(msg,"Saved","ok")}
     catch(e){note(msg,"Not saved: "+errText(e),"err");stacks(m)}});
+}
+
+// The Router (card #119): the one long-running session for the whole board. Its model, its
+// effort, and whether it may start cards. Each is saved as soon as it changes; a model or effort
+// change applies the next time the Router starts.
+const ROUTER_MODELS=[["claude-sonnet-5-5","Sonnet 5.5"],["claude-opus-5-5","Opus 5.5"],["claude-haiku-5-5","Haiku 5.5"],["claude-fable-5-1","Fable 5.1"]];
+async function router(m){
+  const get=async k=>{try{return await invoke("get_setting",{key:k})}catch(e){return {value:"",default:"",err:errText(e)}}};
+  const [mo,ef,ms]=await Promise.all([get("router.model"),get("router.effort"),get("router.may_start_cards")]);
+  const model=mo.value||mo.default||"claude-sonnet-5-5",effort=ef.value||ef.default||"low",may=(ms.value||ms.default||"off")==="on";
+  const models=ROUTER_MODELS.some(([v])=>v===model)?ROUTER_MODELS:[...ROUTER_MODELS,[model,model]];
+  m.innerHTML=`<h3>Router</h3>
+  <p class="note">The Router is one long-running Claude Code session for the whole board: it routes cards, checks them and sends them back. Open it with the Router button in the header. A model or effort change applies the next time it starts.</p>
+  <div class="st-box" data-setting="router"><div class="st-row">
+    <label class="f">Model<select class="tx" id="st-rmodel">${models.map(([v,n])=>opt(v,model,n)).join("")}</select></label>
+    <label class="f">Effort<select class="colsel" id="st-reffort">${EFFORTS.map(x=>opt(x,effort)).join("")}</select></label></div>
+   <p class="meta">Default: Sonnet 5.5, effort low.</p>
+   <label class="st-radio"><input type="checkbox" id="st-rmay"${may?" checked":""}> Router may start cards</label>
+   <p class="meta">Router may start cards: lets the Router move a card from Backlog to Planning and start a card's session. Off: it routes, checks and sends back only.</p>
+   <div class="row"><span class="msg" id="st-rmsg"></span></div></div>`;
+  const msg=m.querySelector("#st-rmsg"),err=mo.err||ef.err||ms.err;
+  if(err)note(msg,"Couldn't read a Router setting: "+err,"err");
+  const save=async(key,value,undo)=>{
+    try{await invoke("set_setting",{key,value});note(msg,"Saved","ok")}
+    catch(e){undo();note(msg,"Not saved: "+errText(e),"err")}};
+  const sm=m.querySelector("#st-rmodel"),se=m.querySelector("#st-reffort"),cb=m.querySelector("#st-rmay");
+  let pm=sm.value,pe=se.value;
+  sm.onchange=()=>save("router.model",sm.value,()=>{sm.value=pm}).then(()=>{pm=sm.value});
+  se.onchange=()=>save("router.effort",se.value,()=>{se.value=pe}).then(()=>{pe=se.value});
+  cb.onchange=()=>save("router.may_start_cards",cb.checked?"on":"off",()=>{cb.checked=!cb.checked});
 }
 
 // The Add card form's template picker: choosing one fills the title prefix and description

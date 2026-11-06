@@ -16,7 +16,11 @@ function liveSwitch(info){
   const run=info.running;
   const cur={model:(run&&run.model)||info.model,effort:(run&&run.effort)||info.effort};
   const pend=info.switch||{};
-  const key=JSON.stringify([panel.id,!!run,cur,pend,info.queued,info.cap]);
+  // Where the model and effort come from (card #98): Hugh's choice, the card-router's route, or the column.
+  const FROM={Hugh:"your choice",route:"the card-router's route (Planning and In progress only)",column:"the column's"};
+  const fromM=FROM[info.modelFrom]||"",fromE=FROM[info.effortFrom]||"";
+  const routed=info.modelFrom==="route"||info.effortFrom==="route";
+  const key=JSON.stringify([panel.id,!!run,cur,pend,info.queued,info.cap,info.modelFrom,info.effortFrom]);
   if(host.dataset.key===key||host.contains(document.activeElement))return; // don't close an open dropdown
   host.dataset.key=key;
   const opts=(list,val)=>[...new Set([val,...list].filter(Boolean))].map(v=>`<option value="${esc(v)}"${v===val?" selected":""}>${esc(v)}</option>`).join("");
@@ -24,8 +28,9 @@ function liveSwitch(info){
   const when=run?"Typed into the session as /model or /effort when it is next free; the conversation carries on.":"Applies when the card's next session starts.";
   const waiting=[pend.model&&`model ${pend.model}`,pend.effort&&`effort ${pend.effort}`].filter(Boolean).join(", ");
   host.innerHTML=`${info.queued?`<span class="tag qbadge" title="Number ${esc(info.queued)} in line. It starts when a running session ends.">Queued (cap ${esc(info.cap)})</span><button class="ibtn" id="ls-unq" type="button" title="Take this card's start out of the queue">Cancel start</button>`:""}
-    <select id="ls-model" class="ls-sel" aria-label="Model" title="Model. ${esc(when)}">${opts(LS_MODELS,m)}</select>
-    <select id="ls-effort" class="ls-sel" aria-label="Effort" title="Effort. ${esc(when)}">${opts(LS_EFFORTS,e)}</select>
+    <select id="ls-model" class="ls-sel" aria-label="Model" title="Model${fromM?`, from ${esc(fromM)}`:""}. ${esc(when)}">${opts(LS_MODELS,m)}</select>
+    <select id="ls-effort" class="ls-sel" aria-label="Effort" title="Effort${fromE?`, from ${esc(fromE)}`:""}. ${esc(when)}">${opts(LS_EFFORTS,e)}</select>
+    ${routed?`<span class="ls-from" title="The card-router subagent's route sets ${esc([info.modelFrom==="route"&&"the model",info.effortFrom==="route"&&"the effort"].filter(Boolean).join(" and "))} while the card is in Planning or In progress. Your choice here overrides it.">route</span>`:""}
     ${waiting?`<span class="ls-wait" title="Waiting for the session to be free (after its current turn)">switching to ${esc(waiting)}…</span>`:""}`;
   const set=async(field,value)=>{
     try{const r=await invoke("set_session_model_effort",{cardId:panel.id,model:field==="model"?value:null,effort:field==="effort"?value:null});
@@ -45,6 +50,7 @@ function liveSwitch(info){
   st.textContent=`.ph .live{display:inline-flex;align-items:center;gap:6px;margin-right:4px}
 .ls-sel{font:inherit;font-size:12px;padding:3px 4px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);max-width:150px}
 .ls-wait{font-size:12px;color:var(--muted)}
+.ls-from{font-size:11px;color:var(--ok);border:1px dashed currentColor;border-radius:999px;padding:0 6px}
 .tag.qbadge,.ph .qbadge{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}`;
   document.head.appendChild(st);
 })();

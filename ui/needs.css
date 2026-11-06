@@ -1,0 +1,22 @@
+/* What a card waits on Hugh for (card #107, needs.js): the line on the card and the panel's box. */
+.card .wait{font-size:12.5px;line-height:1.35;color:var(--fg);border-left:3px solid var(--warn);padding:1px 0 1px 7px;
+  overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.wait b,.wrow b{font-weight:600;color:var(--warn)}
+.wait .opt,.wrow .opt{color:var(--muted)}
+.wait.w-failed,.wrow.w-failed{border-left-color:var(--bad)} .w-failed b{color:var(--bad)}
+.wait.w-reply,.wait.w-plan,.wrow.w-reply,.wrow.w-plan{border-left-color:var(--accent)} .w-reply b,.w-plan b{color:var(--accent)}
+.wait.w-test,.wrow.w-test{border-left-color:var(--info)} .w-test b{color:var(--info)}
+.wait.w-blocked,.wrow.w-blocked{border-left-color:var(--muted)} .w-blocked b{color:var(--fg)}
+.waitbox .wrow{display:block;font-size:13px;line-height:1.45;border-left:3px solid var(--warn);padding-left:8px;overflow-wrap:anywhere}
+.wait .who,.wrow .who{color:var(--muted);font-weight:500}
+/* The box on the card face (card #120, the mockup's .aq): a question, permission prompt, failed
+   session or plan to read. The kind word is its label; the choices are plain text, not buttons. */
+.card .wbox{background:var(--ask-soft);border-radius:5px;padding:6px 8px;font-size:12.9px;line-height:1.4;display:flex;flex-direction:column;gap:5px;overflow-wrap:anywhere;min-width:0}
+.card .wbox .wb-t{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.card .wbox .wb-k{color:var(--ask);font-weight:600;margin-right:2px}
+.card .wbox .wb-k::after{content:":"}
+.card .wbox.w-failed .wb-k{color:var(--bad)}
+.card .wbox .wb-opts{display:flex;flex-wrap:wrap;gap:4px;font-family:var(--mono);font-size:11.3px}
+.card .wbox .wb-opt{border:1px solid var(--ask);color:var(--ask);border-radius:999px;padding:0 7px;font-weight:600;cursor:inherit;user-select:text;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .wbox .wb-more{color:var(--muted)}
+.chip.to-test{color:var(--info)}

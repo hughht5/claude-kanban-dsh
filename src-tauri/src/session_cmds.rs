@@ -13,18 +13,11 @@ fn conversation(store: &Store, card: &Card) -> Option<(String, String, &'static 
     Some((id.to_string(), sessions::card_account(card), "desktop"))
 }
 
-/// The model, effort and permission mode for a card: its overrides, else its column's settings.
+/// The model, effort and permission mode for a card: Hugh's overrides, else the card-router's
+/// route while the card is in Planning or In progress (card #98), else its column's settings.
 fn session_settings(store: &Store, card: &Card) -> (String, String, String) {
-    let cfg = store.column(&card.column).ok().flatten();
-    let (dm, de) = sessions::column_defaults(&card.column);
-    let pick = |over: &str, col: Option<String>, default: &str| {
-        card.fields.get(over).and_then(Value::as_str).map(str::to_string).or(col).unwrap_or_else(|| default.to_string())
-    };
-    (
-        pick("modelOverride", cfg.as_ref().and_then(|c| c.model.clone()), dm),
-        pick("effortOverride", cfg.as_ref().and_then(|c| c.effort.clone()), de),
-        pick("permissionOverride", cfg.as_ref().and_then(|c| c.permission_mode.clone()), "bypassPermissions"),
-    )
+    let s = router::settings_for(store, card);
+    (s.model, s.effort, s.permission_mode)
 }
 
 #[tauri::command]
@@ -34,7 +27,7 @@ fn session_info(board: State<Board>, live: State<Arc<sessions::Sessions>>, card_
     let running = live.is_live(&card_id);
     let latest = store.latest_session(&card_id).map_err(CmdError::other)?;
     let convo = conversation(&store, &card);
-    let (model, effort, _) = session_settings(&store, &card);
+    let settings = router::settings_for(&store, &card);
     let waiting_text = store.waiting(&card_id, "message").ok().flatten().map(|m| m.payload);
     let waiting = waiting_text.is_some();
     let (typing, untaken) = live.typing(&card_id);
@@ -60,8 +53,11 @@ fn session_info(board: State<Board>, live: State<Arc<sessions::Sessions>>, card_
         "screen": live.on_screen(&card_id),
         "conversation": convo.as_ref().map(|c| json!({ "id": c.0, "account": c.1, "source": c.2 })),
         "account": convo.as_ref().map(|c| c.1.clone()).unwrap_or_else(|| dispatch::pick_account(&store, &card).0),
-        "model": model,
-        "effort": effort,
+        "model": settings.model,
+        "effort": settings.effort,
+        // Where each comes from (card #98): "Hugh", "route" or "column".
+        "modelFrom": settings.model_from,
+        "effortFrom": settings.effort_from,
         "claude": sessions::claude_exe().map(|p| p.display().to_string()),
         "claudeVersion": sessions::claude_exe_version(),
         // A model or effort change waiting to be typed into the running session.
@@ -89,6 +85,7 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
     let live = app.state::<Arc<sessions::Sessions>>();
     let api = app.state::<Api>().0.clone();
     let (model, effort, permission_mode) = session_settings(store, card);
+    let todo_tools = store.todo_tools_on();
     let base = board_path().parent().map(|p| p.join("sessions")).unwrap_or_default();
     let row_id = uuid::Uuid::new_v4().to_string();
     let mut why = String::new();
@@ -114,6 +111,8 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
                 permission_mode,
                 row_id: row_id.clone(),
                 api,
+                todo_tools,
+                router: false,
             }
         }
         "resume" => {
@@ -151,11 +150,18 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
                 permission_mode,
                 row_id: row_id.clone(),
                 api,
+                todo_tools,
+                router: false,
             }
         }
         _ => return Err("mode must be new or resume".into()),
     };
     let row = live.start(app, card, &plan)?;
+    if plan.todo_tools {
+        if let Some(steps) = app.try_state::<Arc<crate::steps::Steps>>() {
+            steps.flag(&row.id);
+        }
+    }
     store.add_session(&row).map_err(|e| e.to_string())?;
     let text = format!(
         "{} a session in the app on {}{} ({} {}, {})",
@@ -167,6 +173,9 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
         row.cwd
     );
     let _ = store.add_log(&card.id, &text, "the app");
+    // A stack's child with a session of its own builds itself (card #113): from now on it is
+    // merged only by the merger's record, and Hugh's notes go to this session.
+    stackrun::mark_own_build(store, &card.id);
     if plan.resume.is_none() {
         if store.waiting(&card.id, "message").ok().flatten().is_none() {
             // A new session learns which card it is for, and its template's starting prompt.
@@ -270,7 +279,7 @@ fn slash_commands(board: State<Board>, card_id: String) -> CmdResult<Value> {
         None => {
             map.insert(key.clone(), None);
             if let Some(exe) = sessions::claude_exe() {
-                let env = sessions::build_env(std::env::vars(), &account, number);
+                let env = sessions::build_env(std::env::vars(), &account, number, false);
                 std::thread::spawn(move || {
                     let got = slash::claude_list(&exe, &env, cwd.as_deref().map(std::path::Path::new));
                     if let Ok(mut m) = lists.lock() {
@@ -325,7 +334,9 @@ fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str
         }
         if let Ok(Some(m)) = store.waiting(card_id, "message") {
             // A failed write leaves it queued: the dispatcher types it once the session is free.
-            if live.type_now(card_id, &m.payload, alone).unwrap_or(false) {
+            // Not into a session being restarted onto its route (card #98): the dispatcher types
+            // it into the resumed one.
+            if !router::restarting(card_id) && live.type_now(card_id, &m.payload, alone).unwrap_or(false) {
                 let _ = store.done(m.id, "sent");
             }
         }
@@ -345,6 +356,52 @@ fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str
     Ok(started)
 }
 
+/// Hugh's Route again (card #98): clears the card's route and asks its session to run the
+/// card-router again, as his chat message would (a paused session resumes). Only in Planning:
+/// a message to a card in Human test would take it back to In progress (card #93).
+#[tauri::command]
+fn route_again(app: AppHandle, board: State<Board>, card_id: String) -> CmdResult<Value> {
+    let mut store = board.0.lock().map_err(CmdError::other)?;
+    let card = store.get(&card_id).map_err(CmdError::other)?;
+    if card.column != "Planning" {
+        return Err(CmdError::other("Route again works on a card in Planning"));
+    }
+    if card.stack_of().is_some() {
+        return Err(CmdError::other("a stack's child isn't routed: its lead plans it"));
+    }
+    // Nothing would run the router for a card whose conversation is in the desktop app.
+    let live = app.state::<Arc<sessions::Sessions>>().inner().clone();
+    let in_app = live.is_live(&card_id).is_some() || store.latest_session(&card_id).ok().flatten().is_some();
+    if !in_app && card.fields.get("claudeSessionId").is_some() {
+        return Err(CmdError::other("this card's conversation is in the Claude desktop app: resume it in the app first"));
+    }
+    let old = card.clone();
+    let mut patch = Patch::new();
+    patch.insert(kanban_store::ROUTE_KEY.into(), Value::Null);
+    // What the session may still run on, so the dispatcher takes it back to the card's own values.
+    if let Some(r) = router::route_of(&old) {
+        patch.insert(router::CLEARED_KEY.into(), json!({ "model": r.get("model"), "effort": r.get("effort") }));
+    }
+    let card = store.update(&card.id, card.version, &patch, router::HUGH).map_err(|e| refused(&store, e))?;
+    let started = match send_to_session(&app, &mut store, &card_id, &router::again_message(&card)) {
+        Ok(s) => s,
+        Err(e) => {
+            // Put the route back: nothing will run the router.
+            if let (Some(r), Ok(now)) = (router::route_of(&old).cloned(), store.get(&card_id)) {
+                let mut back = Patch::new();
+                back.insert(kanban_store::ROUTE_KEY.into(), r);
+                let _ = store.update(&card_id, now.version, &back, router::HUGH);
+            }
+            return Err(CmdError::other(format!("couldn't reach the session, so the route is kept: {e}")));
+        }
+    };
+    let _ = store.add_log(&card_id, "Route again: cleared the route and asked the session to run the card-router again", router::HUGH);
+    drop(store);
+    changed(&app);
+    let _ = app.emit("session-changed", card_id);
+    Ok(json!({ "started": started }))
+}
+
 /// Hugh's message to a card in Human test takes it back to In progress first (card #93): moved
 /// as his own move (so its test is needed again), logged, and `text` comes back with a note
 /// for the session. Any other card's message is unchanged. Returns the text and whether the
@@ -359,14 +416,89 @@ fn back_to_work(store: &mut Store, card_id: &str, text: &str) -> CmdResult<(Stri
     Ok((dispatch::moved_back_message(&m.card, text), true))
 }
 
-/// Hugh's message from the panel (`send_to_session`).
+/// Hugh's Fail in Human test, with his note (card #102): the review bar's Fail. Logged as
+/// "Failed in Human test: <note>". An ordinary card goes back to In progress by card #93's rule
+/// (Hugh's own move, so its subagent checks are needed again); a stack's lead by "Found a
+/// problem"'s steps (`problem_back`). Then the note goes to the card's session, started if need
+/// be. A stack's child is refused: the board sends its Fail to `stack_problem`. Once the card
+/// has failed and moved, a note the session couldn't take is not an error: the reply's
+/// `sendError` says why, and the note is on the card's log.
 #[tauri::command]
-fn session_send(app: AppHandle, board: State<Board>, card_id: String, text: String) -> CmdResult<()> {
-    if let Some(r) = chat_command(&app, &card_id, &text) {
-        return r;
+fn human_test_fail(app: AppHandle, board: State<Board>, card_id: String, note: String) -> CmdResult<Value> {
+    let note = note.trim().to_string();
+    if kanban_store::looks_secret(&note) {
+        return Err(CmdError::other("not sent: the note looks like it holds a token, key or password, and those never go to a session"));
     }
     let mut store = board.0.lock().map_err(CmdError::other)?;
-    let (text, moved) = if sessions::confirms(&text) { back_to_work(&mut store, &card_id, &text)? } else { (text, false) };
+    let card = store.get(&card_id).map_err(CmdError::other)?;
+    let plan = dispatch::fail_plan(&card, &note).map_err(CmdError::other)?;
+    let text = match plan {
+        dispatch::FailPlan::MoveBack => {
+            // The move first: a refused move leaves no "Failed" line on the append-only log.
+            let m = store.move_by_hugh(&card_id, card.version, "In progress", Patch::new()).map_err(|e| refused(&store, e))?;
+            store.add_log(&card_id, &dispatch::failed_log(&note), HUGH).map_err(|e| refused(&store, e))?;
+            dispatch::failed_message(&m.card, &note)
+        }
+        dispatch::FailPlan::LeadBack => {
+            let c = problem_back(&app, &mut store, &card_id, &dispatch::failed_log(&note))?;
+            dispatch::lead_failed_message(&c, &note)
+        }
+    };
+    // Hugh's Fail note is a bug report for the card-reproducer (card #112, wired at the wave 2 merge).
+    let needed = match store.get(&card_id).map_err(|e| e.to_string()).and_then(|c| repro::mark_needed(&mut store, &c, "human-test-fail", &note)) {
+        Ok((_, needed)) => needed,
+        Err(e) => {
+            let _ = store.add_log(&card_id, &format!("Couldn't set the card's repro to needed: {e}"), "the app");
+            false
+        }
+    };
+    let text = if needed { format!("{text}\n\n{}", repro::ask_note(card.number)) } else { text };
+    let sent = send_to_session(&app, &mut store, &card_id, &text);
+    if let Err(e) = &sent {
+        let _ = store.add_log(&card_id, &format!("Couldn't send Hugh's Fail note to the session: {e}"), "the app");
+    }
+    let card = store.get(&card_id).map_err(CmdError::other)?;
+    let mut out = doc(&store, &card);
+    drop(store);
+    changed(&app);
+    let _ = app.emit("session-changed", card_id);
+    if let Err(e) = sent {
+        out["sendError"] = json!(e);
+    }
+    Ok(out)
+}
+
+/// Hugh's "Report a bug" (card #112): his message goes to the session as a bug report, and the
+/// card's repro is needed (`repro::mark_needed`), so the card-reproducer proves the bug and the
+/// fix. Returns the text to send.
+fn report_bug(store: &mut Store, card_id: &str, text: &str) -> CmdResult<String> {
+    let card = store.get(card_id).map_err(CmdError::other)?;
+    if let Some(why) = repro::report_refused(&card, text) {
+        return Err(CmdError::other(why));
+    }
+    let note: String = text.trim().chars().take(600).collect();
+    store.add_log(card_id, &format!("Hugh reported a bug: {}", kanban_store::mask_secrets(&note)), HUGH).map_err(|e| refused(&*store, e))?;
+    let (card, needed) = repro::mark_needed(store, &card, "report-a-bug", text).map_err(CmdError::other)?;
+    Ok(repro::bug_message(card.number, text, needed))
+}
+
+/// Hugh's message from the panel (`send_to_session`); `bug` is his "Report a bug" (card #112).
+#[tauri::command]
+fn session_send(app: AppHandle, board: State<Board>, card_id: String, text: String, bug: Option<bool>) -> CmdResult<()> {
+    let bug = bug.unwrap_or(false);
+    if !bug {
+        if let Some(r) = chat_command(&app, &card_id, &text) {
+            return r;
+        }
+    }
+    let mut store = board.0.lock().map_err(CmdError::other)?;
+    let (text, moved) = if bug {
+        (report_bug(&mut store, &card_id, &text)?, true)
+    } else if sessions::confirms(&text) {
+        back_to_work(&mut store, &card_id, &text)?
+    } else {
+        (text, false)
+    };
     let sent = send_to_session(&app, &mut store, &card_id, &text);
     if let (true, Err(e)) = (moved, &sent) {
         let _ = store.add_log(&card_id, &format!("Couldn't send Hugh's message to the session: {e}"), "the app");
@@ -473,6 +605,12 @@ fn transcript_read(board: State<Board>, card_id: String, offset: u64, agent: Opt
 /// The card conversation's transcript, if it is on this machine.
 fn card_transcript(board: &State<Board>, card_id: &str) -> CmdResult<Option<std::path::PathBuf>> {
     let store = board.0.lock().map_err(CmdError::other)?;
+    // The Router (card #119) is not a card: its conversation is its latest session on this channel.
+    if card_id == routersession::KEY {
+        let Some((id, account)) = routersession::conversation(&store) else { return Ok(None) };
+        drop(store);
+        return Ok(transcript::find(&account, &id));
+    }
     let card = store.get(card_id).map_err(CmdError::other)?;
     let Some((id, account, _)) = conversation(&store, &card) else { return Ok(None) };
     drop(store);
@@ -625,12 +763,11 @@ fn attachment_save(card_id: String, name: String, data: String) -> CmdResult<Str
 // so a local image a message shows (a Markdown image, a Read screenshot, an attachment) is
 // read here and handed back as a data URL. Only image files, and none over the attachment cap.
 
-fn image_data_url(path: &str) -> Result<String, String> {
-    use base64::Engine as _;
-    let path = match path.get(..8) {
-        Some(head) if head.eq_ignore_ascii_case("file:///") => &path[8..],
-        _ => path,
-    };
+/// A local image file by its full path (or a `file:///` URL), checked: an image extension, a
+/// local drive, a file within the attachment cap. Returns the path and its MIME type. The
+/// chat's screenshots and the reproducer's kept shots (card #112) both go through it.
+fn local_image(path: &str) -> Result<(PathBuf, &'static str), String> {
+    let path = crate::platform::file_url_path(path);
     // A local drive only: a network path (\\host\share) would have Windows connect to that host.
     if path.starts_with("\\\\") || path.starts_with("//") {
         return Err("not a local file".into());
@@ -647,6 +784,12 @@ fn image_data_url(path: &str) -> Result<String, String> {
     if meta.len() > MAX_ATTACHMENT as u64 {
         return Err(format!("the image is over {} MB", MAX_ATTACHMENT / 1024 / 1024));
     }
+    Ok((p.to_path_buf(), mime))
+}
+
+fn image_data_url(path: &str) -> Result<String, String> {
+    use base64::Engine as _;
+    let (p, mime) = local_image(path)?;
     let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
@@ -668,7 +811,9 @@ mod panel_cmd_tests {
         std::fs::write(&png, b"PNG-ish bytes").unwrap();
         let url = image_data_url(&png.display().to_string()).unwrap();
         assert!(url.starts_with("data:image/png;base64,"));
-        let file_url = format!("file:///{}", png.display().to_string().replace('\\', "/"));
+        // A real file URL on either system: file:///C:/... on Windows, file:///tmp/... elsewhere.
+        let p = png.display().to_string().replace('\\', "/");
+        let file_url = if p.starts_with('/') { format!("file://{p}") } else { format!("file:///{p}") };
         assert_eq!(image_data_url(&file_url).unwrap(), url);
         // Not an image, not there, a folder, or not a full path: refused.
         let txt = dir.path().join("notes.txt");

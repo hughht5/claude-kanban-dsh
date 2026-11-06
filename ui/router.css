@@ -1,0 +1,100 @@
+/* The Router panel (router.js, card #119): docked on the right of the board, full height under the
+   header. The board narrows by its width; a card panel opens to its left. Its chat reuses the card
+   panel's message styles (panel.css: .m, .msgs, .compose, .busy, details.tools). Uses board.css's
+   tokens, so it follows light and dark. The .rpane* classes may also get shared rules from a later
+   ui/rpane.css (card #120); these rules are complete without it. */
+:root{--rpane-w:380px}
+
+/* The header button and its state dot: off grey, idle green, working accent, asks amber, down red. */
+.rbtn{display:inline-flex;align-items:center;gap:6px;align-self:center}
+.rbtn[hidden]{display:none}
+.rdot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+.rdot.r-idle{background:var(--ok)}
+.rdot.r-working,.rdot.r-starting{background:var(--accent);animation:rpulse 1.2s ease-in-out infinite}
+.rdot.r-starting{background:var(--info)}
+.rdot.r-asks{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 25%,transparent)}
+.rdot.r-down{background:var(--bad)}
+@keyframes rpulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.rdot.r-working,.rdot.r-starting{animation:none}}
+.rpill{align-self:center;background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn);border:1px solid var(--warn);border-radius:999px;
+  padding:2px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+.rpill:hover{background:color-mix(in srgb,var(--warn) 24%,transparent)}
+.rpill[hidden]{display:none}
+
+/* Room for the panel: the board (and what sits beside it) gets narrower, never goes under it. */
+body.rpane-open > main.board,body.rpane-open > #emptyNote,body.rpane-open > .banner{margin-right:calc(var(--rpane-w) + 12px)}
+/* A card panel in its default box ends to the left of the Router panel (router.js narrows a moved one). */
+body.rpane-open .panel{right:calc(var(--rpane-w) + 28px)}
+
+/* The panel. */
+.rpane{position:fixed;top:64px;right:max(16px,env(safe-area-inset-right,0px));bottom:16px;width:var(--rpane-w);z-index:22;
+  background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.14);
+  display:grid;grid-template-rows:auto auto auto minmax(0,1fr);overflow:hidden;container-type:size;min-width:0}
+.rpane-rz{position:absolute;left:0;top:10px;bottom:10px;width:7px;cursor:ew-resize;z-index:3}
+.rpane-rz:hover{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+body.resizing .rpane-term{pointer-events:none}
+
+.rpane-head{display:flex;align-items:center;gap:8px;padding:9px 10px 9px 14px;border-bottom:1px solid var(--line);min-width:0}
+.rpane-head .rdot{width:10px;height:10px}
+.rpane-ttl{font-size:15px;font-weight:600}
+.rpane-meta{flex:1;min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rpane-may{font-family:var(--sans)}
+.rpane-asks{flex:0 0 auto;font-size:11.5px;font-weight:600;color:var(--warn);border:1px solid var(--warn);border-radius:999px;padding:0 8px;white-space:nowrap}
+.rpane-asks[hidden]{display:none}
+.rpane-acts{display:flex;gap:6px;flex:0 0 auto}
+.rpane-acts [hidden]{display:none}
+
+/* The digest and the live log. */
+.rpane-top{display:flex;flex-direction:column;min-height:0;border-bottom:1px solid var(--line)}
+.rpane-digest{margin:10px 12px 0;border:1px solid var(--accent);border-left-width:3px;border-radius:8px;background:var(--accent-soft);padding:8px 10px;
+  font-size:12.5px;line-height:1.45;max-height:30vh;max-height:25cqh;overflow-y:auto}
+.rpane-digest .rd-head{display:flex;align-items:center;gap:8px}
+.rpane-digest .rd-head b{font-size:13px}
+.rpane-digest .rd-head .ibtn.x{margin-left:auto;width:26px;height:24px;padding:0;font-size:11px}
+.rpane-digest .rd-sec{margin-top:6px}
+.rpane-digest h4{margin:0 0 2px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.rpane-digest ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.rpane-digest .rd-t{font-weight:500;overflow-wrap:anywhere}
+.rpane-digest .rd-m{color:var(--muted)}
+.rd-time{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.rpane-feedhead{display:flex;align-items:center;gap:8px;padding:8px 12px 4px}
+.rpane-feedhead h3{flex:1}
+.rpane-col{padding:1px 8px;font-size:11px}
+.rpane-feed{max-height:40vh;max-height:40cqh;overflow-y:auto;padding:0 12px 8px;display:flex;flex-direction:column;gap:3px;font-size:12.5px;line-height:1.45;min-height:0}
+.rpane-feed[hidden]{display:none}
+.rf-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:6px;align-items:baseline}
+.rf-row time{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.rf-agent{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ag-router,var(--accent))}
+.rf-text{overflow-wrap:anywhere;min-width:0}
+.rf-decision .rf-text{font-weight:500}
+.rf-session .rf-text{color:var(--muted)}
+.rf-empty{color:var(--muted);font-size:12.5px;padding:4px 0}
+.rf-empty.err{color:var(--bad)}
+/* "#12": bold and clickable, opens the card. */
+button.rcard{background:none;border:0;padding:0;font:inherit;font-family:var(--mono);font-weight:700;color:var(--accent);cursor:pointer}
+button.rcard:hover{text-decoration:underline}
+
+/* Chat | Terminal, in the card panel's tab style (its subagent strip). */
+.rpane-tabs{display:flex;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line)}
+.rpane-tabs .sub{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--line);border-radius:999px;padding:3px 12px;cursor:pointer;color:var(--fg);font:inherit;font-size:12px}
+.rpane-tabs .sub:hover{border-color:var(--accent)}
+.rpane-tabs .sub.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.rpane-tabs .sub b{font-weight:600}
+
+.rpane-body{display:grid;grid-template-rows:minmax(0,1fr);min-height:0;min-width:0}
+.rpane-chat{display:grid;grid-template-rows:minmax(0,1fr) auto auto auto;min-height:0;min-width:0}
+.rpane-chat[hidden],.rpane-term[hidden]{display:none}
+.rpane-chat .msgs{padding:12px 12px}
+.rpane-chat .m{max-width:100%}
+.rpane-chat details.tools{max-width:100%}
+.rpane-chat .compose{padding:8px 10px}
+.rpane-chat .compose textarea:disabled{opacity:.7;cursor:not-allowed}
+.rpane-foot{padding:0 12px;font-size:12px;color:var(--muted)}
+.rpane-foot:not(:empty){padding:4px 12px 6px}
+.rpane-foot .err{color:var(--bad)}
+.rpane-term{background:#0f1117;min-height:0;min-width:0;padding:6px}
+.rpane-term .xterm{height:100%}
+/* The folder-trust question in the chat (card #119, F5). */
+.rtrust{margin:8px 10px;padding:10px 12px;border:1px solid var(--ask,var(--accent));border-radius:8px;background:var(--panel)}
+.rtrust p{margin:6px 0 10px}
+.rtrust-acts{display:flex;gap:8px;flex-wrap:wrap}

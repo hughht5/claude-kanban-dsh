@@ -1,0 +1,21 @@
+# Deliberate Windows-only text outside src-tauri/src/platform/ (card #114), read by
+# platform_guard.rs. One per line: file | token | reason. An entry that matches nothing fails
+# the test, so remove an entry when its case goes.
+
+crates/store/src/channel.rs | USERPROFILE | home_var: the one place the home folder is read, USERPROFILE on Windows and HOME elsewhere
+crates/store/src/channel.rs | cfg!(windows) | home_var picks USERPROFILE on Windows, HOME elsewhere
+crates/store/src/channel.rs | Local\ | quit_event: the named event's name, used only by platform/windows.rs and install.ps1 (card #117 gives macOS its own signal)
+crates/kb/src/main.rs | USERPROFILE | kb's usage text names the default board path
+src-tauri/src/stack.rs | wsl | dev stacks run in WSL: Windows-only in this version (router decision D6); card #117 adds the Mac message
+src-tauri/src/transcript.rs | powershell | "PowerShell" is Claude Code's tool name in transcripts, not a call
+crates/store/src/cards.rs | C:\ | changesOutputs error text: an example path in a message, not a call
+crates/store/src/config.rs | C:\ | the small-change repo list's error text: an example path, not a call
+src-tauri/src/changes.rs | wsl | a checkout path in WSL is refused (text and a path test, not a call)
+src-tauri/src/changes.rs | C:\ | NOT_FULL's text: an example path, not a call
+src-tauri/src/check_size.rs | "cmd" | a file extension in the build-file list, not a call
+src-tauri/src/check_size.rs | wsl | stack::in_wsl's refusal (a path test and its text, as in stack.rs)
+src-tauri/src/evidence.rs | C:\ | an error text: an example path, not a call
+src-tauri/src/guard.rs | powershell | "PowerShell" is Claude Code's tool name and a shell wrapper's name the guard reads, not a call
+src-tauri/src/guard.rs | "cmd" | a shell wrapper's name the guard reads in a command, not a call
+src-tauri/src/guard.rs | .exe" | the guard strips ".exe" from a command word it reads, not a call
+src-tauri/src/monitor.rs | powershell | "PowerShell" is Claude Code's tool name in transcripts, not a call

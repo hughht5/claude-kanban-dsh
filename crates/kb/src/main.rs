@@ -23,6 +23,8 @@ through the running app (a card session's own card when <n> is left out):
   kb list [--column <c>] [--archived]  list cards
   kb update <n> --<field> <value> ...  change fields (summary, nextStep, pr, branch, logins, ...)
                                        --labels BUG,RCS sets the card's labels; --labels null clears them
+                                       --doneWhen "it shows" --doneWhenChecks '["one check","another"]'
+                                       --blockedBy 12,40 sets the cards it waits on; --blockedBy null clears them
   kb log <n> "<text>"                  add a log line
   kb move <n> "<column>" [--reason r]  move a card (your own card's move waits for your turn to end)
   kb create --title <t> [--repo r] [--column c] [--summary s] [--template id] [--stack <lead>] [--labels BUG,RCS] [--to Planning|"Human test"]
@@ -39,7 +41,17 @@ through the running app (a card session's own card when <n> is left out):
   kb ship <n> --asked-by-hugh          ask Hugh to confirm "Ship #n?" in the app (only when he asked;
                                        from a session outside the app; it never ships by itself)
   kb notify <n> "<text>"               tell Hugh
+  kb testapp                           turns on the shared test app: who has it, the line, any install
+  kb testapp take                      a card session: a tester turn for its own card (In progress or Human test)
+  kb testapp take --install [--owner o] [--label "wave 3"] [--wait]
+                                       outside a card session: an install turn, ahead of every tester;
+                                       --owner is the KANBAN_LOCK_OWNER install.ps1 runs with (default
+                                       $KANBAN_LOCK_OWNER, else hugh); --wait waits until it is yours
+  kb testapp release [--owner o] [--force]   give it back; --force (outside only) releases whoever has it
+  kb testapp release-mkdir             outside only: rename the old DSH lock folder aside
   kb status                            Claude Code statusLine (reads its JSON on stdin)
+  kb router "<text>"                   send the Router (the board's long-running session) a message
+  kb router --replies [n]              print the Router's last n replies (default 1)
 
 card sessions (only from outside a card session):
   kb start <n> [--message m] [--mode new|resume]   start or resume a card's session (queued over the cap)
@@ -49,13 +61,30 @@ card sessions (only from outside a card session):
   kb read <n> [--last k] [--tools]     the last k messages of the card's conversation
   kb switch <n> [--model m] [--effort e]   change model/effort on the running session
   kb keys <n> <key>...                 press keys in its terminal (enter, up, down, esc, tab, text:yes)
+  kb search <words> [--card n] [--limit n]   search every card's session history (the last 90 days)
   kb mcp                               an MCP server on stdin/stdout for Claude Code (all of the above as tools)
 options:
   --db <path>   board database (default %USERPROFILE%\.claude-kanban-dsh\board.db;
-                %USERPROFILE%\.claude-kanban-dsh-test\board.db for the test build)"#;
+                %USERPROFILE%\.claude-kanban-dsh-test\board.db for the test build,
+                .claude-kanban-dsh-test2\board.db for test 2, and so on; a test app's
+                card sessions set KANBAN_DATA_DIR to their own board's folder, which wins)"#;
 
 fn default_db() -> PathBuf {
-    kanban_store::data_dir().join("board.db")
+    data_dir().join("board.db")
+}
+
+/// The board's folder: the session's board (`KANBAN_DATA_DIR`, set by a test app for its card
+/// sessions) when there is one, else this build's channel's folder.
+pub(crate) fn data_dir() -> PathBuf {
+    kanban_store::kb_data_dir(std::env::var_os(kanban_store::DATA_DIR_ENV), kanban_store::data_dir)
+}
+
+/// The app's name for messages: this build's, or the folder's when a session points kb elsewhere.
+pub(crate) fn app_label() -> String {
+    match std::env::var_os(kanban_store::DATA_DIR_ENV) {
+        Some(v) if !v.is_empty() => format!("board app for {}", PathBuf::from(v).display()),
+        _ => kanban_store::app_name().to_string(),
+    }
 }
 
 fn main() -> ExitCode {
@@ -89,6 +118,10 @@ fn run(mut args: Vec<String>) -> Result<ExitCode, Box<dyn std::error::Error>> {
         return Ok(ExitCode::from(2));
     };
     args.remove(0);
+    // Hidden macOS helpers (card #117), before the data folder is touched.
+    if cmd == "reap" || cmd == "install-lock" {
+        return Ok(ExitCode::from(unix_command(&cmd, &args)));
+    }
     if let Some(parent) = db.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -163,6 +196,49 @@ fn print_check(r: &kanban_store::CheckReport) {
     println!("{}", if r.clean() { "check: no differences" } else { "check: DIFFERENCES FOUND" });
 }
 
+/// `kb reap <app-pid> <record-file>` and `kb install-lock --fd <n> --lock-dir <D> ...`, used
+/// by the app and install.sh on a Mac. Not in the usage text. The work is in kanban-unix.
+fn unix_command(cmd: &str, args: &[String]) -> u8 {
+    // Only macOS runs them; elsewhere they are parsed for the error message only.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    enum Job {
+        Reap(i32, String),
+        Lock(kanban_unix::lock::LockArgs),
+    }
+    let job = match cmd {
+        "reap" => reap_args(args).map(|(pid, file)| Job::Reap(pid, file)),
+        _ => kanban_unix::lock::parse_args(args).map(Job::Lock),
+    };
+    let job = match job {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("kb {cmd}: {e}");
+            return 2;
+        }
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let code = match job {
+            Job::Reap(pid, file) => kanban_unix::reap::run(pid, std::path::Path::new(&file)),
+            Job::Lock(a) => kanban_unix::lock::install_lock(&a),
+        };
+        u8::try_from(code).unwrap_or(1)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = job;
+        eprintln!("kb {cmd}: only on macOS");
+        2
+    }
+}
+
+/// `kb reap`'s arguments: the app's pid and the tracker's record file.
+fn reap_args(args: &[String]) -> Result<(i32, String), String> {
+    let pid = args.first().and_then(|a| a.parse::<i32>().ok()).filter(|p| *p > 0).ok_or("usage: kb reap <app-pid> <record-file>")?;
+    let file = args.get(1).filter(|f| !f.is_empty()).ok_or("usage: kb reap <app-pid> <record-file>")?;
+    Ok((pid, file.clone()))
+}
+
 /// The commands that go through the running app. `None` means it isn't one of them.
 fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn std::error::Error>> {
     let num = |i: usize| args.get(i).and_then(|a| a.parse::<i64>().ok());
@@ -198,7 +274,10 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
         "read" => ("kanban_session_read", json!({ "card": num(0).ok_or("read needs a card number")?, "last": opt("--last").and_then(|v| v.parse::<i64>().ok()), "include_tools": args.iter().any(|a| a == "--tools").then_some(true) })),
         "switch" => ("kanban_session_switch", json!({ "card": num(0).ok_or("switch needs a card number")?, "model": opt("--model"), "effort": opt("--effort") })),
         "keys" => ("kanban_session_keys", json!({ "card": num(0).ok_or("keys needs a card number")?, "keys": args.iter().skip(1).map(|k| match k.strip_prefix("text:") { Some(t) => json!({ "text": t }), None => json!(k) }).collect::<Vec<_>>() })),
+        "testapp" => return testapp(args).map(Some),
+        "search" => ("kanban_search", search_args(args)?),
         "notify" => ("kanban_notify", json!({ "card": num(0).ok_or("notify needs a card number")?, "text": args.get(1).ok_or("notify needs the text")? })),
+        "router" => ("kanban_router", router_args(args)?),
         _ => return Ok(None),
     };
     // Leave out options that weren't given, so the tool sees them as missing.
@@ -215,6 +294,86 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
         }
     }
     Ok(Some(ExitCode::SUCCESS))
+}
+
+/// The args of `kb router ...` (card #119): `kb router "<text>"` sends the Router a message,
+/// `kb router --replies [n]` prints its last n replies (1 by default).
+fn router_args(args: &[String]) -> Result<serde_json::Value, String> {
+    if let Some(i) = args.iter().position(|a| a == "--replies") {
+        let n = match args.get(i + 1) {
+            Some(v) => v.parse::<u64>().map_err(|_| "--replies takes a number")?,
+            None => 1,
+        };
+        return Ok(json!({ "replies": n }));
+    }
+    let text = args.iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
+    if text.trim().is_empty() {
+        return Err("usage: kb router \"<text>\" or kb router --replies [n]".into());
+    }
+    Ok(json!({ "text": text }))
+}
+
+/// The args of `kb testapp ...` as the kanban_test_app tool's input.
+fn testapp_args(args: &[String]) -> Result<serde_json::Value, String> {
+    let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let has = |name: &str| args.iter().any(|a| a == name);
+    let owner = || opt("--owner").or_else(|| std::env::var("KANBAN_LOCK_OWNER").ok()).filter(|o| !o.trim().is_empty());
+    match args.first().map(String::as_str) {
+        None | Some("status") => Ok(json!({ "action": "status" })),
+        Some("take") if has("--install") => {
+            Ok(json!({ "action": "take", "install": true, "owner": owner().unwrap_or_else(|| "hugh".into()), "label": opt("--label").unwrap_or_default() }))
+        }
+        Some("take") => Ok(json!({ "action": "take" })),
+        Some("release") => {
+            let mut v = json!({ "action": "release", "force": has("--force") });
+            if let Some(o) = owner() {
+                v["owner"] = json!(o);
+            }
+            Ok(v)
+        }
+        Some("release-mkdir") => Ok(json!({ "action": "release-mkdir" })),
+        Some(other) => Err(format!("kb testapp [status] | take [--install ...] [--wait] | release [--force] | release-mkdir, not {other}")),
+    }
+}
+
+/// `kb testapp ...`. With --wait, asks again every 10 s until the turn is the asker's.
+fn testapp(args: &[String]) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let body = testapp_args(args)?;
+    let wait = args.iter().any(|a| a == "--wait") && body["action"] == "take";
+    let started = std::time::Instant::now();
+    let mut last = String::new();
+    loop {
+        let r = match api::tool("kanban_test_app", body.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("kb: {e}");
+                return Ok(ExitCode::from(1));
+            }
+        };
+        let text = match &r {
+            serde_json::Value::String(s) => s.clone(),
+            v => serde_json::to_string_pretty(v)?,
+        };
+        // Whose turn it is comes from the status, not from the reply's wording.
+        let yours = !wait || {
+            let st = api::tool("kanban_test_app", json!({ "action": "status" })).unwrap_or_default();
+            let h = &st["holder"];
+            !h.is_null() && h["kind"] == body.get("install").map_or("tester", |_| "install") && body.get("owner").map_or(true, |o| h["owner"] == *o)
+        };
+        if !wait || yours {
+            println!("{text}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        if text != last {
+            println!("{text}");
+            last = text;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(4 * 60 * 60) {
+            eprintln!("kb: still not your turn after 4 hours");
+            return Ok(ExitCode::from(3));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(10));
+    }
 }
 
 /// `kb stack [<lead>]`, `kb stack <lead> add <n>`, `kb stack <lead> remove <n>`.
@@ -255,10 +414,92 @@ mod tests {
     }
 
     #[test]
+    fn done_when_fields_pass_through_update() {
+        // Card #105: kb update passes the line as text and the checks as a JSON list.
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let f = api::fields(&a(&["--doneWhen", "it shows", "--doneWhenChecks", r#"["one", {"text": "two", "state": "met"}]"#])).unwrap();
+        assert_eq!(f, json!({ "doneWhen": "it shows", "doneWhenChecks": ["one", { "text": "two", "state": "met" }] }));
+        assert_eq!(api::fields(&a(&["--doneWhenChecks", "null"])).unwrap(), json!({ "doneWhenChecks": null }));
+    }
+
+    #[test]
+    fn testapp_commands() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(testapp_args(&a(&[])).unwrap(), json!({ "action": "status" }));
+        assert_eq!(testapp_args(&a(&["take"])).unwrap(), json!({ "action": "take" }));
+        let t = testapp_args(&a(&["take", "--install", "--owner", "router", "--label", "wave 3", "--wait"])).unwrap();
+        assert_eq!(t, json!({ "action": "take", "install": true, "owner": "router", "label": "wave 3" }));
+        assert_eq!(testapp_args(&a(&["release", "--force", "--owner", "router"])).unwrap(), json!({ "action": "release", "force": true, "owner": "router" }));
+        assert_eq!(testapp_args(&a(&["release-mkdir"])).unwrap(), json!({ "action": "release-mkdir" }));
+        assert!(testapp_args(&a(&["grab"])).is_err());
+    }
+
+    #[test]
+    fn usage_names_blocked_by() {
+        assert!(USAGE.contains("--blockedBy 12,40"));
+        assert!(USAGE.contains("--blockedBy null"));
+    }
+
+    #[test]
+    fn hidden_unix_commands() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(reap_args(&a(&["4242", "/x/run/pids-4242.json"])).unwrap(), (4242, "/x/run/pids-4242.json".to_string()));
+        assert!(reap_args(&a(&["4242"])).is_err());
+        assert!(reap_args(&a(&["0", "/f"])).is_err());
+        assert!(reap_args(&a(&["x", "/f"])).is_err());
+        assert_eq!(unix_command("reap", &a(&[])), 2, "bad arguments");
+        assert_eq!(unix_command("install-lock", &a(&["--fd", "9"])), 2, "no --lock-dir");
+        assert!(!USAGE.contains("reap") && !USAGE.contains("install-lock"), "hidden from the usage text");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(unix_command("reap", &a(&["4242", "/f"])), 2, "only on macOS");
+    }
+
+    #[test]
     fn t4_6_ship_without_the_flag_is_refused() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(ship_args(&a(&["34"])).unwrap_err().starts_with("refused"));
         assert!(ship_args(&a(&["--asked-by-hugh"])).is_err());
         assert_eq!(ship_args(&a(&["34", "--asked-by-hugh"])).unwrap(), json!({ "card": 34, "asked_by_hugh": true }));
+    }
+}
+
+/// `kb search <words> [--card n] [--limit n]`: the words are everything else, in order.
+fn search_args(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut words = Vec::new();
+    let (mut card, mut limit) = (None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--card" => card = Some(it.next().and_then(|v| v.parse::<i64>().ok()).ok_or("--card needs a card number")?),
+            "--limit" => limit = Some(it.next().and_then(|v| v.parse::<i64>().ok()).ok_or("--limit needs a number")?),
+            w => words.push(w.to_string()),
+        }
+    }
+    if words.is_empty() {
+        return Err("search needs the words to find".into());
+    }
+    Ok(json!({ "query": words.join(" "), "card": card, "limit": limit }))
+}
+
+#[cfg(test)]
+mod search_tests {
+    #[test]
+    fn search_takes_the_words_and_its_options() {
+        let a = |s: &str| s.split(' ').map(str::to_string).collect::<Vec<_>>();
+        let v = super::search_args(&a("invoice code --card 34 --limit 50")).unwrap();
+        assert_eq!(v, serde_json::json!({ "query": "invoice code", "card": 34, "limit": 50 }));
+        assert!(super::search_args(&a("--card 3")).is_err());
+        assert!(super::search_args(&a("x --card")).is_err());
+    }
+
+    #[test]
+    fn kb_router_sends_text_or_reads_replies() {
+        let a = |s: &str| s.split(' ').map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(super::router_args(&a("what is stuck?")).unwrap(), serde_json::json!({ "text": "what is stuck?" }));
+        assert_eq!(super::router_args(&a("--replies")).unwrap(), serde_json::json!({ "replies": 1 }));
+        assert_eq!(super::router_args(&a("--replies 3")).unwrap(), serde_json::json!({ "replies": 3 }));
+        assert!(super::router_args(&a("--replies x")).is_err());
+        assert!(super::router_args(&[]).is_err());
+        assert!(super::USAGE.contains("kb router"));
     }
 }

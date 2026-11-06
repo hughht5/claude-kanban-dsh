@@ -1,0 +1,37 @@
+/* Human test review (card #102): the review bar under the panel's header, the Human test box at the top of the details, the fail-mode line over the message box, and the pending-Pass banner (bottom left, over the
+   details, so it never covers the message box). */
+.panel.has-rbar{grid-template-rows:auto auto minmax(0,1fr) auto}
+.rbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px 8px 16px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--warn) 7%,var(--panel));min-width:0;outline:none}
+.rbar:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
+.rbar .ht-pos{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.rbar .ht-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.rbar .ht-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}
+.rbar .btn{padding:5px 12px;font-size:13px}
+.rbar .ht-pass{background:var(--ok)}
+.rbar .ht-fail{color:var(--bad);border-color:var(--bad)}
+.rbar kbd{font-family:var(--mono);font-size:10.5px;border:1px solid currentColor;border-radius:3px;padding:0 4px;margin-left:4px;opacity:.75}
+.rbar .ht-ask{font-weight:600;color:var(--warn)}
+.rbar .ht-wait{font-family:var(--mono);font-size:12.5px;color:var(--info)}
+.rbar .ht-done{font-weight:600;color:var(--ok)}
+.rbar .ht-why{font-size:12px;color:var(--muted)}
+.rbar .ht-keys{flex-basis:100%;font-size:11.5px;color:var(--muted)}
+@media (min-width:1100px){.rbar .ht-keys{flex-basis:auto}}
+
+.htbox{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.htbox h4{margin:6px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.htbox dl{grid-template-columns:90px 1fr}
+.htbox .ht-v{font-weight:600}
+.htbox .ht-v.test-passed{color:var(--ok)} .htbox .ht-v.test-failed{color:var(--bad)} .htbox .ht-v.test-unclear{color:var(--warn)} .htbox .ht-v.test-needed{color:var(--muted)}
+.htbox .ht-steps{font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.htbox .ht-steps img.shot{max-width:100%;cursor:zoom-in;border:1px solid var(--line);border-radius:4px}
+.htbox .ht-steps pre{overflow-x:auto}
+.chip.test-needed{color:var(--muted);border-style:dashed}
+
+.compose.ht-failing{box-shadow:inset 0 2px 0 var(--bad)}
+.ht-failrow{flex:1 0 100%;font-size:12.5px;color:var(--bad);padding:2px 0 4px}
+
+.ht-pending{position:fixed;left:28px;bottom:44px;z-index:40;display:flex;flex-direction:column;gap:6px;width:min(420px,calc(100vw - 56px));
+  background:var(--panel);border:1px solid var(--info);border-radius:8px;padding:10px 12px;box-shadow:0 10px 30px rgba(0,0,0,.25);font-size:13px}
+.ht-pending .ht-prow{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.ht-pending .ht-prow span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ht-pending .ht-phint{font-size:11.5px;color:var(--muted)}

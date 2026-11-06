@@ -151,7 +151,7 @@ fn last_at_before(f: &mut std::fs::File, start: u64) -> Option<String> {
 }
 
 pub fn config_dir(account: &str) -> PathBuf {
-    let home = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default();
+    let home = kanban_store::home_var().unwrap_or_default();
     if account == "account2" {
         home.join(".claude-max2")
     } else {
@@ -159,20 +159,39 @@ pub fn config_dir(account: &str) -> PathBuf {
     }
 }
 
+/// The folders under an account's `projects` folder, one per working folder.
+fn project_dirs(account: &str) -> Vec<PathBuf> {
+    std::fs::read_dir(config_dir(account).join("projects")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default()
+}
+
 /// Finds `<id>.jsonl` under the account's projects folder, then under the other account's.
 pub fn find(account: &str, id: &str) -> Option<PathBuf> {
     let other = if account == "account2" { "main" } else { "account2" };
     for acct in [account, other] {
-        let projects = config_dir(acct).join("projects");
-        let Ok(dirs) = std::fs::read_dir(&projects) else { continue };
-        for d in dirs.flatten() {
-            let p = d.path().join(format!("{id}.jsonl"));
+        for d in project_dirs(acct) {
+            let p = d.join(format!("{id}.jsonl"));
             if p.is_file() {
                 return Some(p);
             }
         }
     }
     None
+}
+
+/// Every main transcript under an account's projects folder, by session id: one listing, for
+/// looking up many ids at once (the search index's sweep).
+pub fn all_by_id(account: &str) -> std::collections::HashMap<String, PathBuf> {
+    let mut out = std::collections::HashMap::new();
+    for d in project_dirs(account) {
+        let Ok(files) = std::fs::read_dir(&d) else { continue };
+        for f in files.flatten() {
+            let name = f.file_name().to_string_lossy().to_string();
+            if let Some(id) = name.strip_suffix(".jsonl") {
+                out.entry(id.to_string()).or_insert_with(|| f.path());
+            }
+        }
+    }
+    out
 }
 
 /// The working folder the transcript's session ran in, from its first entry that records one.
@@ -201,6 +220,9 @@ pub struct Subagent {
     pub tool_id: Option<String>,
     /// Claude Code marks it finished once it has reported back.
     pub finished: bool,
+    /// Someone stopped it (Claude Code's `stoppedByUser`): it won't report, and nothing waits on it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stopped: bool,
     /// Its first line's time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started: Option<String>,
@@ -255,8 +277,16 @@ fn first_at(path: &Path) -> Option<String> {
     }
 }
 
-/// The session's subagents, oldest first. One with no transcript yet is left out.
-pub fn subagents(main: &Path) -> Vec<Subagent> {
+/// A subagent's type from its `.meta.json`: its name, else its agent type, else "subagent".
+pub fn agent_type(meta: &Value) -> String {
+    let s = |k: &str| meta.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_string);
+    s("name").or(s("agentType")).unwrap_or_else(|| "subagent".into())
+}
+
+/// The session's subagents as Claude Code records them: each one's id, transcript and
+/// `.meta.json`, without reading the transcripts. One with no transcript yet is left out. The
+/// panel's list (`subagents`) and the search index both use it, so they see the same ones.
+pub fn subagent_files(main: &Path) -> Vec<(String, PathBuf, Value)> {
     let Ok(dir) = std::fs::read_dir(subagents_dir(main)) else { return vec![] };
     let mut out = Vec::new();
     for d in dir.flatten() {
@@ -264,14 +294,24 @@ pub fn subagents(main: &Path) -> Vec<Subagent> {
         let Some(id) = name.strip_prefix("agent-").and_then(|n| n.strip_suffix(".meta.json")) else { continue };
         let Some(path) = subagent_path(main, id) else { continue };
         let meta: Value = std::fs::read_to_string(d.path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        out.push((id.to_string(), path, meta));
+    }
+    out
+}
+
+/// The session's subagents, oldest first. One with no transcript yet is left out.
+pub fn subagents(main: &Path) -> Vec<Subagent> {
+    let mut out = Vec::new();
+    for (id, path, meta) in subagent_files(main) {
         let s = |k: &str| meta.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_string);
         let updated = std::fs::metadata(&path).and_then(|m| m.modified()).ok().map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
         out.push(Subagent {
-            id: id.to_string(),
-            agent_type: s("name").or(s("agentType")).unwrap_or_else(|| "subagent".into()),
+            agent_type: agent_type(&meta),
+            id,
             description: s("description").unwrap_or_default(),
             tool_id: s("toolUseId"),
             finished: meta.get("finished").and_then(Value::as_bool).unwrap_or(false),
+            stopped: meta.get("stoppedByUser").and_then(Value::as_bool).unwrap_or(false),
             started: first_at(&path),
             updated,
         });
@@ -784,6 +824,423 @@ pub fn parse_line_in(line: &str, sub: bool) -> Vec<Entry> {
     out
 }
 
+/// The longest text the board shows for what a card waits on Hugh for, in characters.
+pub const ASK_MAX: usize = 300;
+
+/// `s` on one line (runs of whitespace as one space), cut to at most `max` characters on a
+/// word boundary, ending with "…" when cut.
+pub fn cut_words(s: &str, max: usize) -> String {
+    let one = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() <= max || max == 0 {
+        return one;
+    }
+    // Room for the "…".
+    let keep: String = one.chars().take(max - 1).collect();
+    let next = one.chars().nth(max - 1);
+    let cut = if next == Some(' ') {
+        keep.as_str()
+    } else {
+        // Back to the last space, unless the text has none (one long word).
+        keep.rfind(' ').map_or(keep.as_str(), |i| &keep[..i])
+    };
+    format!("{}…", cut.trim_end())
+}
+
+/// The last `bytes` of the file at `path`, from its first whole line (the whole file when it
+/// is shorter).
+fn tail_text(path: &Path, bytes: u64) -> Option<String> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = len.saturating_sub(bytes);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    Some(if start == 0 { text } else { text.split_once('\n').map_or(String::new(), |(_, rest)| rest.to_string()) })
+}
+
+/// How much of a transcript's end the board reads for a reply or an open tool call.
+const TAIL: u64 = 256 * 1024;
+
+/// The text blocks of an assistant line, joined; None for any other line or one with no text.
+fn assistant_text(v: &Value) -> Option<String> {
+    if v.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    let blocks = v.pointer("/message/content")?.as_array()?;
+    let text: Vec<&str> = blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|b| b.get("text").and_then(Value::as_str))
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+    (!text.is_empty()).then(|| text.join("\n\n"))
+}
+
+/// A user line that is a prompt (typed text, an interrupt note), not only tool results.
+fn is_prompt(v: &Value) -> bool {
+    if v.get("type").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    match v.pointer("/message/content") {
+        Some(Value::String(_)) => true,
+        Some(Value::Array(b)) => !b.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("tool_result")),
+        _ => false,
+    }
+}
+
+/// The main conversation's last reply in `lines`: the text of its last assistant message
+/// (Claude Code writes one line per block, so text lines of the same message are joined).
+/// Only the latest turn counts: a prompt before any text means that turn wrote none (None).
+pub fn last_reply<'a>(lines: impl DoubleEndedIterator<Item = &'a str>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut id: Option<String> = None;
+    for line in lines.rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if v.get("isSidechain").and_then(Value::as_bool) == Some(true) || v.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
+        if kind != "assistant" && kind != "user" {
+            continue;
+        }
+        if is_prompt(&v) {
+            break;
+        }
+        let this = v.pointer("/message/id").and_then(Value::as_str).map(str::to_string);
+        if parts.is_empty() {
+            if let Some(t) = assistant_text(&v) {
+                parts.push(t);
+                id = this;
+            }
+            continue;
+        }
+        // Earlier blocks of the same message (text kept, thinking passed over); anything else
+        // ends it.
+        let same = id.is_some() && this == id;
+        match assistant_text(&v) {
+            Some(t) if same => parts.push(t),
+            None if same => {}
+            _ => break,
+        }
+    }
+    parts.reverse();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
+/// `last_reply` for the transcript at `path`, reading only its last 256 KB.
+pub fn last_reply_in(path: &Path) -> Option<String> {
+    let text = tail_text(path, TAIL)?;
+    last_reply(text.lines())
+}
+
+/// The main conversation's last `n` assistant texts in `lines`, oldest first (card #119: the
+/// Router's replies for `kb router --replies`). Each message's text blocks are joined.
+pub fn recent_replies_of<'a>(lines: impl Iterator<Item = &'a str>, n: usize) -> Vec<String> {
+    let mut out: Vec<(Option<String>, String)> = Vec::new();
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if v.get("isSidechain").and_then(Value::as_bool) == Some(true) || v.get("type").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(t) = assistant_text(&v) else { continue };
+        let id = v.pointer("/message/id").and_then(Value::as_str).map(str::to_string);
+        match out.last_mut() {
+            Some((last, text)) if id.is_some() && *last == id => {
+                text.push_str("\n\n");
+                text.push_str(&t);
+            }
+            _ => out.push((id, t)),
+        }
+    }
+    let skip = out.len().saturating_sub(n);
+    out.into_iter().skip(skip).map(|(_, t)| t).collect()
+}
+
+/// `recent_replies_of` for the transcript at `path`, reading only its last 256 KB.
+pub fn recent_replies(path: &Path, n: usize) -> Vec<String> {
+    tail_text(path, TAIL).map(|t| recent_replies_of(t.lines(), n)).unwrap_or_default()
+}
+
+/// A reply as the card face reads it: fenced code blocks, images, tables and rules taken out,
+/// links as their text, and Markdown's marks (headings, quotes, list bullets, emphasis, inline
+/// code) dropped. Paragraphs stay apart by a blank line.
+pub fn plain_reply(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut fence: Option<&str> = None;
+    for raw in text.lines() {
+        let t = raw.trim();
+        if let Some(f) = fence {
+            if t.starts_with(f) {
+                fence = None;
+            }
+            continue;
+        }
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = Some(&t[..3]);
+            out.push(String::new());
+            continue;
+        }
+        // A table row, or a rule.
+        if t.starts_with('|') || (t.len() >= 3 && t.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '))) {
+            out.push(String::new());
+            continue;
+        }
+        // A heading's "# " to "###### ", but not "#108".
+        let hashes = t.chars().take_while(|&c| c == '#').count();
+        let mut l = if (1..=6).contains(&hashes) && t[hashes..].starts_with(' ') { t[hashes..].trim_start() } else { t };
+        while let Some(rest) = l.strip_prefix('>') {
+            l = rest.trim_start();
+        }
+        for bullet in ["- ", "* ", "+ "] {
+            if let Some(rest) = l.strip_prefix(bullet) {
+                l = rest;
+            }
+        }
+        let digits = l.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 && (l[digits..].starts_with(". ") || l[digits..].starts_with(") ")) {
+            l = &l[digits + 2..];
+        }
+        out.push(inline_plain(l));
+    }
+    // Paragraphs: lines joined, blank lines between.
+    let mut paras: Vec<String> = Vec::new();
+    let mut cur: Vec<String> = Vec::new();
+    for l in out {
+        if l.trim().is_empty() {
+            if !cur.is_empty() {
+                paras.push(cur.join(" "));
+                cur.clear();
+            }
+        } else {
+            cur.push(l.trim().to_string());
+        }
+    }
+    if !cur.is_empty() {
+        paras.push(cur.join(" "));
+    }
+    paras.join("\n\n")
+}
+
+/// One line without images, with links as their text and no emphasis or code marks.
+fn inline_plain(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    // For a `[` at `open`: the index of its `]`, and just past the `(...)` after it.
+    let link_end = |open: usize| -> Option<(usize, usize)> {
+        let close = (open + 1..chars.len()).find(|&j| chars[j] == ']')?;
+        if chars.get(close + 1) != Some(&'(') {
+            return None;
+        }
+        let end = (close + 2..chars.len()).find(|&j| chars[j] == ')')?;
+        Some((close, end + 1))
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '!' && chars.get(i + 1) == Some(&'[') {
+            if let Some((_, end)) = link_end(i + 1) {
+                i = end;
+                continue;
+            }
+        }
+        if c == '[' {
+            if let Some((close, end)) = link_end(i) {
+                out.extend(&chars[i + 1..close]);
+                i = end;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    unemphasise(&out)
+}
+
+/// `s` with paired emphasis and code marks taken off (`**x**`, `__x__`, `~~x~~`, `` `x` ``,
+/// `*x*`, `_x_`). A lone "*", "~" or "_" stays ("~/build/*.tmp", "snake_case").
+fn unemphasise(s: &str) -> String {
+    static RES: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
+    let res = RES.get_or_init(|| {
+        [
+            r"`([^`\n]+)`",
+            r"\*\*([^*\s](?:[^*\n]*[^*\s])?)\*\*",
+            r"\b__([^_\s](?:[^_\n]*[^_\s])?)__\b",
+            r"~~([^~\s](?:[^~\n]*[^~\s])?)~~",
+            r"\*([^*\s](?:[^*\n]*[^*\s])?)\*",
+            r"\b_([^_\s](?:[^_\n]*[^_\s])?)_\b",
+        ]
+        .iter()
+        .map(|p| regex::Regex::new(p).expect("emphasis"))
+        .collect()
+    });
+    let mut out = s.to_string();
+    for re in res {
+        out = re.replace_all(&out, "$1").into_owned();
+    }
+    out
+}
+
+/// What a reply could ask Hugh, kept per card so the board never reads a transcript to say it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReplyParts {
+    /// The question its last paragraph asks: the last sentence there that ends with "?".
+    pub question: Option<String>,
+    /// Its last paragraph, when it says a plan is ready ("plan ready" or "plan is ready").
+    pub plan: Option<String>,
+}
+
+/// The parts of a reply that ask Hugh something (`ReplyParts`), from its text as written.
+pub fn reply_parts(text: &str) -> ReplyParts {
+    let plain = plain_reply(text);
+    let Some(last) = plain.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).last() else { return ReplyParts::default() };
+    let lower = plain.to_lowercase();
+    let plan = (lower.contains("plan ready") || lower.contains("plan is ready")).then(|| last.to_string());
+    ReplyParts { question: last_question(last), plan }
+}
+
+/// The last sentence of `para` that ends with "?" (closing quotes or brackets after it allowed).
+fn last_question(para: &str) -> Option<String> {
+    let mut sentences: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let chars: Vec<char> = para.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        cur.push(c);
+        if matches!(c, '.' | '!' | '?') && chars.get(i + 1).map_or(true, |n| n.is_whitespace()) {
+            sentences.push(std::mem::take(&mut cur));
+        }
+    }
+    sentences.push(cur);
+    sentences
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.trim_end_matches(|c: char| matches!(c, '"' | '\'' | ')' | ']' | '”' | '’')).ends_with('?'))
+        .last()
+}
+
+/// What an unread reply asks Hugh, for the board: ("plan", its last paragraph) when the card
+/// is in Planning and the reply says the plan is ready, else ("reply", its question) when its
+/// last paragraph asks one. None for a reply that only tells him something. At most `ASK_MAX`
+/// characters.
+pub fn ask_of(parts: &ReplyParts, planning: bool) -> Option<(&'static str, String)> {
+    let (kind, text) = match (&parts.plan, &parts.question) {
+        (Some(p), _) if planning => ("plan", p),
+        (_, Some(q)) => ("reply", q),
+        _ => return None,
+    };
+    Some((kind, cut_words(text, ASK_MAX)))
+}
+
+/// `ask_of` for a reply's text as written.
+pub fn reply_ask(text: &str, planning: bool) -> Option<(&'static str, String)> {
+    ask_of(&reply_parts(text), planning)
+}
+
+/// The tool a permission prompt's message names ("Claude needs your permission to use Bash").
+pub fn permission_tool(message: &str) -> Option<String> {
+    let i = message.find("permission to use ")? + "permission to use ".len();
+    let name = message[i..].split_whitespace().next()?.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// The last call to `tool` in `lines` that has no result yet: its `tool_use` id, and
+/// "<Tool>: <key input>" (the tool alone when it has no input worth showing). `sub` keeps
+/// sidechain lines, for a subagent's own transcript.
+pub fn open_call<'a>(lines: impl Iterator<Item = &'a str>, tool: &str, sub: bool) -> Option<(String, String)> {
+    let mut calls: Vec<(String, String)> = Vec::new();
+    let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if !sub && v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else { continue };
+        for b in blocks {
+            let id = b.get("id").or(b.get("tool_use_id")).and_then(Value::as_str).unwrap_or("").to_string();
+            match b.get("type").and_then(Value::as_str) {
+                Some("tool_use") if b.get("name").and_then(Value::as_str) == Some(tool) => {
+                    let text = match b.get("input").and_then(|i| key_input(tool, i)) {
+                        Some(k) => format!("{tool}: {k}"),
+                        None => tool.to_string(),
+                    };
+                    calls.push((id, text));
+                }
+                Some("tool_result") => {
+                    done.insert(id);
+                }
+                _ => {}
+            }
+        }
+    }
+    calls.into_iter().rev().find(|(id, _)| !done.contains(id))
+}
+
+/// `open_call` for the transcript at `path` (its last 256 KB).
+pub fn open_call_in(path: &Path, tool: &str, sub: bool) -> Option<(String, String)> {
+    let text = tail_text(path, TAIL)?;
+    open_call(text.lines(), tool, sub)
+}
+
+/// The call a permission prompt waits on (`prompt_call`): its `tool_use` id, what it asks to
+/// run, and the transcript it is in (`sub`: a subagent's).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenCall {
+    pub id: String,
+    pub text: String,
+    pub path: PathBuf,
+    pub sub: bool,
+}
+
+/// What a permission prompt asks to run: the last open call to `tool` in the main transcript,
+/// else in the newest subagent transcript (the one written last).
+pub fn prompt_call(main: &Path, tool: &str) -> Option<OpenCall> {
+    if let Some((id, text)) = open_call_in(main, tool, false) {
+        return Some(OpenCall { id, text, path: main.to_path_buf(), sub: false });
+    }
+    let dir = std::fs::read_dir(subagents_dir(main)).ok()?;
+    let newest = dir
+        .flatten()
+        .map(|d| d.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p)))
+        .max_by_key(|(t, _)| *t)?;
+    let (id, text) = open_call_in(&newest.1, tool, true)?;
+    Some(OpenCall { id, text, path: newest.1, sub: true })
+}
+
+/// Whether the call `id` in `lines` has gone past its permission prompt: a result for it, or
+/// a later assistant line of another message (Claude went on). The calls of one message are
+/// written one line each, so a parallel call after it doesn't count. `sub` as `open_call`.
+pub fn call_settled<'a>(lines: impl Iterator<Item = &'a str>, id: &str, sub: bool) -> bool {
+    let mut message: Option<Option<String>> = None;
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if !sub && v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let blocks = v.pointer("/message/content").and_then(Value::as_array);
+        let has = |kind: &str, key: &str| blocks.is_some_and(|b| b.iter().any(|b| b.get("type").and_then(Value::as_str) == Some(kind) && b.get(key).and_then(Value::as_str) == Some(id)));
+        if has("tool_result", "tool_use_id") {
+            return true;
+        }
+        let this = v.pointer("/message/id").and_then(Value::as_str).map(str::to_string);
+        if v.get("type").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        match &message {
+            None if has("tool_use", "id") => message = Some(this),
+            Some(m) if this.is_none() || *m != this => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `call_settled` for the transcript at `path` (its last 256 KB).
+pub fn call_settled_in(path: &Path, id: &str, sub: bool) -> bool {
+    tail_text(path, TAIL).is_some_and(|t| call_settled(t.lines(), id, sub))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,5 +1563,148 @@ mod tests {
         assert_eq!((parse_line(&quoting)[0].kind, parse_line(&quoting)[0].text.as_str()), ("task", "Agent \"x\" finished"));
         let typed = serde_json::json!({ "type": "user", "message": { "content": "what does <task-notification> mean?" } }).to_string();
         assert_eq!(parse_line(&typed)[0].kind, "user");
+    }
+
+    #[test]
+    fn a_reply_asks_only_when_it_ends_with_a_question_or_a_plan_is_ready() {
+        // A statement gives nothing.
+        assert_eq!(reply_ask("Done. The tests pass and the card is in Human test.", false), None);
+        // A question in an earlier paragraph doesn't count.
+        assert_eq!(reply_ask("Should I? I did.\n\nAll done.", false), None);
+        // A final question gives that sentence.
+        assert_eq!(
+            reply_ask("I built it.\n\nThe tests pass. Shall I install it in the test app? Say so.", false),
+            Some(("reply", "Shall I install it in the test app?".to_string()))
+        );
+        // Code blocks, images, tables and Markdown marks are stripped.
+        let md = "## Result\n\n```rust\nfn main() { println!(\"Is this code?\"); }\n```\n\n| a | b? |\n|---|---|\n| 1 | 2? |\n\n![shot](C:/x/shot.png)\n\n> **Next:** should I use `dsh-agents` as the [base](https://x.test/b)?";
+        assert_eq!(reply_ask(md, false), Some(("reply", "Next: should I use dsh-agents as the base?".to_string())));
+        assert_eq!(plain_reply("- one\n- two\n\n1. three\n\n---\n\n__bold__ snake_case"), "one two\n\nthree\n\nbold snake_case");
+        // Plan ready, in Planning: its last paragraph; outside Planning, only a question counts.
+        let plan = "**Plan ready** (revision 3).\n\nIt adds one field to Live and a filter.";
+        assert_eq!(reply_ask(plan, true), Some(("plan", "It adds one field to Live and a filter.".to_string())));
+        assert_eq!(reply_ask(plan, false), None);
+        assert_eq!(reply_ask("The plan is ready.\n\nBuild it?", true), Some(("plan", "Build it?".to_string())));
+        assert_eq!(reply_ask("The plan is ready.\n\nBuild it?", false), Some(("reply", "Build it?".to_string())));
+        // A long question is cut to 300 characters on a word boundary, multi-byte safe.
+        let long = format!("{}?", "é word ".repeat(80));
+        let (_, t) = reply_ask(&long, false).unwrap();
+        assert!(t.chars().count() <= ASK_MAX && t.ends_with('…'), "{t}");
+        assert!(!t.trim_end_matches('…').ends_with(' ') && long.starts_with(t.trim_end_matches('…')));
+        assert_eq!(cut_words("a\n b   c", 10), "a b c");
+        assert_eq!(cut_words("abcdefghij", 5), "abcd…");
+        assert_eq!(cut_words("ab cd ef", 6), "ab cd…");
+    }
+
+    #[test]
+    fn the_last_reply_joins_its_messages_text_lines() {
+        let text = |id: &str, t: &str| serde_json::json!({ "type": "assistant", "message": { "id": id, "content": [{ "type": "text", "text": t }] } }).to_string();
+        let think = serde_json::json!({ "type": "assistant", "message": { "id": "m2", "content": [{ "type": "thinking", "thinking": "" }] } }).to_string();
+        let lines = [
+            text("m1", "Old reply?"),
+            call("t1", "Bash", r#"{"command":"ls"}"#),
+            result("t1", r#""ok""#, false),
+            text("m2", "First part."),
+            think,
+            text("m2", "Shall I go on?"),
+            r#"{"type":"system","subtype":"turn_duration","timestamp":"t9"}"#.to_string(),
+        ];
+        assert_eq!(last_reply(lines.iter().map(String::as_str)).as_deref(), Some("First part.\n\nShall I go on?"));
+        assert_eq!(last_reply([lines[1].as_str()].into_iter()), None);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.jsonl");
+        std::fs::write(&p, lines.join("\n") + "\n").unwrap();
+        assert_eq!(last_reply_in(&p).as_deref(), Some("First part.\n\nShall I go on?"));
+    }
+
+    #[test]
+    fn the_last_reply_is_only_the_latest_turns() {
+        let text = |t: &str| serde_json::json!({ "type": "assistant", "message": { "id": "m1", "content": [{ "type": "text", "text": t }] } }).to_string();
+        let prompt = serde_json::json!({ "type": "user", "message": { "content": "Go on" } }).to_string();
+        // The latest turn ran a tool and wrote no text: no reply, not the turn before's.
+        let lines = [text("Old reply?"), prompt.clone(), call("t1", "Bash", r#"{"command":"ls"}"#), result("t1", r#""ok""#, false)];
+        assert_eq!(last_reply(lines.iter().map(String::as_str)), None);
+        // A prompt and nothing else after the old reply: none either.
+        assert_eq!(last_reply([text("Old reply?"), prompt.clone()].iter().map(String::as_str)), None);
+        // A prompt sent as text blocks counts too; a reply after it is the one.
+        let blocks = serde_json::json!({ "type": "user", "message": { "content": [{ "type": "text", "text": "Go" }] } }).to_string();
+        assert_eq!(last_reply([text("Old?"), blocks, text("New.")].iter().map(String::as_str)).as_deref(), Some("New."));
+    }
+
+    #[test]
+    fn plain_text_keeps_lone_marks() {
+        assert_eq!(plain_reply("See #108 and ~/build/*.tmp"), "See #108 and ~/build/*.tmp");
+        assert_eq!(plain_reply("# Title\n\n###### Small"), "Title\n\nSmall");
+        assert_eq!(plain_reply("**bold** *it* _it_ `code` ~~gone~~ a * b snake_case_name"), "bold it it code gone a * b snake_case_name");
+    }
+
+    #[test]
+    fn a_permission_prompt_finds_its_open_call() {
+        assert_eq!(permission_tool("Claude needs your permission to use Bash").as_deref(), Some("Bash"));
+        assert_eq!(permission_tool("Claude needs your permission to use mcp__kanban__kanban_move_card.").as_deref(), Some("mcp__kanban__kanban_move_card"));
+        assert_eq!(permission_tool("Claude is waiting for your input"), None);
+        let par = |calls: &[(&str, &str, &str)]| {
+            let blocks: Vec<Value> = calls.iter().map(|(id, n, i)| serde_json::json!({ "type": "tool_use", "id": id, "name": n, "input": serde_json::from_str::<Value>(i).unwrap() })).collect();
+            serde_json::json!({ "type": "assistant", "message": { "content": blocks } }).to_string()
+        };
+        let text = |l: Option<(String, String)>| l.map(|(_, t)| t);
+        // Parallel calls: a done Bash, the open Bash asking, then another tool last.
+        let lines = [
+            par(&[("a", "Bash", r#"{"command":"ls"}"#), ("b", "Bash", r#"{"command":"cargo test --workspace"}"#), ("c", "Read", r#"{"file_path":"x.rs"}"#)]),
+            result("a", r#""ok""#, false),
+            result("c", r#""text""#, false),
+        ];
+        assert_eq!(open_call(lines.iter().map(String::as_str), "Bash", false), Some(("b".to_string(), "Bash: cargo test --workspace".to_string())));
+        // Two open calls to the tool: the last one is the one asking.
+        let two = [call("p", "Bash", r#"{"command":"sleep 100"}"#), call("q", "Bash", r#"{"command":"git push"}"#)];
+        assert_eq!(text(open_call(two.iter().map(String::as_str), "Bash", false)).as_deref(), Some("Bash: git push"));
+        // No open call to that tool.
+        assert_eq!(open_call(lines.iter().map(String::as_str), "Write", false), None);
+        assert_eq!(text(open_call(lines[..1].iter().map(String::as_str), "Read", false)).as_deref(), Some("Read: x.rs"));
+        // A subagent's prompt: nothing open in the main transcript, so its newest subagent's.
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        std::fs::write(&main, format!("{}\n{}\n{}\n", lines[0], lines[1], result("b", r#""ok""#, false))).unwrap();
+        assert_eq!(prompt_call(&main, "Bash"), None);
+        let subs = subagents_dir(&main);
+        std::fs::create_dir_all(&subs).unwrap();
+        let side = |l: String| l.replacen("{", r#"{"isSidechain":true,"#, 1);
+        std::fs::write(subs.join("agent-old.jsonl"), side(call("o", "Bash", r#"{"command":"old"}"#)) + "\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(subs.join("agent-new.jsonl"), side(call("n", "Bash", r#"{"command":"git status"}"#)) + "\n").unwrap();
+        let found = prompt_call(&main, "Bash").unwrap();
+        assert_eq!((found.id.as_str(), found.text.as_str(), found.sub), ("n", "Bash: git status", true));
+        assert_eq!(found.path, subs.join("agent-new.jsonl"));
+        // The main reader passes over sidechain lines.
+        assert_eq!(open_call([side(call("z", "Bash", r#"{"command":"x"}"#)).as_str()].into_iter(), "Bash", false), None);
+    }
+
+    #[test]
+    fn a_prompted_call_settles_on_its_result_or_a_later_message() {
+        let msg = |id: &str, block: Value| serde_json::json!({ "type": "assistant", "message": { "id": id, "content": [block] } }).to_string();
+        let tool = |id: &str| serde_json::json!({ "type": "tool_use", "id": id, "name": "Bash", "input": {} });
+        let asking = msg("m1", tool("b"));
+        // Waiting: the call alone, or with a parallel call of the same message after it.
+        assert!(!call_settled([asking.as_str()].into_iter(), "b", false));
+        assert!(!call_settled([asking.clone(), msg("m1", tool("c"))].iter().map(String::as_str), "b", false));
+        // Its result came: approved (or turned down) and run.
+        assert!(call_settled([asking.clone(), result("b", r#""ok""#, false)].iter().map(String::as_str), "b", false));
+        // Claude went on with another message.
+        let next = msg("m2", serde_json::json!({ "type": "text", "text": "Done." }));
+        assert!(call_settled([asking.clone(), next.clone()].iter().map(String::as_str), "b", false));
+        // Another call's result, or a subagent's line in the main transcript, isn't it.
+        assert!(!call_settled([asking.clone(), result("x", r#""ok""#, false)].iter().map(String::as_str), "b", false));
+        let side = next.replacen("{", r#"{"isSidechain":true,"#, 1);
+        assert!(!call_settled([asking.clone(), side.clone()].iter().map(String::as_str), "b", false));
+        // In a subagent's own transcript its lines count.
+        let sub_ask = asking.replacen("{", r#"{"isSidechain":true,"#, 1);
+        assert!(call_settled([sub_ask, side].iter().map(String::as_str), "b", true));
+        // From a file.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.jsonl");
+        std::fs::write(&p, format!("{asking}\n")).unwrap();
+        assert!(!call_settled_in(&p, "b", false));
+        std::fs::write(&p, format!("{asking}\n{}\n", result("b", r#""ok""#, false))).unwrap();
+        assert!(call_settled_in(&p, "b", false));
     }
 }

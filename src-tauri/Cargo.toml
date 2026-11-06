@@ -12,17 +12,37 @@ chrono.workspace = true
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 kanban-store = { path = "../crates/store" }
+kanban-unix = { path = "../crates/unix" }
 serde.workspace = true
 serde_json.workspace = true
+regex.workspace = true
 chrono.workspace = true
 portable-pty = "0.8"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 tauri-plugin-notification = "2"
-tauri-winrt-notification = "0.8"
 tauri-plugin-single-instance = "2"
 vt100 = "0.16"
+
+# Used only by src/platform/windows.rs (card #114).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+tauri-winrt-notification = "0.8"
+
+# Used only by src/platform/macos.rs (card #117), at the versions tao and the notification plugin
+# already use.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+signal-hook = "0.3"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+mac-notification-sys = "0.6"
+
+[features]
+# The Web Inspector in a release build (Safari > Develop). scripts/install.sh passes it for the
+# test channel on macOS only (card #117).
+mac-devtools = ["tauri/devtools"]
 
 [dev-dependencies]
 tempfile.workspace = true

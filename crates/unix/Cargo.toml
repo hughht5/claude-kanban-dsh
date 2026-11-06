@@ -1,0 +1,17 @@
+[package]
+name = "kanban-unix"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The macOS side's own logic (card #117): no Tauri, no SQLite, so it can be checked for macOS on any machine."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

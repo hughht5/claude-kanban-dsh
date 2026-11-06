@@ -31,8 +31,11 @@ pub fn start(app: AppHandle, dir: PathBuf) -> Result<ApiInfo, String> {
         .or_else(|| TcpListener::bind(("127.0.0.1", 0)).ok())
         .ok_or("no free port for the app's local API")?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let kb_exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("kb.exe"))).filter(|p| p.is_file());
-    std::fs::write(dir.join("api.json"), json!({ "port": port, "token": token }).to_string()).map_err(|e| e.to_string())?;
+    let kb_exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(format!("kb{}", std::env::consts::EXE_SUFFIX)))).filter(|p| p.is_file());
+    // The pid lets scripts/install.sh quit exactly this app (card #117); the file is private,
+    // since it holds the token.
+    let api = json!({ "port": port, "token": token, "pid": std::process::id() }).to_string();
+    crate::platform::write_private(&dir.join("api.json"), api.as_bytes()).map_err(|e| e.to_string())?;
     let info = ApiInfo { port, token: token.clone(), kb_exe };
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -107,6 +110,9 @@ fn serve(app: &AppHandle, token: &str, stream: TcpStream) -> std::io::Result<()>
     }
     let body: Value = serde_json::from_slice(&req.body).unwrap_or(Value::Null);
     match (seg[0], seg.get(2), seg.get(3)) {
+        // A card session's shell call, before it runs: the reply refuses an app subagent's kb or
+        // claude config, and a card-merger's push (cards #100, #96). The other hooks aren't sent it.
+        ("hook", Some(session), Some(&"guard")) => respond(&stream, "200 OK", &crate::guard::guard(app, session, &body)),
         ("hook", Some(session), Some(event)) => {
             dispatch::on_hook(app, session, event, &body);
             respond(&stream, "200 OK", &json!({}))
@@ -139,9 +145,12 @@ Read your card with kanban_get_card and keep it current with kanban_update_card 
 A move of your own card waits until your turn ends. \
 To show Hugh a screenshot in the card's chat (a test passing, the UI you changed), put it in your message as a \
 Markdown image with its full path in forward slashes, for example ![what it shows](C:/path/to/shot.png). \
-Never move a card into Ship it: only Hugh does that.";
+Never move a card into Ship it. Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo.";
 
-const EXTERNAL_INSTRUCTIONS: &str = "Hugh's board, the Claude Kanban DSH desktop app. Read and change cards with the kanban_* card tools, \nand run the cards' Claude Code sessions with kanban_session_*: start (with a first message), send, status, read, \nswitch model or effort, stop, and keys for a prompt a session is stuck on. Starts over Hugh's running-sessions cap wait \nin the queue; never change the cap. Never move a card into Ship it: only Hugh does that.";
+const EXTERNAL_INSTRUCTIONS: &str = "Hugh's board, the Claude Kanban DSH desktop app. Read and change cards with the kanban_* card tools, \nand run the cards' Claude Code sessions with kanban_session_*: start (with a first message), send, status, read, \nswitch model or effort, stop, and keys for a prompt a session is stuck on; kanban_search searches every card's 
+session history. Starts over Hugh's running-sessions cap wait \nin the queue; never change the cap. Never move a card into Ship it. Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo.";
+
+const ROUTER_INSTRUCTIONS: &str = "You are the Router of Hugh's board, the Claude Kanban DSH app (card #119). Your rules are in your system prompt. \nRead the board with kanban_list_cards (compact: true) and one card with kanban_get_card. Pass if_version on every write and move. \nNever move a card into Ship it.";
 
 /// One JSON-RPC message. Notifications (no id) get no reply.
 fn mcp(app: &AppHandle, caller: Option<&str>, msg: &Value) -> Option<Value> {
@@ -152,24 +161,18 @@ fn mcp(app: &AppHandle, caller: Option<&str>, msg: &Value) -> Option<Value> {
             "protocolVersion": msg.pointer("/params/protocolVersion").cloned().unwrap_or(json!("2025-06-18")),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "kanban", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": if caller.is_some() { INSTRUCTIONS } else { EXTERNAL_INSTRUCTIONS },
+            "instructions": match caller { Some(r) if crate::routersession::is_router_row(app, r) => ROUTER_INSTRUCTIONS, Some(_) => INSTRUCTIONS, None => EXTERNAL_INSTRUCTIONS },
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => {
-            let mut list = tools::schemas();
-            // Session control is for callers outside a card session only.
-            if caller.is_none() {
-                if let (Some(a), Some(b)) = (list.as_array_mut(), crate::control::schemas().as_array()) {
-                    a.extend(b.iter().cloned());
-                }
-            }
-            Ok(json!({ "tools": list }))
-        }
+        "tools/list" => Ok(json!({ "tools": match caller { Some(r) if crate::routersession::is_router_row(app, r) => crate::routertools::tool_list(), _ => tool_list(caller.is_some()) } })),
         "tools/call" => {
             let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
             let args = msg.pointer("/params/arguments").cloned().unwrap_or(json!({}));
             // `kb`-only tools aren't offered over MCP, and aren't run if a client asks anyway.
-            let res = if tools::CLI_ONLY.contains(&name) || (caller.is_some() && crate::control::CONTROL.contains(&name)) {
+            let router = caller.is_some_and(|r| crate::routersession::is_router_row(app, r));
+            let res = if router {
+                tools::call(app, caller, name, &args)
+            } else if tools::CLI_ONLY.contains(&name) || (caller.is_some() && crate::control::CONTROL.contains(&name)) {
                 Err(format!("no tool called {name}"))
             } else if crate::control::CONTROL.contains(&name) {
                 crate::control::call(app, name, &args)
@@ -189,6 +192,18 @@ fn mcp(app: &AppHandle, caller: Option<&str>, msg: &Value) -> Option<Value> {
     })
 }
 
+/// The tools a caller is offered. Session control and search (kanban_search, card #110) are
+/// for callers outside a card session only: a card session sees only the card tools.
+fn tool_list(card_session: bool) -> Value {
+    let mut list = tools::schemas();
+    if !card_session {
+        if let (Some(a), Some(b)) = (list.as_array_mut(), crate::control::schemas().as_array()) {
+            a.extend(b.iter().cloned());
+        }
+    }
+    list
+}
+
 fn text_of(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -206,5 +221,26 @@ fn log_request(req: &Request) {
     let line = format!("{} {} {} {}b\n", chrono::Utc::now().to_rfc3339(), req.method, parts.join("/"), req.body.len());
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("api.log")) {
         let _ = f.write_all(line.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(v: &Value) -> Vec<String> {
+        v.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+    }
+
+    /// Search is Hugh's (card #110): a card session's tools/list has no kanban_search, nor any
+    /// session control; the external route and kb get both.
+    #[test]
+    fn card_sessions_are_not_offered_search_or_session_control() {
+        let card = names(&tool_list(true));
+        assert!(!card.iter().any(|n| n == "kanban_search"));
+        assert!(!card.iter().any(|n| crate::control::CONTROL.contains(&n.as_str())));
+        let outside = names(&tool_list(false));
+        assert!(outside.iter().any(|n| n == "kanban_search"));
+        assert!(crate::control::CONTROL.contains(&"kanban_search"));
     }
 }

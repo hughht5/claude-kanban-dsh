@@ -85,12 +85,18 @@ pub fn get_setting(board: State<Board>, key: String) -> CmdResult<Value> {
 #[tauri::command]
 pub fn set_setting(app: AppHandle, board: State<Board>, key: String, value: String) -> CmdResult<String> {
     let mut store = board.0.lock().map_err(CmdError::other)?;
-    let v = store.set_page_setting(&key, &value).map_err(|e| refused(&store, e))?;
+    let (v, changed_now) = store.set_page_setting_logged(&key, &value, "Hugh (Settings)").map_err(|e| refused(&store, e))?;
     drop(store);
     if key == kanban_store::PRIVATE_DIR_KEY {
         crate::private::set(&v);
     }
     settings_changed(&app, &key);
+    // The repos whose small changes ship with no human test (card #104): every change is told,
+    // so one Hugh didn't make is seen. The same rule as the log's.
+    if key == kanban_store::SMALL_REPOS_KEY && changed_now {
+        let repos: Vec<String> = serde_json::from_str::<Vec<kanban_store::SmallRepo>>(&v).unwrap_or_default().into_iter().map(|r| r.repo).collect();
+        let _ = app.emit("small-repos", json!({ "repos": repos }));
+    }
     Ok(v)
 }
 
@@ -98,4 +104,13 @@ pub fn set_setting(app: AppHandle, board: State<Board>, key: String, value: Stri
 #[tauri::command]
 pub fn list_repos() -> CmdResult<Vec<crate::private::Repo>> {
     Ok(crate::private::repos())
+}
+
+/// The latest changes of an allow-listed setting, newest first (card #104).
+#[tauri::command]
+pub fn get_setting_log(board: State<Board>, key: String, limit: Option<usize>) -> CmdResult<Value> {
+    let store = board.0.lock().map_err(CmdError::other)?;
+    page_default(&key).map_err(CmdError::other)?;
+    let rows = store.setting_log(&key, limit.unwrap_or(10).min(50)).map_err(CmdError::other)?;
+    Ok(json!(rows))
 }

@@ -17,17 +17,138 @@ pub const MAX_RUNNING_DEFAULT: i64 = 10;
 /// The settings key for how many idle minutes pause a session (0: never).
 pub const IDLE_PAUSE_KEY: &str = "sessions.idle_pause_minutes";
 pub const IDLE_PAUSE_DEFAULT: i64 = 30;
+/// The settings key for how often, in minutes, the monitor looks for stuck card sessions
+/// (card #99; 0: never).
+pub const STUCK_CHECK_KEY: &str = "sessions.stuck_check_minutes";
+pub const STUCK_CHECK_DEFAULT: i64 = 10;
 
 /// Whether a card's session may move it from In progress to Human test only after a
 /// card-tester subagent passed it (Hugh, card #76): "on" (the default) or "off".
 pub const TEST_RULE_KEY: &str = "sessions.test_before_human_test";
+/// The same for the card-reviewer subagent's review of the diff (Hugh, card #96).
+pub const REVIEW_RULE_KEY: &str = "sessions.review_before_human_test";
+/// Whether a card's session may move it into In progress only after a card-critic subagent
+/// passed its plan (Hugh, card #97): "on" (the default) or "off".
+pub const CRITIC_RULE_KEY: &str = "sessions.critic_before_build";
+/// Whether the app moves a card the card-router routed "small" from Planning to In progress by
+/// itself once its plan critique passed (card #98). The only part of the router that moves a
+/// card without Hugh, so he can turn it off.
+pub const SMALL_GO_ON_KEY: &str = "sessions.small_go_on";
+/// Whether a bug report on a card (Found a problem, a FAIL with a BUG: line, Report a bug) is
+/// proved by the card-reproducer before and after the fix, and holds the move to Human test
+/// until it is (Hugh, card #112).
+pub const REPRO_RULE_KEY: &str = "sessions.repro_before_human_test";
+
+/// Whether card sessions start with Claude Code's to-do tools (TaskCreate, TaskUpdate) turned
+/// back on, so each card can show its step progress (card #106): "on" (the default; Hugh, 6 Nov
+/// 2026: "106 - on please") or "off". One of the `RULE_KEYS`.
+pub const TODO_TOOLS_KEY: &str = "sessions.todo_tools";
+
+/// Hugh's on/off rules for the app's subagents and sessions: "on" (the default) or "off". One
+/// line each.
+pub const RULE_KEYS: &[&str] = &[
+    TEST_RULE_KEY,
+    REVIEW_RULE_KEY,
+    CRITIC_RULE_KEY,
+    SMALL_GO_ON_KEY,
+    REPRO_RULE_KEY,
+    TODO_TOOLS_KEY,
+];
 
 /// The settings key for the private folder: a folder outside this repo with the owner's own
 /// column prompts (`prompts\`) and repo list (`repos.json`). Empty: the bundled examples.
 pub const PRIVATE_DIR_KEY: &str = "private.dir";
 
 /// The keys the page may read and write with `get_setting` / `set_setting`.
-pub const PAGE_SETTINGS: [&str; 6] = [PROFILES_KEY, MAX_RUNNING_KEY, IDLE_PAUSE_KEY, crate::STACK_RULE_KEY, TEST_RULE_KEY, PRIVATE_DIR_KEY];
+pub const PAGE_SETTINGS: &[&str] = &[
+    PROFILES_KEY,
+    MAX_RUNNING_KEY,
+    IDLE_PAUSE_KEY,
+    STUCK_CHECK_KEY,
+    crate::STACK_RULE_KEY,
+    TEST_RULE_KEY,
+    REVIEW_RULE_KEY,
+    CRITIC_RULE_KEY,
+    SMALL_GO_ON_KEY,
+    REPRO_RULE_KEY,
+    SMALL_REPOS_KEY,
+    TODO_TOOLS_KEY,
+    // The Router (card #119): its model, effort and whether it may start cards.
+    crate::router::ROUTER_MODEL_KEY,
+    crate::router::ROUTER_EFFORT_KEY,
+    crate::router::ROUTER_MAY_START_KEY,
+    // The private folder: the owner's own prompts and repo list.
+    PRIVATE_DIR_KEY,
+];
+
+/// The models the Router may run on (the panel's list).
+pub const ROUTER_MODELS: [&str; 4] = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
+
+/// The repos whose small, fully checked cards go on to Ship it by themselves (Hugh, card #104):
+/// a JSON list of `SmallRepo`, empty (the default) for none.
+pub const SMALL_REPOS_KEY: &str = "sessions.small_goes_on_repos";
+
+/// A repo whose small, fully checked cards may go on to Ship it by themselves (card #104): its
+/// name as cards hold it (`owner/name`), and the checkout and branch its ship pushes. The entry,
+/// not the card, names them, because a card's session can change its own `worktreePath`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SmallRepo {
+    pub repo: String,
+    pub checkout: String,
+    pub branch: String,
+}
+
+/// Checks the small-change repo list: each repo `owner/name` and listed once, each checkout an
+/// absolute path to a folder holding a git checkout, each branch a plain branch name.
+pub fn check_small_repos(json: &str) -> Result<Vec<SmallRepo>> {
+    let rows: Vec<SmallRepo> = serde_json::from_str(json)
+        .map_err(|e| Error::Invalid(format!("the small-change repo list should be a list of {{repo, checkout, branch}}: {e}")))?;
+    let mut out: Vec<SmallRepo> = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        let n = i + 1;
+        let repo = r.repo.trim();
+        let ok_part = |p: &str| !p.is_empty() && p != "." && p != ".." && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+        let parts: Vec<&str> = repo.split('/').collect();
+        if parts.len() != 2 || !parts.iter().all(|p| ok_part(p)) {
+            return Err(Error::Invalid(format!("repo row {n}: \"{repo}\" should be owner/name, like hughht5/kanban-app")));
+        }
+        if out.iter().any(|o| o.repo.eq_ignore_ascii_case(repo)) {
+            return Err(Error::Invalid(format!("repo row {n}: {repo} is listed twice")));
+        }
+        let checkout = r.checkout.trim();
+        let path = std::path::Path::new(checkout);
+        if !path.is_absolute() {
+            return Err(Error::Invalid(format!("repo row {n}: the checkout \"{checkout}\" should be a full path, like C:\\Users\\you\\repo")));
+        }
+        if !path.join(".git").exists() {
+            return Err(Error::Invalid(format!("repo row {n}: {checkout} isn't a git checkout (it has no .git)")));
+        }
+        let branch = r.branch.trim();
+        let ok_branch = !branch.is_empty()
+            && !branch.starts_with(['-', '/', '.'])
+            && !branch.ends_with(['/', '.'])
+            && !branch.contains("..")
+            && !branch.ends_with(".lock")
+            && branch.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c));
+        if !ok_branch {
+            return Err(Error::Invalid(format!("repo row {n}: \"{branch}\" isn't a branch name")));
+        }
+        if looks_like_token(repo) || looks_like_token(checkout) || looks_like_token(branch) {
+            return Err(Error::Secret(format!("repo row {n}")));
+        }
+        out.push(SmallRepo { repo: repo.into(), checkout: checkout.into(), branch: branch.into() });
+    }
+    Ok(out)
+}
+
+/// One change to a setting, from the append-only `settings_log` (card #104).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SettingChange {
+    pub at: String,
+    pub key: String,
+    pub value: String,
+    pub by: String,
+}
 
 /// One row of the browser-profile map: a login whose `browser` label is `name`, or whose link
 /// matches `url_pattern` (`*` matches anything, case-insensitive; empty matches nothing), opens
@@ -223,10 +344,79 @@ impl Store {
             .unwrap_or(IDLE_PAUSE_DEFAULT))
     }
 
+    /// Minutes between the monitor's checks for stuck card sessions
+    /// (`sessions.stuck_check_minutes`, default 10; 0 turns the monitor off).
+    pub fn stuck_check_minutes(&self) -> Result<i64> {
+        Ok(self
+            .setting(STUCK_CHECK_KEY)?
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(STUCK_CHECK_DEFAULT))
+    }
+
     /// Must a card pass its subagent test before its session moves it to Human test? (Hugh's
     /// setting; on unless he turned it off.)
     pub fn test_required(&self) -> bool {
-        self.setting(TEST_RULE_KEY).ok().flatten().as_deref() != Some("off")
+        self.rule_on(TEST_RULE_KEY)
+    }
+
+    /// Must a card pass its subagent review before its session moves it to Human test (card #96)?
+    pub fn review_required(&self) -> bool {
+        self.rule_on(REVIEW_RULE_KEY)
+    }
+
+    /// Must a card's plan pass a subagent critique before its session moves it into In progress
+    /// (card #97)?
+    pub fn critique_required(&self) -> bool {
+        self.rule_on(CRITIC_RULE_KEY)
+    }
+
+    /// Does a card routed small go on to In progress by itself once its plan critique passed
+    /// (card #98)?
+    pub fn small_go_on(&self) -> bool {
+        self.rule_on(SMALL_GO_ON_KEY)
+    }
+
+    /// Do card sessions start with the to-do tools on (card #106)? On unless Hugh turned it off.
+    pub fn todo_tools_on(&self) -> bool {
+        self.rule_on(TODO_TOOLS_KEY)
+    }
+
+    /// One of Hugh's on/off rules (`RULE_KEYS`): on unless he turned it off.
+    pub fn rule_on(&self, key: &str) -> bool {
+        self.setting(key).ok().flatten().as_deref() != Some("off")
+    }
+
+    /// The repos whose small, fully checked cards go on by themselves (card #104). A saved value
+    /// that no longer parses counts as none: the safe side.
+    pub fn small_repos(&self) -> Vec<SmallRepo> {
+        self.setting(SMALL_REPOS_KEY).ok().flatten().and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
+    }
+
+    /// The small-change entry for `repo` (a card's `owner/name`, any case), if Hugh listed it.
+    pub fn small_repo_for(&self, repo: &str) -> Option<SmallRepo> {
+        let repo = repo.trim();
+        if repo.is_empty() {
+            return None;
+        }
+        self.small_repos().into_iter().find(|r| r.repo.eq_ignore_ascii_case(repo))
+    }
+
+    /// Writes one change of a setting to the append-only `settings_log`.
+    pub fn log_setting(&mut self, key: &str, value: &str, by: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings_log (at, key, value, by) VALUES (?1, ?2, ?3, ?4)",
+            params![crate::now(), key, value, by],
+        )?;
+        Ok(())
+    }
+
+    /// The latest `limit` changes of `key`, newest first.
+    pub fn setting_log(&self, key: &str, limit: usize) -> Result<Vec<SettingChange>> {
+        let mut st = self.conn.prepare("SELECT at, key, value, by FROM settings_log WHERE key = ?1 ORDER BY id DESC LIMIT ?2")?;
+        let rows = st
+            .query_map(params![key, limit as i64], |r| Ok(SettingChange { at: r.get(0)?, key: r.get(1)?, value: r.get(2)?, by: r.get(3)? }))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// A setting the page may read: its saved value, else its default.
@@ -240,6 +430,16 @@ impl Store {
 
     /// A setting the page may write, checked for its key. Returns the value as stored.
     pub fn set_page_setting(&mut self, key: &str, value: &str) -> Result<String> {
+        self.set_page_setting_by(key, value, "the app")
+    }
+
+    /// The same, saying who changed it: a change of value goes into `settings_log` (card #104).
+    pub fn set_page_setting_by(&mut self, key: &str, value: &str, by: &str) -> Result<String> {
+        self.set_page_setting_logged(key, value, by).map(|(v, _)| v)
+    }
+
+    /// The same, also saying whether the value changed (and so was logged).
+    pub fn set_page_setting_logged(&mut self, key: &str, value: &str, by: &str) -> Result<(String, bool)> {
         page_key(key)?;
         let stored = match key {
             MAX_RUNNING_KEY => {
@@ -263,19 +463,46 @@ impl Store {
                 }
                 n.to_string()
             }
+            STUCK_CHECK_KEY => {
+                let n: i64 = value
+                    .trim()
+                    .parse()
+                    .map_err(|_| Error::Invalid("the stuck check's minutes must be a whole number".into()))?;
+                if !(0..=1440).contains(&n) {
+                    return Err(Error::Invalid("the stuck check's minutes must be between 0 (off) and 1440".into()));
+                }
+                n.to_string()
+            }
             crate::STACK_RULE_KEY => match value.trim() {
                 v @ ("all" | "first") => v.to_string(),
                 _ => return Err(Error::Invalid("the stack rule is \"all\" or \"first\"".into())),
             },
-            TEST_RULE_KEY => match value.trim() {
+            k if RULE_KEYS.contains(&k) => match value.trim() {
                 v @ ("on" | "off") => v.to_string(),
-                _ => return Err(Error::Invalid("the subagent test rule is \"on\" or \"off\"".into())),
+                _ => return Err(Error::Invalid(format!("the setting {k} is \"on\" or \"off\""))),
+            },
+            SMALL_REPOS_KEY => serde_json::to_string(&check_small_repos(value)?)?,
+            crate::router::ROUTER_MODEL_KEY => match value.trim() {
+                v if ROUTER_MODELS.contains(&v) => v.to_string(),
+                _ => return Err(Error::Invalid(format!("the Router's model is one of {}", ROUTER_MODELS.join(", ")))),
+            },
+            crate::router::ROUTER_EFFORT_KEY => match value.trim() {
+                v if EFFORTS.contains(&v) => v.to_string(),
+                _ => return Err(Error::Invalid(format!("the Router's effort is one of {}", EFFORTS.join(", ")))),
+            },
+            crate::router::ROUTER_MAY_START_KEY => match value.trim() {
+                v @ ("on" | "off") => v.to_string(),
+                _ => return Err(Error::Invalid("\"Router may start cards\" is \"on\" or \"off\"".into())),
             },
             PRIVATE_DIR_KEY => check_private_dir(value)?,
             _ => unreachable!(),
         };
+        let changed = self.page_setting(key)? != stored;
         self.set_setting(key, &stored)?;
-        Ok(stored)
+        if changed {
+            self.log_setting(key, &stored, by)?;
+        }
+        Ok((stored, changed))
     }
 }
 
@@ -305,8 +532,13 @@ pub fn page_default(key: &str) -> Result<String> {
         MAX_RUNNING_KEY => MAX_RUNNING_DEFAULT.to_string(),
         PROFILES_KEY => serde_json::to_string(&default_profiles())?,
         IDLE_PAUSE_KEY => IDLE_PAUSE_DEFAULT.to_string(),
+        STUCK_CHECK_KEY => STUCK_CHECK_DEFAULT.to_string(),
         crate::STACK_RULE_KEY => "all".to_string(),
-        TEST_RULE_KEY => "on".to_string(),
+        k if RULE_KEYS.contains(&k) => "on".to_string(),
+        SMALL_REPOS_KEY => "[]".to_string(),
+        crate::router::ROUTER_MODEL_KEY => crate::router::ROUTER_MODEL_DEFAULT.to_string(),
+        crate::router::ROUTER_EFFORT_KEY => crate::router::ROUTER_EFFORT_DEFAULT.to_string(),
+        crate::router::ROUTER_MAY_START_KEY => "off".to_string(),
         PRIVATE_DIR_KEY => String::new(),
         _ => unreachable!(),
     })

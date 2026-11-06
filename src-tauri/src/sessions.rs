@@ -31,6 +31,11 @@ pub struct Plan {
     pub row_id: String,
     /// Where hooks, the MCP tools and the statusLine reach the app.
     pub api: Option<crate::api::ApiInfo>,
+    /// Start it with Claude Code's to-do tools on (Hugh's `sessions.todo_tools`, card #106).
+    pub todo_tools: bool,
+    /// The Router session (card #119), not a card's: its rules go in as its system prompt, its
+    /// subagents run on Sonnet medium, and its guard also sees Edit and Write.
+    pub router: bool,
 }
 
 /// Claude Code's "send now" keys (`chat:sendNow`, Ctrl+X Ctrl+S): send what is typed or
@@ -237,6 +242,80 @@ pub fn hook_state(event: &str, body: &Value) -> Option<&'static str> {
     })
 }
 
+/// What a session waits on Hugh for, beyond its state, for the board's "Needs you" line
+/// (card #107). In memory only.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Waits {
+    /// A permission prompt's message, from its `Notification` hook.
+    pub prompt: Option<String>,
+    /// The call that prompt waits on (its id, "<Tool>: <key input>" and transcript), from the
+    /// transcript (`transcript::prompt_call`), once a worker has read it.
+    pub call: Option<crate::transcript::OpenCall>,
+    /// Counts permission prompts, so a late read is kept only for the prompt it was for.
+    pub seq: u64,
+    /// A `StopFailure`'s error text, when its body has one.
+    pub failure: Option<String>,
+}
+
+impl Waits {
+    /// Takes a hook that moved the session to `state`. `asking` is a question dialog being on
+    /// screen. Returns true for a new permission prompt whose call should be read.
+    pub fn hook(&mut self, event: &str, state: &str, body: &Value, asking: bool) -> bool {
+        if state != "permission" {
+            self.prompt = None;
+            self.call = None;
+        }
+        if event == "StopFailure" {
+            self.failure = failure_text(body);
+        } else if state != "failed" {
+            self.failure = None;
+        }
+        let message = body.get("message").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty());
+        let tool = message.and_then(crate::transcript::permission_tool);
+        if event != "Notification" || state != "permission" || asking || tool.as_deref() == Some(QUESTION_TOOL) {
+            return false;
+        }
+        self.prompt = message.map(str::to_string);
+        self.call = None;
+        self.seq += 1;
+        tool.is_some()
+    }
+
+    /// The session's state left "permission" or "failed" without a hook (`turn_ended`).
+    pub fn left(&mut self, state: &str) {
+        if state != "permission" {
+            self.prompt = None;
+            self.call = None;
+        }
+        if state != "failed" {
+            self.failure = None;
+        }
+    }
+}
+
+/// A `StopFailure` body's error text: its `error` (Claude Code 2.1: "rate_limit",
+/// "server_error"...) and `error_details`, else a `message`. None when it has none.
+pub fn failure_text(body: &Value) -> Option<String> {
+    let s = |k: &str| body.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    let error = s("error").map(|e| e.replace('_', " "));
+    match (error, s("error_details")) {
+        (Some(e), Some(d)) => Some(format!("{e}: {d}")),
+        (Some(e), None) => Some(e),
+        (None, Some(d)) => Some(d.to_string()),
+        (None, None) => s("message").map(str::to_string),
+    }
+}
+
+/// A running session's waits as the board reads them (`Sessions::waits`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Waiting {
+    /// The question dialog's questions (`transcript::ask_questions`), while it is on screen.
+    pub questions: Option<Value>,
+    /// The permission prompt: what it asks to run, else its message.
+    pub prompt: Option<String>,
+    pub failure: Option<String>,
+}
+
 /// The session's own settings: the fullscreen TUI, nine `http` hooks (`SubagentStop` brings
 /// the card-tester's verdicts, card #76), the statusLine and
 /// the `kanban` tools allowed. Nothing else; the project's settings still apply under it.
@@ -254,7 +333,16 @@ pub fn settings_json(p: &Plan) -> Value {
             if ev.ends_with("ToolUse") {
                 entry["matcher"] = format!("{QUESTION_TOOL}|{}", crate::testing::TOOLS).into();
             }
-            hooks.insert(ev.into(), serde_json::json!([entry]));
+            let mut entries = vec![entry];
+            // Every shell call also asks the app's guard first, which refuses an app subagent's
+            // kb, claude config and (the merger's) push (cards #100, #96): an agent's own deny rule
+            // would take its whole shell away.
+            if ev == "PreToolUse" {
+                let url = format!("http://127.0.0.1:{}/hook/{}/{}/guard", api.port, api.token, p.row_id);
+                let matcher = if p.router { crate::guard::ROUTER_TOOLS } else { crate::guard::SHELL_TOOLS };
+                entries.push(serde_json::json!({ "matcher": matcher, "hooks": [{ "type": "http", "url": url, "timeout": 5 }] }));
+            }
+            hooks.insert(ev.into(), Value::Array(entries));
         }
         v["hooks"] = Value::Object(hooks);
         if let Some(kb) = &api.kb_exe {
@@ -289,7 +377,7 @@ fn account_config(account: &str) -> Option<Value> {
     let path = if account == "account2" {
         transcript::config_dir("account2").join(".claude.json")
     } else {
-        PathBuf::from(std::env::var_os("USERPROFILE")?).join(".claude.json")
+        kanban_store::home_var()?.join(".claude.json")
     };
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
@@ -343,24 +431,61 @@ pub fn build_args(p: &Plan) -> Vec<String> {
     if p.api.is_some() {
         let mcp = p.settings_path.with_file_name("mcp.json");
         a.extend(["--mcp-config".into(), mcp.display().to_string()]);
-        // The card-tester subagent every card is tested with before Human test (card #76).
-        a.extend(["--agents".into(), crate::tester::agents_json()]);
+        // The app's subagents: the card-tester and card-reviewer every card passes before
+        // Human test (cards #76 and #96), and the rest of `agents::AGENTS`.
+        if p.router {
+            // Its rules stay after every auto-compaction as its system prompt (finding 11), and
+            // its subagents run on Sonnet medium (decision 11).
+            a.extend(["--agents".into(), crate::routersession::agents_json()]);
+            a.extend(["--append-system-prompt".into(), crate::routersession::PROMPT.to_string()]);
+        } else {
+            a.extend(["--agents".into(), crate::agents::agents_json()]);
+        }
     }
     a
 }
 
 /// The child's environment: the app's own, without anything that would make `claude`
-/// think it runs inside another Claude session, plus the account and card.
-pub fn build_env(parent: impl Iterator<Item = (String, String)>, account: &str, card_number: i64) -> Vec<(String, String)> {
+/// think it runs inside another Claude session, plus the account and card. `todo_tools` gives
+/// back the to-do tools (TaskCreate, TaskUpdate) that Claude Code took away from newer models,
+/// so the card can show its step progress (card #106).
+pub fn build_env(parent: impl Iterator<Item = (String, String)>, account: &str, card_number: i64, todo_tools: bool) -> Vec<(String, String)> {
+    let board = kanban_store::is_test().then(|| (kanban_store::data_dir(), std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from))));
+    build_env_for(parent, account, card_number, todo_tools, board)
+}
+
+/// `build_env` with the board spelt out. `board` is None for the live app: its sessions get no
+/// `KANBAN_DATA_DIR` (an inherited one is dropped), and PATH as it is. A test app passes its data
+/// folder and its install folder (finding F1): `KANBAN_DATA_DIR` sends every `kb` and `kb mcp`
+/// the session runs (the repo's `.mcp.json` one too) to the test board, and the install folder
+/// goes first on PATH, so `kb` is the test app's own kb.exe even where the live one is older.
+pub fn build_env_for(parent: impl Iterator<Item = (String, String)>, account: &str, card_number: i64, todo_tools: bool, board: Option<(PathBuf, Option<PathBuf>)>) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = parent
         .filter(|(k, _)| {
             let k = k.to_ascii_uppercase();
-            k != "CLAUDECODE" && !k.starts_with("CLAUDE_CODE_") && k != "CLAUDE_CONFIG_DIR" && k != "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+            k != "CLAUDECODE" && !k.starts_with("CLAUDE_CODE_") && k != "CLAUDE_CONFIG_DIR" && k != "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" && k != kanban_store::DATA_DIR_ENV
         })
         .collect();
+    if let Some((data, install)) = board {
+        env.push((kanban_store::DATA_DIR_ENV.into(), data.display().to_string()));
+        if let Some(dir) = install {
+            match env.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case("PATH")) {
+                Some((_, v)) => {
+                    let joined = std::env::join_paths(std::iter::once(dir.clone()).chain(std::env::split_paths(v.as_str())));
+                    if let Some(j) = joined.ok().and_then(|j| j.into_string().ok()) {
+                        *v = j;
+                    }
+                }
+                None => env.push(("PATH".into(), dir.display().to_string())),
+            }
+        }
+    }
     env.push(("TERM".into(), "xterm-256color".into()));
     env.push(("CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT".into(), "1".into()));
     env.push(("KANBAN_CARD".into(), card_number.to_string()));
+    if todo_tools {
+        env.push(("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()));
+    }
     if account == "account2" {
         env.push(("CLAUDE_CONFIG_DIR".into(), transcript::config_dir("account2").display().to_string()));
     }
@@ -372,14 +497,8 @@ pub fn build_env(parent: impl Iterator<Item = (String, String)>, account: &str, 
 pub fn claude_exe() -> Option<PathBuf> {
     static FOUND: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     FOUND.get_or_init(|| {
-        let home = PathBuf::from(std::env::var_os("USERPROFILE")?);
-        let mut candidates = vec![home.join(".local").join("bin").join("claude.exe"), home.join("bin").join("claude.exe")];
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            if let Ok(dirs) = std::fs::read_dir(PathBuf::from(appdata).join("Claude").join("claude-code")) {
-                candidates.extend(dirs.flatten().map(|d| d.path().join("claude.exe")));
-            }
-        }
-        candidates
+        let home = kanban_store::home_var()?;
+        crate::platform::claude_candidates(&home)
             .into_iter()
             .filter(|p| p.is_file())
             .filter_map(|p| claude_version(&p).map(|v| (v, p)))
@@ -397,9 +516,8 @@ pub fn claude_exe_version() -> Option<String> {
 
 /// `claude --version` as numbers, e.g. "2.1.317 (Claude Code)" -> [2, 1, 317].
 pub fn claude_version(exe: &std::path::Path) -> Option<Vec<u64>> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let out = std::process::Command::new(exe).arg("--version").creation_flags(CREATE_NO_WINDOW).output().ok()?;
+    use crate::platform::NoWindow;
+    let out = std::process::Command::new(exe).arg("--version").no_window().output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let ver = text.split_whitespace().next()?;
     let parts: Vec<u64> = ver.split(".").map(|p| p.parse().ok()).collect::<Option<_>>()?;
@@ -471,6 +589,32 @@ pub fn paste_bytes(text: &str) -> String {
     format!("\x15\x1b[200~{}\x1b[201~", text.replace('\r', ""))
 }
 
+/// Drops the sessions that ended by themselves, reaping each one's process: the macOS exit
+/// waiter doesn't reap, so a dead claude isn't left as a zombie (card #117). On Windows it only
+/// reads the exit code. Called where the map is looked at often (a start, the running count).
+fn drop_ended(live: &mut HashMap<String, Live>) {
+    live.retain(|_, l| {
+        let keep = l.alive.load(Ordering::SeqCst) || l.stopping;
+        if !keep {
+            let _ = l.child.try_wait();
+        }
+        keep
+    });
+}
+
+/// Account 2 isn't supported on a Mac in this version (card #117, router decision R2): such a
+/// card refuses to start rather than run on the main account.
+pub const ACCOUNT2_NOT_HERE: &str = "Account 2 isn't supported on a Mac in this version. Set this card to the main account to start it.";
+
+/// Whether `account` can run on this system (`second`: whether account 2 can).
+pub fn account_runs_here(account: &str, second: bool) -> Result<(), String> {
+    if account == "account2" && !second {
+        Err(ACCOUNT2_NOT_HERE.into())
+    } else {
+        Ok(())
+    }
+}
+
 pub fn card_account(card: &Card) -> String {
     match card.fields.get("accountPin").or_else(|| card.fields.get("account")).and_then(Value::as_str) {
         Some("account2") => "account2".into(),
@@ -526,8 +670,14 @@ struct Live {
     /// (if the hook gave one) and its questions. Cleared once the session leaves "permission"
     /// or the chat panel has answered it.
     question: Option<(Option<String>, Value)>,
+    /// What it waits on Hugh for beyond its state: a permission prompt's text, a failure's error
+    /// (card #107).
+    waits: Waits,
     /// The session's transcript, from its statusLine reports, for `turn_check`.
     transcript: Option<std::path::PathBuf>,
+    /// The `error` its last `StopFailure` hook named ("rate_limit", say), for the stuck
+    /// monitor's reason. Cleared by the next prompt.
+    fail_error: Option<String>,
     /// A message typed at the prompt that Claude hasn't taken yet (`Typed`).
     typed: Option<Typed>,
     /// A message the session didn't take after `TYPE_TRIES` tries, for the chat to show.
@@ -599,9 +749,32 @@ struct PtyOut {
     data: String,
 }
 
+/// One live card session, as the stuck monitor sees it (`Sessions::watch`).
+#[derive(Debug, Clone, Default)]
+pub struct Watch {
+    pub card_id: String,
+    /// "starting", "idle", "working", "permission" or "failed".
+    pub state: String,
+    /// How long it has been in that state.
+    pub in_state: Duration,
+    pub ready: bool,
+    /// Nothing may be typed into it now (just after a slash command, a `/btw`, a screen open).
+    pub held: bool,
+    /// A question dialog is on screen.
+    pub question: bool,
+    /// It is running a review or a test (`testing.rs`).
+    pub testing: bool,
+    /// A message typed into it hasn't been taken yet.
+    pub typing: bool,
+    pub account: String,
+    pub claude_session_id: String,
+    pub transcript: Option<std::path::PathBuf>,
+    pub fail_error: Option<String>,
+}
+
 pub struct Sessions {
-    live: Mutex<HashMap<String, Live>>,
-    job: job::Job,
+    live: crate::lockwatch::Watched<HashMap<String, Live>>,
+    job: crate::platform::Job,
     /// Each card's `/btw` questions and answers this run, oldest first (`crate::btw`).
     btws: Mutex<HashMap<String, Vec<crate::btw::Btw>>>,
 }
@@ -611,7 +784,7 @@ const BTW_WAIT: Duration = Duration::from_secs(180);
 
 impl Sessions {
     pub fn new() -> Result<Sessions, String> {
-        Ok(Sessions { live: Mutex::new(HashMap::new()), job: job::Job::new()?, btws: Mutex::new(HashMap::new()) })
+        Ok(Sessions { live: crate::lockwatch::Watched::new("sessions", HashMap::new()), job: crate::platform::Job::new()?, btws: Mutex::new(HashMap::new()) })
     }
 
     /// Whether a screen a slash command opened is up in the card's session (`Live::dialog`):
@@ -807,22 +980,29 @@ impl Sessions {
 
     /// Starts `plan` for `card`. Refuses a conversation that is already running.
     pub fn start(&self, app: &AppHandle, card: &Card, plan: &Plan) -> Result<SessionRow, String> {
+        self.start_as(app, &card.id, card.number, plan)
+    }
+
+    /// Starts `plan` under `key` in the live map: a card's id, or the Router's key (card #119).
+    pub fn start_as(&self, app: &AppHandle, key: &str, number: i64, plan: &Plan) -> Result<SessionRow, String> {
         let mut live = self.live.lock().map_err(|e| e.to_string())?;
-        live.retain(|_, l| l.alive.load(Ordering::SeqCst) || l.stopping);
+        drop_ended(&mut live);
+        account_runs_here(&plan.account, crate::platform::SECOND_ACCOUNT)?;
         let convo = plan.resume.clone().unwrap_or_else(|| plan.session_id.clone());
         if live.values().any(|l| l.row.claude_session_id == convo) {
             return Err("that conversation is already running in the app".into());
         }
-        if live.contains_key(&card.id) {
+        if live.contains_key(key) {
             return Err("this card already has a running session".into());
         }
-        let exe = claude_exe().ok_or("couldn't find claude.exe")?;
+        let exe = claude_exe().ok_or_else(|| format!("couldn't find claude{}", std::env::consts::EXE_SUFFIX))?;
         if let Some(dir) = plan.settings_path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        std::fs::write(&plan.settings_path, settings_json(plan).to_string()).map_err(|e| e.to_string())?;
+        // Private files: they hold the API token in the hook URLs (card #117).
+        crate::platform::write_private(&plan.settings_path, settings_json(plan).to_string().as_bytes()).map_err(|e| e.to_string())?;
         if let Some(m) = mcp_json(plan) {
-            std::fs::write(plan.settings_path.with_file_name("mcp.json"), m.to_string()).map_err(|e| e.to_string())?;
+            crate::platform::write_private(&plan.settings_path.with_file_name("mcp.json"), m.to_string().as_bytes()).map_err(|e| e.to_string())?;
         }
 
         let pair = native_pty_system()
@@ -834,7 +1014,7 @@ impl Sessions {
         }
         cmd.cwd(&plan.cwd);
         cmd.env_clear();
-        for (k, v) in build_env(std::env::vars(), &plan.account, card.number) {
+        for (k, v) in build_env(std::env::vars(), &plan.account, number, plan.todo_tools) {
             cmd.env(k, v);
         }
         cmd.env("KANBAN_SESSION", &plan.row_id);
@@ -848,7 +1028,7 @@ impl Sessions {
         }
         let row = SessionRow {
             id: plan.row_id.clone(),
-            card_id: card.id.clone(),
+            card_id: key.to_string(),
             claude_session_id: convo,
             account: plan.account.clone(),
             cwd: plan.cwd.clone(),
@@ -867,7 +1047,7 @@ impl Sessions {
         // the app stopping it is a crash, for the notifications. Called when the PTY's output
         // ends and when the process exits; only the first call counts.
         let ended = {
-            let (alive, app, card_id, sid, number) = (alive.clone(), app.clone(), card.id.clone(), row.id.clone(), card.number);
+            let (alive, app, card_id, sid, number) = (alive.clone(), app.clone(), key.to_string(), row.id.clone(), number);
             Arc::new(move || {
                 if alive.swap(false, Ordering::SeqCst) {
                     if let Some(board) = app.try_state::<crate::Board>() {
@@ -875,14 +1055,17 @@ impl Sessions {
                             let _ = s.session_event(&sid, "exited", None);
                         }
                     }
-                    let _ = app.emit("session-crashed", serde_json::json!({ "card": card_id, "number": number }));
+                    // The Router's end is told by `routersession::tick`, not as a card's crash.
+                    if card_id != crate::routersession::KEY {
+                        let _ = app.emit("session-crashed", serde_json::json!({ "card": card_id, "number": number }));
+                    }
                 }
                 let _ = app.emit("session-changed", card_id.clone());
             })
         };
         // ConPTY keeps the output pipe open after the process exits, so the reader alone
         // never sees a crash: a thread waits on the process itself too.
-        if let Some(wait) = child.process_id().and_then(job::exit_waiter) {
+        if let Some(wait) = child.process_id().and_then(crate::platform::exit_waiter) {
             let ended = ended.clone();
             std::thread::spawn(move || {
                 wait();
@@ -890,7 +1073,7 @@ impl Sessions {
             });
         }
         {
-            let (ring, screen, app, card_id) = (ring.clone(), screen.clone(), app.clone(), card.id.clone());
+            let (ring, screen, app, card_id) = (ring.clone(), screen.clone(), app.clone(), key.to_string());
             let (last_out, ended) = (last_out.clone(), ended.clone());
             std::thread::spawn(move || {
                 let mut buf = [0u8; 16384];
@@ -916,15 +1099,16 @@ impl Sessions {
             });
         }
         live.insert(
-            card.id.clone(),
-            Live { row: row.clone(), writer, master: pair.master, child, ring, screen, alive, last_out, state: "starting".into(), ready: false, sent_at: None, retried: false, stopping: false, switch: Switch::default(), hold_until: None, state_since: Instant::now(), state_at: chrono::Utc::now(), turn_since: None, question: None, transcript: None, typed: None, untaken: None, testing: Default::default(), btw: false, dialog: None },
+            key.to_string(),
+            Live { row: row.clone(), writer, master: pair.master, child, ring, screen, alive, last_out, state: "starting".into(), ready: false, sent_at: None, retried: false, stopping: false, switch: Switch::default(), hold_until: None, state_since: Instant::now(), state_at: chrono::Utc::now(), turn_since: None, question: None, waits: Default::default(), transcript: None, fail_error: None, typed: None, untaken: None, testing: Default::default(), btw: false, dialog: None },
         );
         Ok(row)
     }
 
-    /// A hook from session `row_id`. Returns the card and its new state, or None for a hook
-    /// that doesn't set one (a subagent's or a skill's, for `testing_hook` only).
-    pub fn hook(&self, row_id: &str, event: &str, body: &Value) -> Option<(String, String)> {
+    /// A hook from session `row_id`. Returns the card, its new state and, for a new permission
+    /// prompt whose call should be read (`Waits::hook`), the prompt's count and message. None
+    /// for a hook that doesn't set a state (a subagent's or a skill's, for `testing_hook` only).
+    pub fn hook(&self, row_id: &str, event: &str, body: &Value) -> Option<(String, String, Option<(u64, String)>)> {
         let state = hook_state(event, body)?;
         let mut live = self.live.lock().ok()?;
         let (card_id, l) = live.iter_mut().find(|(_, l)| l.row.id == row_id)?;
@@ -939,6 +1123,10 @@ impl Sessions {
                 // A new turn, even from "working" (a turn interrupted with no hook): an end
                 // the transcript recorded before now belongs to an earlier turn (`ended_by`).
                 l.state_at = chrono::Utc::now();
+                l.fail_error = None;
+            }
+            "StopFailure" => {
+                l.fail_error = body.get("error").and_then(|e| e.as_str().map(str::to_string).or_else(|| e.get("type").and_then(Value::as_str).map(str::to_string)));
             }
             _ => {}
         }
@@ -948,13 +1136,16 @@ impl Sessions {
         } else if state != "permission" {
             l.question = None;
         }
+        let asking = l.question.is_some();
+        let read = l.waits.hook(event, state, body, asking);
+        let prompt = l.waits.prompt.clone().filter(|_| read).map(|m| (l.waits.seq, m));
         if l.state != state {
             l.state_since = Instant::now();
             l.state_at = chrono::Utc::now();
         }
         l.turn_since = turn_start(l.turn_since, state, Instant::now());
         l.state = state.to_string();
-        Some((card_id.clone(), l.state.clone()))
+        Some((card_id.clone(), l.state.clone(), prompt))
     }
 
     /// A hook from session `row_id`, for its reviews and tests. Returns the card and whether
@@ -1000,6 +1191,7 @@ impl Sessions {
         l.state_at = chrono::Utc::now();
         l.turn_since = None;
         l.question = None;
+        l.waits.left("idle");
         l.testing.turn_ended();
         Some((card_id.clone(), l.state.clone()))
     }
@@ -1041,6 +1233,8 @@ impl Sessions {
     pub fn idle_for(&self, d: Duration) -> Vec<String> {
         let Ok(live) = self.live.lock() else { return vec![] };
         live.iter()
+            // Never the Router: it is idle most of the time on purpose (card #119).
+            .filter(|(k, _)| k.as_str() != crate::routersession::KEY)
             .filter(|(_, l)| l.alive.load(Ordering::SeqCst) && !l.stopping && l.ready && l.state == "idle" && l.sent_at.is_none() && l.typed.is_none() && l.untaken.is_none() && !l.btw && !l.on_screen() && l.state_since.elapsed() >= d)
             .map(|(k, _)| k.clone())
             .collect()
@@ -1131,7 +1325,14 @@ impl Sessions {
 
     /// How many sessions are running, for the cap. One being stopped no longer counts.
     pub fn running_count(&self) -> usize {
-        self.live.lock().map(|live| live.values().filter(|l| l.alive.load(Ordering::SeqCst)).count()).unwrap_or(0)
+        self.live
+            .lock()
+            .map(|mut live| {
+                drop_ended(&mut live);
+                // The Router sits outside the cap (card #119).
+                live.iter().filter(|(k, l)| k.as_str() != crate::routersession::KEY && l.alive.load(Ordering::SeqCst)).count()
+            })
+            .unwrap_or(0)
     }
 
     /// Asks for a model and/or effort change on the card's running session. It is typed when
@@ -1213,6 +1414,67 @@ impl Sessions {
             .filter(|(_, l)| l.alive.load(Ordering::SeqCst))
             .map(|(k, l)| (k.clone(), if l.ready { l.state.clone() } else { "starting".into() }))
             .collect()
+    }
+
+    /// Each running card's waits (`Waiting`), for the board's "Needs you" line, as `states`.
+    pub fn waits(&self) -> HashMap<String, Waiting> {
+        let Ok(live) = self.live.lock() else { return HashMap::new() };
+        live.iter()
+            .filter(|(_, l)| l.alive.load(Ordering::SeqCst))
+            .map(|(k, l)| {
+                let asking = l.state == "permission";
+                let w = Waiting {
+                    questions: l.question.as_ref().filter(|_| asking).map(|(_, q)| q.clone()),
+                    prompt: l.waits.call.as_ref().map(|c| c.text.clone()).or_else(|| l.waits.prompt.clone()),
+                    failure: l.waits.failure.clone(),
+                };
+                (k.clone(), w)
+            })
+            .collect()
+    }
+
+    /// Session `row_id`'s permission prompt, while it is at one: its count (`Waits::seq`) and
+    /// its message.
+    pub fn prompt_wait(&self, row_id: &str) -> Option<(u64, String)> {
+        let live = self.live.lock().ok()?;
+        let l = live.values().find(|l| l.row.id == row_id && l.state == "permission")?;
+        l.waits.prompt.clone().map(|m| (l.waits.seq, m))
+    }
+
+    /// Keeps what permission prompt `seq` of session `row_id` asks to run, if the session is
+    /// still at that prompt. Returns its card when kept.
+    pub fn set_prompt_call(&self, row_id: &str, seq: u64, call: crate::transcript::OpenCall) -> Option<String> {
+        let mut live = self.live.lock().ok()?;
+        let (card_id, l) = live.iter_mut().find(|(_, l)| l.row.id == row_id)?;
+        if l.state != "permission" || l.waits.seq != seq || l.waits.prompt.is_none() {
+            return None;
+        }
+        l.waits.call = Some(call);
+        Some(card_id.clone())
+    }
+
+    /// Session `row_id`'s permission prompt whose call is known (`set_prompt_call`), while no
+    /// question dialog is open: its count and the call, for `prompt_settled`.
+    pub fn prompt_pending(&self, row_id: &str) -> Option<(u64, crate::transcript::OpenCall)> {
+        let live = self.live.lock().ok()?;
+        let l = live.values().find(|l| l.row.id == row_id && l.state == "permission" && l.question.is_none())?;
+        l.waits.call.clone().map(|c| (l.waits.seq, c))
+    }
+
+    /// The transcript shows permission prompt `seq`'s call went on (`transcript::call_settled`):
+    /// Hugh answered it, and no hook said so (`PostToolUse` is hooked for a few tools only).
+    /// The session goes back to "working" and the prompt goes. Returns the card and its state.
+    pub fn prompt_settled(&self, row_id: &str, seq: u64) -> Option<(String, String)> {
+        let mut live = self.live.lock().ok()?;
+        let (card_id, l) = live.iter_mut().find(|(_, l)| l.row.id == row_id)?;
+        if l.state != "permission" || l.question.is_some() || l.waits.seq != seq || l.waits.call.is_none() {
+            return None;
+        }
+        l.state = "working".into();
+        l.state_since = Instant::now();
+        l.state_at = chrono::Utc::now();
+        l.waits.left("working");
+        Some((card_id.clone(), l.state.clone()))
     }
 
     pub fn input(&self, card_id: &str, data: &[u8]) -> Result<(), String> {
@@ -1307,6 +1569,35 @@ impl Sessions {
     fn still_asking(&self, card_id: &str) -> bool {
         let Ok(live) = self.live.lock() else { return false };
         live.get(card_id).is_some_and(|l| l.alive.load(Ordering::SeqCst) && !l.stopping && l.state == "permission")
+    }
+
+    /// Each live card session as the stuck monitor sees it (`monitor.rs`), copied under one
+    /// lock so that the monitor reads files with no lock held.
+    pub fn watch(&self) -> Vec<Watch> {
+        let Ok(live) = self.live.lock() else { return vec![] };
+        let now = Instant::now();
+        live.iter()
+            .filter(|(_, l)| l.alive.load(Ordering::SeqCst) && !l.stopping)
+            .map(|(card_id, l)| Watch {
+                card_id: card_id.clone(),
+                state: l.state.clone(),
+                in_state: l.state_since.elapsed(),
+                ready: l.ready,
+                held: l.blocked(),
+                question: l.question.is_some(),
+                testing: l.testing.active(now),
+                typing: l.sent_at.is_some() || l.typed.is_some() || l.untaken.is_some(),
+                account: l.row.account.clone(),
+                claude_session_id: l.row.claude_session_id.clone(),
+                transcript: l.transcript.clone(),
+                fail_error: l.fail_error.clone(),
+            })
+            .collect()
+    }
+
+    /// `watch` for one card, for the monitor's check again just before it types.
+    pub fn watch_one(&self, card_id: &str) -> Option<Watch> {
+        self.watch().into_iter().find(|w| w.card_id == card_id)
     }
 
     /// Records where session `row_id`'s transcript is (from its statusLine report).
@@ -1494,6 +1785,12 @@ impl Sessions {
         }
         if let Some(mut l) = taken {
             let _ = l.child.kill();
+            // Waited for off this thread, so no ended process is left behind as a zombie on a
+            // Mac (card #117); on Windows it only reads the exit code.
+            let mut child = l.child;
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
         }
         let _ = app.emit("session-changed", card_id.to_string());
         Ok(())
@@ -1561,61 +1858,6 @@ fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-mod job {
-    //! The Job Object that ends every card session when the app's process ends.
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-    use windows::Win32::System::Threading::{
-        OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SET_QUOTA, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-    };
-
-    /// Opens the process now, so a reused pid can't fool it, and returns a wait for its exit.
-    pub fn exit_waiter(pid: u32) -> Option<impl FnOnce() + Send> {
-        let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }.ok()?;
-        let raw = h.0 as isize;
-        Some(move || unsafe {
-            let h = HANDLE(raw as *mut core::ffi::c_void);
-            WaitForSingleObject(h, INFINITE);
-            let _ = CloseHandle(h);
-        })
-    }
-
-    /// Held for the app's whole life and never closed, so Windows closes it, and kills
-    /// the job's processes, only when the app's process ends.
-    pub struct Job(isize);
-
-    impl Job {
-        pub fn new() -> Result<Job, String> {
-            unsafe {
-                let h = CreateJobObjectW(None, None).map_err(|e| format!("job object: {e}"))?;
-                let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                SetInformationJobObject(
-                    h,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-                .map_err(|e| format!("job object limits: {e}"))?;
-                Ok(Job(h.0 as isize))
-            }
-        }
-
-        pub fn assign(&self, pid: u32) -> Result<(), String> {
-            unsafe {
-                let p = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid)
-                    .map_err(|e| format!("open claude's process: {e}"))?;
-                let r = AssignProcessToJobObject(HANDLE(self.0 as *mut core::ffi::c_void), p);
-                let _ = CloseHandle(p);
-                r.map_err(|e| format!("put claude in the job object: {e}"))
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1632,6 +1874,8 @@ mod tests {
             settings_path: PathBuf::from("C:\\s\\settings.json"),
             row_id: "row-1".into(),
             api: None,
+            todo_tools: false,
+            router: false,
         }
     }
 
@@ -1698,13 +1942,49 @@ mod tests {
             ("CLAUDE_CONFIG_DIR".to_string(), "C:\\old".to_string()),
             ("PATH".to_string(), "C:\\bin".to_string()),
         ];
-        let main = build_env(parent.clone().into_iter(), "main", 7);
+        let main = build_env(parent.clone().into_iter(), "main", 7, false);
         assert!(main.iter().all(|(k, _)| k != "CLAUDECODE" && k != "CLAUDE_CODE_ENTRYPOINT" && k != "CLAUDE_CONFIG_DIR"));
         assert!(main.contains(&("PATH".into(), "C:\\bin".into())));
         assert!(main.contains(&("KANBAN_CARD".into(), "7".into())));
-        let a2 = build_env(parent.into_iter(), "account2", 7);
+        let a2 = build_env(parent.clone().into_iter(), "account2", 7, false);
         let dir = a2.iter().find(|(k, _)| k == "CLAUDE_CONFIG_DIR").map(|(_, v)| v.clone()).unwrap();
         assert!(dir.ends_with(".claude-max2"));
+    }
+
+    // Card #118, final-test finding F1: a test app's sessions reach only its own board. Every
+    // kb they run (the repo's .mcp.json `kb mcp` too) gets KANBAN_DATA_DIR, and the test app's
+    // own folder is first on PATH. The live app's sessions get neither, and lose an inherited one.
+    #[test]
+    fn a_test_apps_sessions_reach_only_its_board() {
+        let parent = vec![("Path".to_string(), r"C:\bin".to_string()), ("KANBAN_DATA_DIR".to_string(), r"C:\stale".to_string())];
+        let live = build_env_for(parent.clone().into_iter(), "main", 7, false, None);
+        assert!(live.iter().all(|(k, _)| k != "KANBAN_DATA_DIR"), "{live:?}");
+        assert!(live.contains(&("Path".into(), r"C:\bin".into())));
+        let board = Some((PathBuf::from(r"C:\Users\x\.claude-kanban-dsh-test2"), Some(PathBuf::from(r"C:\Users\x\Programs\Claude Kanban DSH Test 2"))));
+        let test = build_env_for(parent.into_iter(), "main", 7, false, board);
+        let dirs: Vec<_> = test.iter().filter(|(k, _)| k == "KANBAN_DATA_DIR").map(|(_, v)| v.as_str()).collect();
+        assert_eq!(dirs, [r"C:\Users\x\.claude-kanban-dsh-test2"]);
+        let want = std::env::join_paths([r"C:\Users\x\Programs\Claude Kanban DSH Test 2", r"C:\bin"]).unwrap().into_string().unwrap();
+        assert!(test.contains(&("Path".into(), want)), "{test:?}");
+        assert_eq!(test.iter().filter(|(k, _)| k.eq_ignore_ascii_case("PATH")).count(), 1);
+        // This build's own choice: the live build passes no board.
+        if !kanban_store::is_test() {
+            let own = build_env(vec![("KANBAN_DATA_DIR".to_string(), "x".to_string())].into_iter(), "main", 7, false);
+            assert!(own.iter().all(|(k, _)| k != "KANBAN_DATA_DIR"));
+        }
+    }
+
+    // Card #106: the to-do tools come back only when Hugh's setting is on; a parent's own copy
+    // of the variable never leaks through either way.
+    #[test]
+    fn the_todo_tools_flag_follows_the_setting() {
+        let mut parent = vec![("PATH".to_string(), r"C:\bin".to_string())];
+        parent.push(("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()));
+        let off = build_env(parent.clone().into_iter(), "main", 7, false);
+        assert!(off.iter().all(|(k, _)| k != "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
+        let on = build_env(parent.into_iter(), "account2", 7, true);
+        assert_eq!(on.iter().filter(|(k, _)| k == "CLAUDE_CODE_ENABLE_TODO_TOOLS").count(), 1);
+        assert!(on.contains(&("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into())));
     }
 
     #[test]
@@ -1919,13 +2199,18 @@ mod tests {
             assert_eq!(v["hooks"][ev][0]["matcher"], "AskUserQuestion|Agent|Task|Skill", "{ev}");
             assert_eq!(v["hooks"][ev][0]["hooks"][0]["url"], format!("http://127.0.0.1:47821/hook/t/row-1/{ev}"));
         }
+        // The shell guard (card #100): a second PreToolUse entry, to its own path.
+        assert_eq!(v["hooks"]["PreToolUse"][1]["matcher"], "Bash|PowerShell");
+        assert_eq!(v["hooks"]["PreToolUse"][1]["hooks"][0]["url"], "http://127.0.0.1:47821/hook/t/row-1/guard");
+        assert_eq!(v["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+        assert_eq!(v["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
         assert!(v["hooks"]["Stop"][0].get("matcher").is_none());
         assert!(v["hooks"]["SubagentStop"][0].get("matcher").is_none());
         assert_eq!(v["hooks"]["SubagentStop"][0]["hooks"][0]["url"], "http://127.0.0.1:47821/hook/t/row-1/SubagentStop");
     }
 
     #[test]
-    fn card_sessions_get_the_tester_subagent() {
+    fn card_sessions_get_the_apps_subagents() {
         assert!(!build_args(&plan(None)).contains(&"--agents".to_string()));
         let mut p = plan(None);
         p.api = Some(crate::api::ApiInfo { port: 47821, token: "t".into(), kb_exe: None });
@@ -1933,6 +2218,47 @@ mod tests {
         let i = a.iter().position(|x| x == "--agents").unwrap();
         let v: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert!(v["card-tester"]["prompt"].is_string());
+        assert!(v["card-reviewer"]["prompt"].is_string());
+        assert_eq!(v["card-reviewer"]["effort"], "high");
+        assert!(v["card-reproducer"]["prompt"].as_str().unwrap().contains("VERDICT: REPRODUCED"));
+        assert!(v["card-reproducer"].get("effort").is_none(), "the reproducer runs at the session's effort");
+        assert!(v["card-merger"]["prompt"].is_string());
+    }
+
+    // Windows' command line holds 32,767 characters, and every agent's prompt rides on it (card #96).
+    #[test]
+    fn a_sessions_command_line_stays_well_under_the_windows_limit() {
+        let mut p = plan(Some("0b2c9a44-5d7e-4c1a-9f3e-2a6b8c0d1e2f"));
+        p.api = Some(crate::api::ApiInfo { port: 47821, token: "t".into(), kb_exe: None });
+        p.settings_path = PathBuf::from(r"C:\Users\someone-with-a-long-name\.claude-kanban-dsh-test\sessions\card-123-0b2c9a44-5d7e-4c1a-9f3e-2a6b8c0d1e2f\settings.json");
+        // Each argument as Windows quotes it: its own quotes around it and a space, and every `"`
+        // or `\` inside it escaped with a `\` (the `--agents` JSON is full of both).
+        let len: usize = build_args(&p).iter().map(|a| a.len() + 3 + a.chars().filter(|c| *c == '"' || *c == '\\').count()).sum();
+        assert!(len < 30_000, "the command line is {len} characters");
+        // The Router's (card #119): its rules as a system prompt and its own agents too.
+        p.router = true;
+        let args = build_args(&p);
+        let len: usize = args.iter().map(|a| a.len() + 3 + a.chars().filter(|c| *c == '"' || *c == '\\').count()).sum();
+        assert!(len < 30_000, "the Router's command line is {len} characters");
+        let i = args.iter().position(|a| a == "--append-system-prompt").expect("the Router's rules go in as its system prompt");
+        assert_eq!(args[i + 1], crate::routersession::PROMPT);
+        assert!(args.iter().any(|a| a.contains("claude-sonnet-5-5")), "its subagents run on Sonnet");
+        // Its guard sees the editing tools as well as the shells.
+        let s = settings_json(&p);
+        let pre = s["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().any(|e| e["matcher"] == crate::guard::ROUTER_TOOLS));
+        p.router = false;
+        assert!(!settings_json(&p)["hooks"]["PreToolUse"].as_array().unwrap().iter().any(|e| e["matcher"] == crate::guard::ROUTER_TOOLS));
+    }
+
+    /// Card #117, router decision R2: on a Mac an account-2 card refuses, saying why.
+    #[test]
+    fn account_2_refuses_where_it_isnt_supported() {
+        assert_eq!(account_runs_here("account2", true), Ok(()));
+        assert_eq!(account_runs_here("main", false), Ok(()));
+        let e = account_runs_here("account2", false).unwrap_err();
+        assert!(e.starts_with("Account 2 isn't supported on a Mac"), "{e}");
+        assert_eq!(account_runs_here("account2", crate::platform::SECOND_ACCOUNT).is_ok(), cfg!(windows));
     }
 
     #[test]
@@ -1955,5 +2281,56 @@ mod tests {
         for s in ["idle", "failed", "ended", "starting"] {
             assert_eq!(turn_start(Some(t0), s, t1), None);
         }
+    }
+
+    /// `Waits::hook` as `Sessions::hook` calls it: the state from `hook_state`.
+    fn wait_hook(w: &mut Waits, event: &str, body: &Value, asking: bool) -> bool {
+        let state = hook_state(event, body).unwrap();
+        w.hook(event, state, body, asking)
+    }
+
+    #[test]
+    fn waits_keep_a_prompt_and_a_failure_until_the_state_leaves() {
+        let mut w = Waits::default();
+        let prompt = serde_json::json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash", "transcript_path": "x.jsonl" });
+        assert!(wait_hook(&mut w, "Notification", &prompt, false), "a new prompt asks for its call to be read");
+        assert_eq!((w.prompt.as_deref(), w.seq), (Some("Claude needs your permission to use Bash"), 1));
+        w.call = Some(crate::transcript::OpenCall { id: "b".into(), text: "Bash: ls".into(), path: "x.jsonl".into(), sub: false });
+        // The same prompt again is a new one: its call is read afresh.
+        assert!(wait_hook(&mut w, "Notification", &prompt, false));
+        assert_eq!((w.call.as_ref(), w.seq), (None, 2));
+        // Answered: back to work, and the prompt goes.
+        wait_hook(&mut w, "UserPromptSubmit", &Value::Null, false);
+        assert_eq!(w, Waits { seq: 2, ..Default::default() });
+        // A question dialog's own notice keeps no prompt: the question says it.
+        assert!(!wait_hook(&mut w, "Notification", &prompt, true));
+        let ask = serde_json::json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use AskUserQuestion" });
+        assert!(!wait_hook(&mut w, "Notification", &ask, false));
+        assert_eq!(w.prompt, None);
+        // An elicitation has a message but no tool: kept, with nothing to read.
+        let el = serde_json::json!({ "notification_type": "elicitation_dialog", "message": "The server asks for a name" });
+        assert!(!wait_hook(&mut w, "Notification", &el, false));
+        assert_eq!(w.prompt.as_deref(), Some("The server asks for a name"));
+        // A failure keeps its error text until the state leaves "failed".
+        wait_hook(&mut w, "StopFailure", &serde_json::json!({ "error": "rate_limit", "error_details": "5-hour limit reached" }), false);
+        assert_eq!((w.failure.as_deref(), w.prompt.as_deref()), (Some("rate limit: 5-hour limit reached"), None));
+        wait_hook(&mut w, "UserPromptSubmit", &Value::Null, false);
+        assert_eq!(w.failure, None);
+        wait_hook(&mut w, "StopFailure", &serde_json::json!({}), false);
+        assert_eq!(w.failure, None, "no error text, none kept");
+        // A turn ended with no hook clears both.
+        w.prompt = Some("p".into());
+        w.failure = Some("f".into());
+        w.left("idle");
+        assert_eq!((w.prompt, w.failure), (None, None));
+    }
+
+    #[test]
+    fn a_failures_text_comes_from_its_error_fields() {
+        let f = |v: Value| failure_text(&v);
+        assert_eq!(f(serde_json::json!({ "error": "server_error" })).as_deref(), Some("server error"));
+        assert_eq!(f(serde_json::json!({ "error_details": "overloaded" })).as_deref(), Some("overloaded"));
+        assert_eq!(f(serde_json::json!({ "message": "boom" })).as_deref(), Some("boom"));
+        assert_eq!(f(serde_json::json!({ "error": "  ", "last_assistant_message": "x" })), None);
     }
 }

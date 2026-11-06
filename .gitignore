@@ -7,3 +7,5 @@ ui/dist/
 .env
 *.key
 .claude/
+# kb sidecars for the macOS bundle, written by scripts/mac-kb.sh (card #117).
+src-tauri/binaries/

@@ -25,13 +25,7 @@ pub fn open_external(url: &str) -> Result<(), String> {
 }
 
 fn chrome() -> Option<PathBuf> {
-    let mut places = Vec::new();
-    for var in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
-        if let Some(base) = std::env::var_os(var) {
-            places.push(PathBuf::from(base).join("Google").join("Chrome").join("Application").join("chrome.exe"));
-        }
-    }
-    places.into_iter().find(|p| p.exists())
+    crate::platform::chrome_paths().into_iter().find(|p| p.exists())
 }
 
 /// Opens a login in the Chrome profile its label (or its link) maps to in `profiles`, the

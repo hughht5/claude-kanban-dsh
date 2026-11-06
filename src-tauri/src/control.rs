@@ -16,6 +16,7 @@ pub const CONTROL: &[&str] = &[
     "kanban_session_read",
     "kanban_session_switch",
     "kanban_session_keys",
+    "kanban_search",
 ];
 
 pub fn schemas() -> Value {
@@ -35,6 +36,8 @@ pub fn schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "model": { "type": "string" }, "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"] } }, "required": ["card"] } },
         { "name": "kanban_session_keys", "description": "Press keys in the card's terminal, to answer a prompt the session is stuck on (a trust or permission question). Keys: enter, up, down, left, right, esc, tab, space, ctrl-c, or {\"text\": \"...\"} to type text.",
           "inputSchema": { "type": "object", "properties": { "card": card, "keys": { "type": "array", "items": {} } }, "required": ["card", "keys"] } },
+        { "name": "kanban_search", "description": "Search every card's session history (the last 90 days, archived cards included): prompts, replies and tool calls. Every word of 3 or more letters must match; \"quote\" a phrase. Secrets and sign-in links are stored masked. For Hugh's own sessions only: card sessions don't get it.",
+          "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "card": { "type": "integer", "description": "Only this card's sessions." }, "limit": { "type": "integer", "description": "How many of the newest matches to take (default and most 2000)." } }, "required": ["query"] } },
     ])
 }
 
@@ -98,7 +101,7 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
             };
             let r = crate::session_start(app.clone(), app.state::<Board>(), id.clone(), mode.clone()).map_err(err)?;
             if let Some(m) = args.get("message").and_then(Value::as_str).filter(|m| !m.trim().is_empty()) {
-                crate::session_send(app.clone(), app.state::<Board>(), id.clone(), m.to_string()).map_err(err)?;
+                crate::session_send(app.clone(), app.state::<Board>(), id.clone(), m.to_string(), None).map_err(err)?;
             }
             match r.get("queued") {
                 Some(q) => json!(format!("Card #{n}: queued ({mode}), number {q} in line; it starts when a place frees.")),
@@ -108,7 +111,7 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
         "kanban_session_send" => {
             let (id, n) = card_id(app, args)?;
             let text = args.get("text").and_then(Value::as_str).ok_or("pass the message as `text`")?;
-            crate::session_send(app.clone(), app.state::<Board>(), id, text.to_string()).map_err(err)?;
+            crate::session_send(app.clone(), app.state::<Board>(), id, text.to_string(), None).map_err(err)?;
             json!(format!("Queued for card #{n}'s session: it is typed when the session is next free."))
         }
         "kanban_session_stop" => {
@@ -136,7 +139,8 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
                 let mut live = vec![];
                 if let Some(m) = states.as_object() {
                     for (id, st) in m {
-                        let n = store.get(id).map(|c| c.number).unwrap_or(0);
+                        // The Router is not a card (card #119, final-test F8): it shows as "router".
+                        let n = if id == crate::routersession::KEY { json!("router") } else { json!(store.get(id).map(|c| c.number).unwrap_or(0)) };
                         live.push(json!({ "card": n, "state": st, "needs": needs.get(id).and_then(|v| v.get("reason")) }));
                     }
                 }
@@ -191,6 +195,7 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
             }
             json!(format!("Pressed {} key(s) in card #{n}'s terminal.", keys.len()))
         }
+        "kanban_search" => crate::search::tool(app, args)?,
         _ => return Err(format!("no tool called {name}")),
     })
 }

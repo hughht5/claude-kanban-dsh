@@ -23,7 +23,9 @@ pub(crate) fn begin_session(app: &AppHandle, store: &mut Store, card: &Card, mod
     let cap = store.session_cap().map_err(|e| e.to_string())?;
     let q = store.start_queue().map_err(|e| e.to_string())?;
     let running = live.running_count();
-    if q.starts_now(&card.id, running, cap) {
+    // A stack's lead is the integrator its children wait on, so its start goes first (card #113).
+    let first = card.is_lead();
+    if if first { q.starts_now_first(&card.id, running, cap) } else { q.starts_now(&card.id, running, cap) } {
         let was_queued = store.unqueue_start(&card.id).map_err(|e| e.to_string())?.is_some();
         let row = start_session(app, store, card, mode)?;
         if was_queued {
@@ -34,7 +36,7 @@ pub(crate) fn begin_session(app: &AppHandle, store: &mut Store, card: &Card, mod
     if mode == "resume" && conversation(store, card).is_none() {
         return Err("this card has no conversation to resume".into());
     }
-    let pos = store.queue_start(&card.id, mode, why).map_err(|e| e.to_string())?;
+    let pos = if first { store.queue_start_first(&card.id, mode, why) } else { store.queue_start(&card.id, mode, why) }.map_err(|e| e.to_string())?;
     let _ = store.add_log(
         &card.id,
         &format!(

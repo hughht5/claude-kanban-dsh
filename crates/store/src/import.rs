@@ -192,7 +192,8 @@ impl Store {
                     let version: i64 = tx.query_row("SELECT version FROM cards WHERE id = ?1", [id], |r| r.get(0))?;
                     tx.execute(
                         "INSERT INTO card_revisions (card_id, version, at, by, changed) VALUES (?1, ?2, ?3, 'import --replace', ?4)",
-                        params![id, version, at, serde_json::to_string(&json!({ "replaced": true }))?],
+                        // The column and archive state it wrote, for the time in each column (card #111).
+                        params![id, version, at, serde_json::to_string(&json!({ "replaced": true, "column": column, "archived": archived }))?],
                     )?;
                     replaced += 1;
                     let mut st = tx.prepare("SELECT at, text FROM card_log WHERE card_id = ?1")?;
@@ -209,7 +210,7 @@ impl Store {
                     )?;
                     tx.execute(
                         "INSERT INTO card_revisions (card_id, version, at, by, changed) VALUES (?1, 1, ?2, 'import', ?3)",
-                        params![id, at, serde_json::to_string(&json!({ "imported": true }))?],
+                        params![id, at, serde_json::to_string(&json!({ "imported": true, "column": column, "archived": archived }))?],
                     )?;
                     imported += 1;
                     BTreeSet::new()

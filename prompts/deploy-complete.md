@@ -52,6 +52,7 @@ notes, an update to an audit or to-do list. Write each step so it can run more t
 card without doing the work twice (check for an earlier entry first), and log on the card what you
 did or why you skipped it. If a step can't run (a tool is missing, a channel doesn't exist), don't
 hold the card up: say so in the summary and say what the owner should do.
+Put the steps for your own repos in your private prompts folder.
 
 ## 3. Tell the owner where things stand
 

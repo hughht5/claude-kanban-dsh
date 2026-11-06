@@ -1,0 +1,17 @@
+/* Time to check (card #103, check-size.js): the chip on a card in Human test, the 30-second looks pill (filterbar.css) and the "Time to check" row in the card's Details. Colours from board.css. */
+.chip.check-size-quick{color:var(--ok)}
+.chip.check-size-real{color:var(--warn)}
+
+/* The Details row. */
+.cs-dd{display:flex;flex-direction:column;gap:4px}
+.cs-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:11px}
+.cs-why{line-height:1.4}
+.cs-reasons{margin:0;padding-left:16px;font-size:12.5px;line-height:1.4;color:var(--muted)}
+.cs-reasons li+li{margin-top:1px}
+.cs-diff,.cs-more{font-size:12px;color:var(--muted)}
+.cs-paths{list-style:none;margin:0;padding:0;font-family:var(--mono);font-size:11px;line-height:1.45}
+.cs-paths li{overflow-wrap:anywhere}
+.cs-paths .a{color:var(--ok)} .cs-paths .r{color:var(--bad)}
+.cs-paths .more{color:var(--muted)}
+.cs-act{margin-top:2px}
+.cs-act .btn{padding:3px 10px;font-size:12.5px}

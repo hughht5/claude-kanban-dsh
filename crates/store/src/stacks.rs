@@ -11,6 +11,10 @@
 //! - Hugh's drop can join a built card or stack to a stack in Ship it, or take a card out of Ship
 //!   it into a stack, while neither ship has started, so they ship as one (card #89,
 //!   `stack_join`). A stack is one repo.
+//! - Each child builds on its own branch, and the lead merges it into the stack's branch (card
+//!   #113). A child in Human test counts as ready, and can be passed, only once it is merged
+//!   (`merged`). A child with no branch of its own was built the old way, by the lead, so it
+//!   counts as merged.
 //!
 //! The fields live in `fields` like any other; only these functions write `stack` and `stackOf`.
 
@@ -28,6 +32,96 @@ pub const STACK_FIELDS: [&str; 3] = ["stack", "stackOf", "archivedWith"];
 pub const READY: [&str; 4] = ["Human test", "Ship it", "Deploy complete", "Done"];
 /// Lead columns the rule may move a stack out of, into Human test.
 const BUILDING: [&str; 3] = ["Planning", "In progress", "Blocked"];
+/// The lead's own field naming what holds the stack back from Human test (card #96), so the
+/// reason is logged once, not on every recheck.
+pub const STACK_HELD_KEY: &str = "stackHeld";
+
+/// The state of a card's verdict field (`test`, `review`, `merge`): `{state, ...}`.
+fn state_of<'a>(card: &'a Card, key: &str) -> Option<&'a str> {
+    card.fields.get(key).and_then(|t| t.get("state")).and_then(Value::as_str)
+}
+
+/// What still holds a lead back from Human test (card #96): its own subagent test or review,
+/// each while Hugh's rule for it is on, until it has passed. A capped one (`capped: true`, its
+/// third FAIL) holds it whatever a later verdict says, until Hugh moves the lead into In progress.
+/// `rules` is (field, what it is, on).
+pub fn lead_missing(lead: &Card, rules: &[(&str, &str, bool)]) -> Vec<String> {
+    rules
+        .iter()
+        .filter(|(_, _, on)| *on)
+        .filter_map(|(key, what, _)| {
+            let rec = lead.fields.get(*key);
+            if rec.and_then(|t| t.get("capped")).and_then(Value::as_bool) == Some(true) {
+                Some(format!("{what} (failed 3 times; Hugh moves it on)"))
+            } else if rec.and_then(|t| t.get("state")).and_then(Value::as_str) != Some("passed") {
+                Some(what.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// `lead_missing` for a lead with its children `kids`. The review counts as passed when every
+/// live child's review has passed (card #113): a lead's own commits are only the merges of
+/// reviewed work. Old-way children, with no review of their own, still need the lead's.
+pub fn lead_missing_in_stack(lead: &Card, kids: &[Card], rules: &[(&str, &str, bool)]) -> Vec<String> {
+    let kids_reviewed = children_reviewed(kids);
+    let rules: Vec<(&str, &str, bool)> = rules.iter().copied().filter(|(key, _, _)| !(kids_reviewed && *key == crate::REVIEW_KEY)).collect();
+    lead_missing(lead, &rules)
+}
+
+/// Do a lead's children's reviews stand in for its own (card #113)? Only in a stack whose
+/// children all build themselves (a lead that builds work of its own still has it reviewed,
+/// card #96): every live child builds itself and its review passed.
+pub fn children_reviewed(kids: &[Card]) -> bool {
+    let live: Vec<&Card> = kids.iter().filter(|k| !k.archived).collect();
+    !live.is_empty() && live.iter().all(|k| own_build(k) && state_of(k, crate::REVIEW_KEY) == Some("passed"))
+}
+
+/// A card's own branch, trimmed ("" when it has none).
+fn branch_of(card: &Card) -> &str {
+    card.fields.get("branch").and_then(Value::as_str).map(str::trim).unwrap_or("")
+}
+
+/// The app's mark on a stack child that builds itself in its own session (card #113). Set
+/// when the child's own session starts; sessions can't write it.
+pub const OWN_BUILD_KEY: &str = "stackOwnBuild";
+
+/// Does `child` build itself (its own session started while in a stack), rather than being
+/// built by its lead the old way?
+pub fn own_build(child: &Card) -> bool {
+    child.fields.get(OWN_BUILD_KEY).and_then(Value::as_bool) == Some(true)
+}
+
+/// Is `child` in the stack's branch (card #113)? A child that builds itself is merged only once
+/// the merger's record on it says passed, whatever its `branch` says. A child its lead built
+/// the old way (no session of its own) with no branch of its own (none, or the lead's) is in
+/// the stack's branch already.
+pub fn merged(child: &Card, lead: &Card) -> bool {
+    if state_of(child, "merge") == Some("passed") {
+        return true;
+    }
+    if own_build(child) {
+        return false;
+    }
+    let b = branch_of(child);
+    b.is_empty() || b == branch_of(lead)
+}
+
+/// Where a child is in its stack (card #113), for the board and the rules: "waiting" (on a card
+/// not yet merged, as `waiting` says), "building", "to-merge" (in Human test, not merged yet),
+/// "merged", "passed" (Hugh's Passed, once merged) or "shipped".
+pub fn stack_stage(child: &Card, lead: &Card, waiting: bool) -> &'static str {
+    match child.column.as_str() {
+        "Ship it" | "Deploy complete" | "Done" => "shipped",
+        "Human test" if !merged(child, lead) => "to-merge",
+        "Human test" if child.passed() => "passed",
+        "Human test" => "merged",
+        "Backlog" | "Planning" | "Blocked" if waiting => "waiting",
+        _ => "building",
+    }
+}
 
 /// A move the stack rules made, for the app to pass on (a message to the lead's session, or
 /// stopping a child's session when it went to Done).
@@ -120,6 +214,8 @@ fn join_check(conn: &Connection, lead: i64, child: i64, hugh: bool) -> Result<(C
             repo_name(&l)
         )));
     }
+    // A card that waits on the lead, or that the lead waits on, can't become its child (card #109).
+    crate::waits::check_join(&l, &[&c])?;
     let mut kids = Vec::new();
     if c.is_lead() {
         if !hugh {
@@ -136,6 +232,7 @@ fn join_check(conn: &Connection, lead: i64, child: i64, hugh: bool) -> Result<(C
                 kids.push(k);
             }
         }
+        crate::waits::check_join(&l, &kids.iter().collect::<Vec<_>>())?;
     }
     if c.column == "Ship it" {
         if !hugh {
@@ -211,13 +308,14 @@ fn put(tx: &rusqlite::Transaction, card: &mut Card, patch: &Patch, by: &str, log
     Ok(())
 }
 
-/// Is the stack ready for Hugh, by `rule`? Archived children don't count.
-pub fn stack_ready(children: &[Card], rule: &str) -> bool {
+/// Is `lead`'s stack ready for Hugh, by `rule`? Archived children don't count. A child in
+/// Human test is ready only once it is merged into the stack's branch (card #113).
+pub fn stack_ready(lead: &Card, children: &[Card], rule: &str) -> bool {
     let live: Vec<&Card> = children.iter().filter(|c| !c.archived).collect();
     if live.is_empty() {
         return false;
     }
-    let ready = |c: &&Card| READY.contains(&c.column.as_str());
+    let ready = |c: &&Card| READY.contains(&c.column.as_str()) && (c.column != "Human test" || merged(c, lead));
     if rule == "first" {
         live.iter().any(ready)
     } else {
@@ -410,19 +508,60 @@ impl Store {
                 "#{lead} is in Ship it, and a card that joins it ships with it: only Hugh adds one, by dropping it on #{lead} in the app"
             )));
         }
+        // Its waits (card #109) are checked as the stack's card it will be, so a sibling can be
+        // waited on whatever its column, and are set once it has joined.
+        let mut fields = fields;
+        let waits = match fields.remove(crate::BLOCKED_KEY) {
+            Some(v) => crate::clean_blocked_by(&v)?,
+            None => None,
+        };
+        if let Some(w) = &waits {
+            let mut probe_fields = fields.clone();
+            probe_fields.insert("stackOf".into(), json!(lead));
+            probe_fields.insert(crate::BLOCKED_KEY.into(), w.clone());
+            let probe = Card {
+                id: String::new(),
+                number: self.next_number()?,
+                column: fields.get("column").and_then(Value::as_str).unwrap_or("Backlog").to_string(),
+                order: None,
+                order_col: None,
+                archived: false,
+                fields: probe_fields,
+                version: 0,
+            };
+            crate::waits::check_waits(&self.conn, &probe, &[])?;
+        }
         let repo = fields.get("repo").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
         if !repo.is_empty() && !ship_lane(&l).is_empty() && repo != ship_lane(&l) {
             return Err(Error::Invalid(format!("#{lead} is for {}: a stack is one branch in one repo", repo_name(&l))));
         }
         let card = self.create(None, fields, by)?;
         self.stack_add(lead, card.number, by)?;
+        if let Some(w) = waits {
+            let c = self.get(&card.id)?;
+            let mut p = Patch::new();
+            p.insert(crate::BLOCKED_KEY.into(), w);
+            self.update(&card.id, c.version, &p, by)?;
+        }
         self.get(&card.id)
     }
 
-    /// Hugh's Passed (or taking it back).
+    /// Hugh's Passed (or taking it back). A stack's child is passed only once it is merged into
+    /// the stack's branch (card #113): what Hugh tests is the stack's build. Taking it back is
+    /// always allowed.
     pub fn set_passed(&mut self, id: &str, on: bool, by: &str) -> Result<Card> {
         let tx = self.begin()?;
         let mut c = get_tx(&tx, id)?.ok_or_else(|| Error::NotFound(id.to_string()))?;
+        if let (true, Some(n)) = (on, c.stack_of()) {
+            if let Ok(lead) = by_number_tx(&tx, n) {
+                if !merged(&c, &lead) {
+                    return Err(Error::Invalid(format!(
+                        "#{} isn't merged into the stack's branch yet, so it can't be passed: the stack's lead merges it first",
+                        c.number
+                    )));
+                }
+            }
+        }
         if c.passed() == on {
             return Ok(c);
         }
@@ -446,6 +585,17 @@ impl Store {
         let card = self.get(card_id)?;
         let mut moves = Vec::new();
         if let Some(lead_n) = card.stack_of() {
+            // A child that went back has work the stack's branch doesn't hold yet (card #113):
+            // its merge record is cleared before the rules read it, and the lead merges it again.
+            if !READY.contains(&card.column.as_str()) && card.fields.get("merge").map_or(false, |m| !m.is_null()) {
+                let tx = self.begin()?;
+                let mut c = get_tx(&tx, card_id)?.ok_or_else(|| Error::NotFound(card_id.to_string()))?;
+                let mut p = Patch::new();
+                p.insert("merge".into(), Value::Null);
+                let line = format!("Merge record cleared: it went back to {}, so the stack's lead merges it again once it passes", c.column);
+                put(&tx, &mut c, &p, by, Some(&line))?;
+                tx.commit()?;
+            }
             moves = self.stack_recheck(lead_n, &format!("#{} moved", card.number), by)?;
         } else if card.is_lead() && (card.column == "Deploy complete" || card.column == "Done") {
             let tx = self.begin()?;
@@ -471,6 +621,8 @@ impl Store {
     pub fn stack_recheck(&mut self, lead_n: i64, cause: &str, by: &str) -> Result<Vec<StackMove>> {
         let mut moves = Vec::new();
         let rule = self.stack_rule();
+        let lead_rules = [(crate::TEST_KEY, "subagent test", self.test_required()), (crate::REVIEW_KEY, "subagent review", self.review_required())];
+        let repro_on = self.rule_on(crate::REPRO_RULE_KEY);
         let tx = self.begin()?;
         let Ok(mut lead) = by_number_tx(&tx, lead_n) else { return Ok(moves) };
         if lead.archived {
@@ -482,9 +634,24 @@ impl Store {
                 kids.push(k);
             }
         }
-        let ready = stack_ready(&kids, &rule);
+        let ready = stack_ready(&lead, &kids, &rule);
         let from = lead.column.clone();
-        let to = if ready && BUILDING.contains(&from.as_str()) {
+        // The lead's own work is held to its test and review too (card #96): the stack waits,
+        // and says why once. Its children's reviews stand for its own (card #113).
+        let mut missing = if ready && BUILDING.contains(&from.as_str()) { lead_missing_in_stack(&lead, &kids, &lead_rules) } else { vec![] };
+        // And a bug reported on the lead itself waits for the card-reproducer's proof (card #112).
+        if ready && BUILDING.contains(&from.as_str()) && repro_on && crate::repro_open(&lead) {
+            missing.push("reproducer proof".to_string());
+        }
+        let held = (!missing.is_empty()).then(|| format!("#{}'s own {} {} passed", lead.number, missing.join(" and "), if missing.len() > 1 { "haven't" } else { "hasn't" }));
+        let was_held = lead.fields.get(STACK_HELD_KEY).and_then(Value::as_str).map(str::to_string);
+        if held != was_held {
+            let mut p = Patch::new();
+            p.insert(STACK_HELD_KEY.into(), held.as_ref().map_or(Value::Null, |h| json!(h)));
+            let line = held.as_ref().map(|h| format!("The stack is ready to test, but {h}: it stays in {from} until it has ({cause})"));
+            put(&tx, &mut lead, &p, by, line.as_deref())?;
+        }
+        let to = if ready && BUILDING.contains(&from.as_str()) && missing.is_empty() {
             Some("Human test")
         } else if !ready && from == "Human test" {
             Some("In progress")
@@ -494,6 +661,15 @@ impl Store {
         if let Some(to) = to {
             let mut p = Patch::new();
             p.insert("column".into(), json!(to));
+            // A child's work sent the stack back, not the lead's: the lead keeps its own verdicts
+            // (card #96), where a move into In progress would otherwise reset them.
+            if to == "In progress" {
+                for key in crate::RESET_ON_IN_PROGRESS {
+                    if let Some(v) = lead.fields.get(*key) {
+                        p.insert((*key).into(), v.clone());
+                    }
+                }
+            }
             let why = if to == "Human test" {
                 if rule == "first" { "a card in the stack is ready to test" } else { "every card in the stack is ready to test" }
             } else {

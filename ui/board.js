@@ -26,7 +26,11 @@ const archAt=c=>Date.parse(c.archivedAt||"")||ts(c);
 // Hugh's manual order: a card's `order` counts only in the column it was set in (`orderCol`), so a session's move drops it.
 const hasOrd=c=>typeof c.order==="number"&&isFinite(c.order)&&c.orderCol===colOf(c);
 const byOrder=(a,b)=>{const ao=hasOrd(a),bo=hasOrd(b);if(ao&&bo)return a.order-b.order||ts(b)-ts(a);if(ao)return -1;if(bo)return 1;return ts(b)-ts(a)};
-const colCards=col=>cards.filter(c=>!isArch(c)&&colOf(c)===col&&!(typeof stackHidden==="function"&&stackHidden(c))).sort(byOrder); // a stack's children aren't in the column (stacks.js)
+// The router's own card (card #120 for #119): `system: "router"` or number 0. It is never drawn as a
+// card and never counted (columns, pills, the review queue). Global, so other files use it too.
+const isSystemCard=c=>!!c&&(c.fields&&c.fields.system==="router"||c.system==="router"||c.number===0);
+window.isSystemCard=isSystemCard;
+const colCards=col=>cards.filter(c=>!isSystemCard(c)&&!isArch(c)&&colOf(c)===col&&!(typeof stackHidden==="function"&&stackHidden(c))).sort(byOrder); // a stack's children aren't in the column (stacks.js)
 const cardNum=c=>Number.isInteger(c.number)&&c.number>0?c.number:null;
 const numBadge=c=>cardNum(c)?`<span class="num" title="Card number: /kanban ${cardNum(c)}">${cardNum(c)}</span>`:"";
 const issueNum=c=>c.issue&&typeof c.issue==="object"?c.issue.number:c.issue;
@@ -48,10 +52,70 @@ const planChip=c=>{const st=planState(c);if(!PLAN_LABEL[st])return"";if(st==="st
 const AUTO_TO={"Human test":"→ Human test","Deploy complete":"→ Deploy"};
 const autoOf=c=>c&&typeof c.autoTo==="string"&&Object.hasOwn(AUTO_TO,c.autoTo)?c.autoTo:"";
 const autoChip=c=>{const a=autoOf(c);return a?`<span class="tag chip auto${a==="Deploy complete"?" auto-deploy":""}" title="Goes on by itself to ${esc(a)} (Take it to)">${esc(AUTO_TO[a])}</span>`:""};
-const TEST_LABEL={needed:"Needed",passed:"Passed",failed:"Failed",unclear:"Unclear"},TEST_CHIP={passed:"Tested",failed:"Test failed",unclear:"Test unclear"};
-const testOf=c=>c.test&&typeof c.test==="object"&&typeof c.test.state==="string"?c.test:null;
-const testChip=c=>{const t=testOf(c);if(!t||!Object.hasOwn(TEST_CHIP,t.state)||!["In progress","Human test"].includes(colOf(c)))return"";const det=t.detail?String(t.detail):"";
-  return`<span class="tag chip test-${esc(t.state)}"${det&&!SECRET.test(det)?` title="${esc(det)}"`:""}>${esc(TEST_CHIP[t.state])}</span>`};
+// The app's subagent verdicts on a card (cards #76, #96, #100), one entry each: the card field, the
+// panel row, the chip for each state, and the columns where the chip shows.
+const CHECKS=[
+  {key:"test",row:"Subagent test",chip:{passed:"Tested",failed:"Test failed",unclear:"Test unclear"},cols:["In progress","Human test"]},
+  {key:"review",row:"Subagent review",chip:{passed:"Reviewed",failed:"Review failed",unclear:"Review unclear"},cols:["In progress","Human test"]},
+  // The plan critique (card #97): on Planning and Blocked cards, not once the build has started.
+  {key:"critique",row:"Plan critique",chip:{passed:"Plan critiqued",failed:"Critique failed",unclear:"Critique unclear"},cols:["Planning","Blocked"],hide:t=>t.started===true},
+  // The card-reproducer (card #112): its own states, and its chip on a Blocked card too (NOT REPRODUCED sends it there).
+  {key:"repro",row:"Reproducer",chip:{needed:"Bug to reproduce",reproduced:"Bug reproduced",fixed:"Fix proved","not-reproduced":"Not reproduced",unclear:"Repro unclear"},cols:["In progress","Human test","Blocked"],
+   labels:{needed:"A bug to reproduce",reproduced:"Bug reproduced",fixed:"Fix proved","not-reproduced":"Not reproduced",unclear:"Unclear"}},
+  {key:"merge",row:"Merger",chip:{passed:"Merged",failed:"Merge failed",unclear:"Merge unclear"},cols:["Ship it","Deploy complete"]},
+];
+const CHECK_LABEL={needed:"Needed",passed:"Passed",failed:"Failed",unclear:"Unclear"};
+const checkOf=(c,k)=>c[k]&&typeof c[k]==="object"&&typeof c[k].state==="string"?c[k]:null;
+const checkChip=(c,ch)=>{const t=checkOf(c,ch.key);if(!t||!Object.hasOwn(ch.chip,t.state)||!ch.cols.includes(colOf(c))||(ch.hide&&ch.hide(t)))return"";const det=t.detail?String(t.detail):"";
+  return`<span class="tag chip test-${esc(t.state)}" data-check="${esc(ch.key)}"${det&&!SECRET.test(det)?` title="${esc(det)}"`:""}>${esc(ch.chip[t.state])}</span>`};
+const testChip=c=>CHECKS.map(ch=>checkChip(c,ch)).join("");
+// The panel's rows: the state, when, how many FAILs since the reset, and what failed.
+const checkRows=c=>CHECKS.map(ch=>{const t=checkOf(c,ch.key),at=t?Date.parse(t.at||""):0,r=t&&Number.isInteger(t.round)?t.round:0;
+  const v=t?`${esc(Object.hasOwn(ch.labels||CHECK_LABEL,t.state)?(ch.labels||CHECK_LABEL)[t.state]:t.state)}${at?` · <span title="${esc(t.at)}">${esc(ago(at))}</span>`:""}${r?` · ${r} FAIL${r===1?"":"s"}`:""}${t.detail?`<br>${safe(t.detail)}`:""}`:"—";
+  return`<dt>${esc(ch.row)}</dt><dd>${v}</dd>`}).join("");
+// The card-router subagent's route (card #98): a size chip on Planning and In progress cards,
+// and the panel's Route row, with Route again while the card is in Planning.
+const ROUTE_CHIP={small:"Small",normal:"Normal",split:"Split"};
+const routeOf=c=>c&&c.route&&typeof c.route==="object"&&Object.hasOwn(ROUTE_CHIP,c.route.size)?c.route:null;
+const routeChip=c=>{const r=routeOf(c);if(!r||!["Planning","In progress"].includes(colOf(c)))return"";const why=r.reason&&!SECRET.test(String(r.reason))?`: ${r.reason}`:"";
+  return`<span class="tag chip route route-${esc(r.size)}" data-route="${esc(r.size)}" title="${esc(`Routed ${r.size} by the card-router subagent${why}`)}">${esc(ROUTE_CHIP[r.size])}</span>`};
+const routeRow=c=>{const r=routeOf(c),at=r?Date.parse(r.at||""):0;
+  const again=colOf(c)==="Planning"&&!c.stackOf?`<button class="ibtn" id="route-again" type="button" title="Clear the route and ask the card's session to run the card-router again">Route again</button>`:"";
+  const kids=r&&Array.isArray(r.children)?r.children.filter(x=>typeof x==="string"):[];
+  const v=r?`${esc(ROUTE_CHIP[r.size])}${r.model||r.effort?` · ${esc([r.model,r.effort].filter(Boolean).join(" "))}`:""}${r.check?` · check ~${esc(r.check)}`:""}${at?` · <span title="${esc(r.at)}">${esc(ago(at))}</span>`:""}${r.reason?`<br>${safe(r.reason)}`:""}${kids.map(x=>`<br>- ${safe(x)}`).join("")}${r.wentOnAt?`<br><span class="meta">Went on to In progress by itself</span>`:""}`:"—";
+  return`<dt>Route</dt><dd>${v}${again?` ${again}`:""}</dd>`};
+// The stuck-session monitor (card #99): its `stuck` field puts "May be stuck" on the card, with
+// the reason as its title, and a panel row saying since when and what the app did.
+const STUCK_KIND={repeating:"Repeating",quiet:"Quiet",question:"At a question",permission:"At a permission prompt",failed:"Failed","dead wait":"Dead wait",idle:"Idle, nothing running"};
+const stuckOf=c=>c.stuck&&typeof c.stuck==="object"&&typeof c.stuck.reason==="string"?c.stuck:null;
+const stuckChip=c=>{const s=stuckOf(c);if(!s||isArch(c)||colOf(c)==="Done")return"";
+  return`<span class="tag chip stuck" data-stuck="${esc(s.kind||"")}"${SECRET.test(s.reason)?"":` title="${esc(s.reason)}"`}>May be stuck</span>`};
+const stuckRow=c=>{const s=stuckOf(c);if(!s||isArch(c)||colOf(c)==="Done")return"";const at=Date.parse(s.since||"");
+  const did=[s.nudged?(s.typed===false?"couldn't get its message in":s.kind==="dead wait"||s.kind==="idle"?"sent it a message":"nudged it"):"",s.notified?"told you":""].filter(Boolean).join(", ");
+  return`<dt>May be stuck</dt><dd class="stuck-row">${esc(STUCK_KIND[s.kind]||s.kind||"")}${at?` · since <span title="${esc(s.since)}">${esc(ago(at))}</span>`:""}${did?` · the app ${esc(did)}`:""}<br>${safe(s.reason)}</dd>`};
+// The card-reproducer's proof (card #112): the bug reports, the steps and shot before the fix and
+// after it, and the test that pins it. Shots load through image_read (panel.js showShots).
+const REPRO_SRC={"found-a-problem":"Found a problem","human-test-fail":"Failed in Human test","report-a-bug":"Report a bug","card-tester":"card-tester FAIL","card-reviewer":"card-reviewer FAIL"};
+function reproRun(name,r){
+  if(!r||typeof r!=="object")return`<div class="rp-run"><b>${name}</b><span class="meta">not run yet</span></div>`;
+  const at=Date.parse(r.at||"");
+  const shot=typeof r.shot==="string"&&r.shot&&typeof shotImg==="function"&&!SECRET.test(r.shot)?shotImg(r.shot,r.at):"";
+  return`<div class="rp-run"><b>${name}</b>${at?`<span class="meta" title="${esc(r.at)}">${esc(ago(at))}</span>`:""}${r.steps?`<pre class="rp-steps">${safe(r.steps)}</pre>`:`<span class="meta">no steps given</span>`}${shot||`<span class="meta">no screenshot</span>`}</div>`;
+}
+function reproBox(c){
+  const r=checkOf(c,"repro");if(!r)return"";
+  const ch=CHECKS.find(x=>x.key==="repro"),at=Date.parse(r.at||"");
+  const reps=Array.isArray(r.reports)?r.reports.filter(x=>x&&typeof x==="object"):[];
+  const earlier=Array.isArray(r.earlier)?r.earlier.filter(x=>x&&typeof x==="object"):[];
+  return`<div class="shipbox repro"><h3>Reproducer</h3>
+   <div><span class="tag chip test-${esc(r.state)}">${esc(ch.chip[r.state]||r.state)}</span>${at?` <span class="meta" title="${esc(r.at)}">${esc(ago(at))}</span>`:""}</div>
+   ${r.detail?`<div>${safe(r.detail)}</div>`:""}
+   ${reps.length?`<ul class="log">${reps.map(x=>`<li><b>${esc(REPRO_SRC[x.source]||x.source||"Bug report")}</b>: ${safe(x.note||"")}</li>`).join("")}</ul>`:""}
+   <div class="rp-runs">${reproRun("Before the fix",r.before)}${reproRun("After the fix",r.after)}</div>
+   ${r.test?`<div>Test: <code>${safe(r.test)}</code></div>`:""}
+   ${earlier.length?`<details class="rp-earlier"><summary>Earlier rounds (${earlier.length})</summary>${earlier.slice().reverse().map(e=>`<div class="rp-round"><span class="tag chip test-${esc(e.state||"")}">${esc(ch.chip[e.state]||e.state||"")}</span>${Array.isArray(e.reports)&&e.reports.length?` <span class="meta">${e.reports.map(x=>safe(x&&x.note||"")).join(" · ")}</span>`:""}<div class="rp-runs">${reproRun("Before the fix",e.before)}${reproRun("After the fix",e.after)}</div>${e.test?`<div>Test: <code>${safe(e.test)}</code></div>`:""}</div>`).join("")}</details>`:""}
+  </div>`;
+}
 const loginsOf=c=>Array.isArray(c.logins)?c.logins.filter(l=>l&&typeof l==="object"):[];
 function moveExtras(c,col,now){
   const into=col==="Ship it"&&colOf(c)!=="Ship it";
@@ -67,7 +131,36 @@ function moveExtras(c,col,now){
   return{patch,text:texts.join("; "),ship:into,plan:intoPlan};
 }
 
-function matches(c){if(!q)return true;if(typeof labelMatch==="function"){const m=labelMatch(c,q);if(m!==null)return m}if(/^\d+$/.test(q))return String(cardNum(c))===q||String(issueNum(c))===q;const h=[c.title,c.repo,issueNum(c),c.branch,c.summary,c.sessionTitle,c.id,...(Array.isArray(c.labels)?c.labels:[])].join(" ").toLowerCase();return h.includes(q)}
+// Shared hooks (card #107), so a feature adds one line in its own file instead of editing the long
+// lines here. Each hook is caught on its own: one that throws never stops the board drawing.
+//  filters:  f(card, term) -> true or false when the term is its own ("is:waiting"), null when not
+//  decorate: f(cardElement, card), on every card after stackDecorate and stackDropTarget
+//  details:  f(card) -> HTML for the panel's details, after the Ship and Planning boxes
+//  rendered: f(), once at the end of every render (also when no card was drawn)
+//  final:    f(cardElement, card), after every decorate hook, so the card face (face.js) is laid out last
+const boardHooks={filters:[],decorate:[],details:[],rendered:[],final:[]};
+const hookTry=(f,...a)=>{try{return f(...a)}catch(e){console.error("board hook",e);return null}};
+// "is:stuck" (card #120): the cards the stuck-session monitor flagged, as its "May be stuck" pill counts them.
+const isStuckCard=c=>!!stuckOf(c)&&!isArch(c)&&colOf(c)!=="Done";
+boardHooks.filters.push((c,t)=>t==="is:stuck"?isStuckCard(c):null);
+// The filter box splits on spaces and every term must match. A "quoted part" keeps its spaces: label:"abc 9".
+const Q_TERM=/[^\s"]*"[^"]*"?[^\s"]*|\S+/g;
+// "label: bug" (a space after the colon) is one term, and so is an unquoted label with spaces that
+// some card has ("label:abc 9"), the longest such label first. Worked out once per box text and board.
+let qMemo={s:null,cards:null,t:[]};
+function qTerms(s){s=String(s||"");if(qMemo.s===s&&qMemo.cards===cards)return qMemo.t;
+  const ts=(s.match(Q_TERM)||[]).map(t=>t.replace(/"/g,"")).filter(Boolean),out=[];
+  const known=new Set(typeof boardLabels==="function"?boardLabels().map(l=>"label:"+String(l).trim().toLowerCase()):[]);
+  for(let i=0;i<ts.length;i++){let t=ts[i];
+    if(/^label:$/i.test(t)&&i+1<ts.length)t+=ts[++i];
+    if(/^label:/i.test(t))for(let j=Math.min(ts.length-1,i+5);j>i;j--){const c=[t,...ts.slice(i+1,j+1)].join(" ");if(known.has(c.toLowerCase())){t=c;i=j;break}}
+    out.push(t)}
+  qMemo={s,cards,t:out};return out}
+// The box's text with `term` taken out if it is there (any case, quotes or not), else added at the end.
+function qToggle(s,term){const key=t=>t.replace(/"/g,"").toLowerCase(),k=key(term);const ts=String(s||"").match(Q_TERM)||[];const kept=ts.filter(t=>key(t)!==k);return(kept.length<ts.length?kept:[...ts,term]).join(" ")}
+function matches(c){if(!q)return true;return qTerms(q).every(t=>termMatches(c,t))}
+function termMatches(c,t){for(const f of boardHooks.filters){const m=hookTry(f,c,t);if(m===true||m===false)return m}
+  if(typeof labelMatch==="function"){const m=labelMatch(c,t);if(m!==null)return m}if(/^\d+$/.test(t))return String(cardNum(c))===t||String(issueNum(c))===t;const h=[c.title,c.repo,issueNum(c),c.branch,c.summary,c.sessionTitle,c.id,...(Array.isArray(c.labels)?c.labels:[])].join(" ").toLowerCase();return h.includes(t)}
 
 function render(){
   const board=$("#board");board.innerHTML="";
@@ -75,10 +168,10 @@ function render(){
   $("#emptyNote").hidden=!(loaded&&cards.length===0);
   const now=Date.now();
   // A card in Done is archived by the store; one an older build left there unarchived shows in the Archive too.
-  const arch=cards.filter(c=>isArch(c)||colOf(c)==="Done");
+  const arch=cards.filter(c=>!isSystemCard(c)&&(isArch(c)||colOf(c)==="Done"));
   for(const col of BOARD_COLS){
     // A stack's children leave the columns (stacks.js); a stack shows when it or a child matches.
-    let list=cards.filter(c=>!isArch(c)&&colOf(c)===col&&!(typeof stackHidden==="function"&&stackHidden(c))&&(typeof stackMatches==="function"?stackMatches(c):matches(c))).sort(byOrder);
+    let list=cards.filter(c=>!isSystemCard(c)&&!isArch(c)&&colOf(c)===col&&!(typeof stackHidden==="function"&&stackHidden(c))&&(typeof stackMatches==="function"?stackMatches(c):matches(c))).sort(byOrder);
     if(typeof pinFirst==="function")list=pinFirst(list); // cards that need Hugh go first (needs.js)
     const el=document.createElement("section");
     el.className="col c-"+col.replace(/ /g,"-");el.dataset.col=col;
@@ -96,8 +189,10 @@ function render(){
     board.appendChild(el);
   }
   board.appendChild(archiveCol(arch));
+  if(typeof timesHeads==="function")timesHeads(); // each column header's median, in its tooltip (times.js, card #111)
   if(focusAfter){const k=document.querySelector(`.card[data-id="${CSS.escape(focusAfter)}"]`);if(k&&!(typeof panel!=="undefined"&&panel)){k.focus();focusAfter=null}}
   renderDetail();
+  for(const f of boardHooks.rendered)hookTry(f); // other files' work after a render (boardHooks)
 }
 
 // The Archive column (card #83): a box to drop a card in at the top, then the archived cards,
@@ -130,15 +225,29 @@ const dropLine=document.createElement("div");dropLine.className="dropline";dropL
 // The card the dragged one will land above: the first whose midpoint is below the pointer (null = the end of the list).
 function dropBefore(wrap,y){for(const k of wrap.querySelectorAll(".card")){if(k.dataset.id===dragId)continue;const r=k.getBoundingClientRect();if(y<r.top+r.height/2)return k}return null}
 
+// Parts other files add to every card (card #105): addCardPart({at, line, panel, wire}), drawn in `at` order.
+// line(c): HTML on the card face; panel(c): HTML in its panel; wire(c, d): handlers once the panel has drawn.
+// Each runs in try/catch, so a broken part logs to the console and never blanks the board.
+const CARD_PARTS=[];
+function addCardPart(p){if(!p||typeof p!=="object")return;CARD_PARTS.push(p);CARD_PARTS.sort((a,b)=>(+a.at||0)-(+b.at||0))}
+function cardPartsRun(k,args){return CARD_PARTS.map(p=>{try{const v=typeof p[k]==="function"?p[k](...args):"";return typeof v==="string"?v:""}
+  catch(e){console.error(`Card part (at ${p.at}) ${k} failed:`,e);return""}})}
+function cardLines(c){return cardPartsRun("line",[c]).join("")}
+function panelParts(c){return cardPartsRun("panel",[c]).join("")}
+function panelPartsWire(c,d){cardPartsRun("wire",[c,d])}
+
 function cardEl(c){
   const b=document.createElement("div");b.className="card"+(c.id===selected?" sel":"")+(typeof needClass==="function"&&!isArch(c)?needClass(c.id):"");b.setAttribute("role","button");b.tabIndex=0;
   b.draggable=canWrite&&!isArch(c);b.dataset.id=c.id;
   if(b.draggable)b.title="Drag to move or reorder. With the card focused, Alt+Up or Alt+Down moves it one place.";
   const n=issueNum(c);
   b.innerHTML=`<span class="t">${typeof needIcon==="function"&&!isArch(c)?needIcon(c.id):""}${typeof stateDot==="function"?stateDot(c.id):""}${numBadge(c)}${safe(c.title||"Untitled card")}</span>${c.summary?`<span class="s">${safe(c.summary)}</span>`:""}
-  <span class="tags">${typeof labelTags==="function"?labelTags(c):""}${typeof queuedBadge==="function"?queuedBadge(c.id):""}${shipChip(c)}${autoChip(c)}${testChip(c)}${(typeof buildingChip==="function"&&buildingChip(c.id))||planChip(c)}${n?(httpOk(issueUrl(c))?`<a class="tag" href="${esc(issueUrl(c))}" target="_blank" rel="noopener">issue ${esc(n)}</a>`:`<span class="tag">issue ${esc(n)}</span>`):""}${c.repo?`<span class="tag">${esc(c.repo)}</span>`:""}${c.pr?(httpOk(c.pr)?`<a class="tag" href="${esc(c.pr)}" target="_blank" rel="noopener">PR</a>`:`<span class="tag">PR</span>`):""}${loginsOf(c).length?`<span class="tag">${loginsOf(c).length} login${loginsOf(c).length===1?"":"s"}</span>`:""}${c.devStack?`<span class="tag">stack</span>`:""}${c.account==="account2"?`<span class="tag a2">acct 2</span>`:""}${colOf(c)==="Blocked"&&c.blockedReason?`<span class="tag blocked">blocked</span>`:""}<span${isArch(c)?' title="When it was archived"':""}>${esc(ago(isArch(c)?archAt(c):ts(c)))}</span></span>`;
+  ${cardLines(c)}
+  <span class="tags">${typeof labelTags==="function"?labelTags(c):""}${typeof queuedBadge==="function"?queuedBadge(c.id):""}${shipChip(c)}${autoChip(c)}${typeof smallChip==="function"?smallChip(c):""}${stuckChip(c)}${testChip(c)}${routeChip(c)}${(typeof buildingChip==="function"&&buildingChip(c.id))||planChip(c)}${n?(httpOk(issueUrl(c))?`<a class="tag" data-meta="issue" href="${esc(issueUrl(c))}" target="_blank" rel="noopener">issue ${esc(n)}</a>`:`<span class="tag" data-meta="issue">issue ${esc(n)}</span>`):""}${c.repo?`<span class="tag" data-meta="repo">${esc(c.repo)}</span>`:""}${c.pr?(httpOk(c.pr)?`<a class="tag" data-meta="pr" href="${esc(c.pr)}" target="_blank" rel="noopener">PR</a>`:`<span class="tag" data-meta="pr">PR</span>`):""}${loginsOf(c).length?`<span class="tag" data-meta="logins">${loginsOf(c).length} login${loginsOf(c).length===1?"":"s"}</span>`:""}${c.devStack?`<span class="tag" data-meta="stack">stack</span>`:""}${c.account==="account2"?`<span class="tag a2" data-meta="acct">acct 2</span>`:""}${colOf(c)==="Blocked"&&c.blockedReason?`<span class="tag blocked">blocked</span>`:""}<span data-meta="ago"${isArch(c)?' title="When it was archived"':""}>${esc(ago(isArch(c)?archAt(c):ts(c)))}</span></span>`;
   if(typeof stackDecorate==="function")stackDecorate(b,c); // a stack's lead draws as the stack card (stacks.js)
   if(typeof stackDropTarget==="function")stackDropTarget(b,c); // drop a card on it to stack them (stacks.js)
+  for(const f of boardHooks.decorate)hookTry(f,b,c); // other files' additions to the card (boardHooks)
+  for(const f of boardHooks.final)hookTry(f,b,c); // then the face's layout (face.js), always last
   b.onclick=e=>{if(e.target.closest("a,[data-noopen]"))return;openPanel(c.id)};
   b.addEventListener("keydown",e=>{if((e.key==="Enter"||e.key===" ")&&e.target===b){e.preventDefault();openPanel(c.id);return}
     if(e.altKey&&(e.key==="ArrowUp"||e.key==="ArrowDown")&&e.target===b&&canWrite&&!isArch(c)){e.preventDefault();
@@ -178,11 +287,11 @@ function renderDetail(){
   const top=d.scrollTop;
   const lblBox=typeof labelEditor==="function"?labelEditor(c):""; // read before the redraw: it keeps what Hugh is typing
   const autoNow=autoPend&&autoPend.id===c.id?autoPend.v:autoOf(c);
-  const tst=testOf(c),tAt=tst?Date.parse(tst.at||""):0;
-  const testRow=tst?`${esc(Object.hasOwn(TEST_LABEL,tst.state)?TEST_LABEL[tst.state]:tst.state)}${tAt?` · <span title="${esc(tst.at)}">${esc(ago(tAt))}</span>`:""}${tst.detail?`<br>${safe(tst.detail)}`:""}`:"—";
-  d.innerHTML=`<span class="tags">${typeof queuedBadge==="function"?queuedBadge(c.id):""}${shipChip(c)}${planChip(c)}<span class="tag">${esc(colOf(c))}</span>${isArch(c)?`<span class="tag">archived</span>`:""}${n?(httpOk(issueUrl(c))?`<a class="tag" href="${esc(issueUrl(c))}" target="_blank" rel="noopener">issue ${esc(n)}</a>`:`<span class="tag">issue ${esc(n)}</span>`):""}${c.pr&&httpOk(c.pr)?`<a class="tag" href="${esc(c.pr)}" target="_blank" rel="noopener">PR</a>`:""}</span>
+  d.innerHTML=`<span class="tags">${typeof queuedBadge==="function"?queuedBadge(c.id):""}${shipChip(c)}${planChip(c)}${routeChip(c)}<span class="tag">${esc(colOf(c))}</span>${isArch(c)?`<span class="tag">archived</span>`:""}${n?(httpOk(issueUrl(c))?`<a class="tag" href="${esc(issueUrl(c))}" target="_blank" rel="noopener">issue ${esc(n)}</a>`:`<span class="tag">issue ${esc(n)}</span>`):""}${c.pr&&httpOk(c.pr)?`<a class="tag" href="${esc(c.pr)}" target="_blank" rel="noopener">PR</a>`:""}</span>
   ${lblBox}
-  ${shipBox}${planBox}
+  ${typeof evidenceHtml==="function"?evidenceHtml(c):""}
+  ${shipBox}${planBox}${typeof smallBox==="function"?smallBox(c):""}${panelParts(c)}
+  ${boardHooks.details.map(f=>hookTry(f,c)||"").join("")}
   <label class="f">Summary<textarea id="f-summary" rows="4" ${canWrite?"":"disabled"}></textarea></label>
   <label class="f">Next step<textarea id="f-next" rows="3" ${canWrite?"":"disabled"}></textarea></label>
   <label class="f">Column<select class="colsel" id="f-col" ${canWrite?"":"disabled"}>${(BOARD_COLS.includes(colOf(c))?BOARD_COLS:[...BOARD_COLS,colOf(c)]).map(x=>`<option${x===colOf(c)?" selected":""}>${x}</option>`).join("")}</select></label>
@@ -193,6 +302,7 @@ function renderDetail(){
   ${colOf(c)==="Blocked"||c.blockedReason?`<dl><dt>Blocked on</dt><dd>${safe(c.blockedReason||"—")}</dd></dl>`:""}
   ${typeof stackDetail==="function"?stackDetail(c):""}
   ${loginBox}
+  ${reproBox(c)}
   <h3>Links</h3>
   <dl>
    <dt>Issue</dt><dd>${n?(httpOk(issueUrl(c))?`<a href="${esc(issueUrl(c))}" target="_blank" rel="noopener">#${esc(n)}</a>`:"#"+esc(n)):"—"}</dd>
@@ -207,11 +317,18 @@ function renderDetail(){
    <dt>Account</dt><dd>${c.account==="account2"?"Account 2":c.account==="main"?"Main":"—"}</dd>
    <dt>Updated</dt><dd>${esc(c.updatedAt||"—")}${c.updatedBy?`<br><span class="meta">${safe(c.updatedBy)}</span>`:""}</dd>
    <dt>Repo</dt><dd>${safe(c.repo||"—")}</dd>
-   <dt>Subagent test</dt><dd>${testRow}</dd>
+   ${stuckRow(c)}${checkRows(c)}
+   ${routeRow(c)}
    <dt>Card</dt><dd class="mono">${cardNum(c)?`${cardNum(c)} · `:""}${esc(c.id)}</dd>
   </dl>
+  ${typeof timesSection==="function"?timesSection(c):""}
   ${log.length?`<h3>Log</h3><ul class="log">${log.map(e=>`<li><time>${esc(e&&e.at||"")}</time>${safe(e&&e.text)}</li>`).join("")}</ul>`:""}`;
+  // The evidence shows once (card #101): other boxes may call evidenceHtml(c) too; the first .ev wins.
+  d.querySelectorAll(".ev").forEach((x,i)=>{if(i)x.remove()});
+  if(typeof showEvidence==="function")showEvidence(d);
   d.scrollTop=top;
+  // The reproducer's shots (card #112): drawn through image_read, and full size on a click.
+  if(typeof showShots==="function"){showShots(d);d.querySelectorAll(".repro img.shot").forEach(img=>img.onclick=()=>{if(img.src&&typeof openShot==="function")openShot(img)});d.querySelectorAll(".rp-earlier").forEach(x=>x.addEventListener("toggle",()=>{if(x.open)showShots(x)}))}
   const ttl=panel.el.querySelector(".ph .ttl");if(ttl)ttl.innerHTML=`${numBadge(c)}${n?`<span class="iss">#${esc(n)}</span>`:""}${safe(c.title||"Untitled card")}`;
   const sm=$("#f-summary"),nx=$("#f-next"),cs=$("#f-col");
   const clean=v=>SECRET.test(v||"")?"":(v||"");
@@ -224,7 +341,12 @@ function renderDetail(){
     invoke("open_login",{url:l.url,browser:l.browser||""}).then(()=>{btn.textContent="Opened"},err=>say("Couldn't open it: "+errText(err),"err"))});
   checkStacks(c);
   if(typeof labelWire==="function")labelWire(c,d);
+  if(typeof smallWire==="function")smallWire(c,d);
+  panelPartsWire(c,d);
   {const ab=$("#arch");if(ab)ab.onclick=()=>archiveCard(c.id,!isArch(c))}
+  {const rb=$("#route-again");if(rb)rb.onclick=async()=>{rb.disabled=true;
+    try{await invoke("route_again",{cardId:c.id});say("Route cleared: the session runs the card-router again","ok")}
+    catch(err){rb.disabled=false;say("Couldn't route it again: "+errText(err),"err")}}}
   // Goes on to: saved at once, with no popup (card #87). Deploy complete says what it means in the saved line.
   {const as=$("#f-auto");if(as)as.onchange=async()=>{const v=as.value,cur=()=>autoOf(cards.find(x=>x.id===c.id)||c);
     autoPend={id:c.id,v};say("");const ok=await write(c.id,{autoTo:v||null});autoPend=null;
@@ -258,7 +380,7 @@ async function call(cmd,args,quiet){
 async function write(id,patch,quiet){
   const bad=Object.entries(patch).find(([k,v])=>typeof v==="string"&&SECRET.test(v));
   if(bad){say(`Not saved: "${bad[0]}" looks like it holds a token, key or password. Sign-ins and secrets never go on this board.`,"err");return false}
-  try{return !!(await call("update_card",{id,version:verOf(id),patch,by:"Hugh (board)"},quiet))}
+  try{return (await call("update_card",{id,version:verOf(id),patch,by:"Hugh (board)"},quiet))||false} // the saved card (truthy), or false
   catch(e){status(`Card ${id} changed meanwhile; the board has been refreshed.`,true);await load();return false}
 }
 let busy=false;
@@ -416,16 +538,20 @@ render();
 
 async function load(){
   try{cards=await invoke("list_cards");loaded=true;
-    const live=cards.filter(c=>!isArch(c)).length;
+    const live=cards.filter(c=>!isArch(c)&&!isSystemCard(c)).length,gone=cards.filter(c=>isArch(c)&&!isSystemCard(c)).length;
     let where="";try{where=await invoke("board_location")}catch(e){}
-    status(`${live} card${live===1?"":"s"} · ${cards.length-live} archived`+(where?` · ${where}`:""),false,true);render()}
+    status(`${live} card${live===1?"":"s"} · ${gone} archived`+(where?` · ${where}`:""),false,true);render()}
   catch(e){loaded=false;status("Couldn't read the board: "+errText(e)+". Your cards are safe; quit the app from the tray and open it again.",true);render()}
 }
-// The test build (KANBAN_CHANNEL=test) shows a warning bar and says "(test)" in its titles.
+// A test build (KANBAN_CHANNEL=test, test2, ...) shows a warning bar and its name from the app,
+// "Claude Kanban DSH (test)" or "Claude Kanban DSH (test 2)", in its titles.
 async function showChannel(){
   let ch="live";try{ch=await invoke("app_channel")}catch(e){}
-  if(ch!=="test")return;
-  $("#testBar").hidden=false;document.title="Claude Kanban DSH (test)";$("header h1").textContent="Claude Kanban DSH (test)";
+  if(ch==="live")return;
+  let name="Claude Kanban DSH (test)";try{name=await invoke("app_name")}catch(e){}
+  $("#testBar").hidden=false;document.title=name;$("header h1").textContent=name;
+  const label=(/\((test[^)]*)\)/.exec(name)||[])[1]||"test";
+  if(label!=="test")$("#testBar b").textContent=label.toUpperCase()+" VERSION:";
 }
 (async()=>{
   canWrite=true;$("#addBtn").hidden=false;

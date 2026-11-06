@@ -266,9 +266,8 @@ pub fn parse_init(line: &str) -> Option<ClaudeList> {
 /// out (if one did, it is on the cheapest model, with hooks off and nothing saved). About two
 /// seconds; None if it fails or takes over 30 s.
 pub fn claude_list(exe: &Path, env: &[(String, String)], cwd: Option<&Path>) -> Option<ClaudeList> {
+    use crate::platform::NoWindow;
     use std::io::BufRead;
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = std::process::Command::new(exe);
     cmd.args(["-p", "hi", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--model", "claude-haiku-5-5", "--max-turns", "1", "--settings", r#"{"disableAllHooks":true}"#])
         .env_clear()
@@ -276,7 +275,7 @@ pub fn claude_list(exe: &Path, env: &[(String, String)], cwd: Option<&Path>) -> 
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW);
+        .no_window();
     if let Some(c) = cwd.filter(|c| c.is_dir()) {
         cmd.current_dir(c);
     }

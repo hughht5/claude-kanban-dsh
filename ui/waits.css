@@ -1,0 +1,31 @@
+/* Cards that wait on others (card #109, waits.js): the chip on the card and the panel's "Waits on"
+   row. Theme tokens only (board.css), so light and dark both work. Dashed while it waits, green
+   when every card it waits on is ready, red for a circle of waits. */
+.wt-chip{font-family:var(--mono);font-size:11px;color:var(--fg);border-style:dashed;white-space:nowrap}
+.wt-chip.wt-ready{border-color:var(--ok);border-style:solid}
+.wt-chip.wt-loop{border-color:var(--bad);border-style:solid}
+.wt-n.is-met{color:var(--ok)} .wt-n.is-met::after{content:"✓"}
+.wt-n.is-arch,.wt-n.is-gone{color:var(--muted);text-decoration:line-through}
+.wt-n.is-loop{color:var(--bad);font-weight:600}
+/* The panel's row: a chip per card it waits on (number, short title, column), then the add box. */
+.wt-box{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wt-row{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0}
+.wt-h{font-size:12px;color:var(--muted);margin-right:3px}
+.wt-c{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:4px;
+  padding:0 5px;font-size:12px;line-height:18px}
+.wt-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.wt-col,.wt-num{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.wt-c.is-met{border-color:var(--ok)} .wt-c.is-met .wt-col{color:var(--ok)}
+.wt-c.is-arch,.wt-c.is-gone{border-style:dashed;color:var(--muted)} .wt-c.is-gone .wt-col{color:var(--bad)}
+.wt-c.is-loop{border-color:var(--bad)} .wt-c.is-loop .wt-col{color:var(--bad)}
+.wt-go{border:0;background:none;padding:0;margin:0;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);cursor:pointer}
+.wt-go:hover{text-decoration:underline}
+.wt-x{border:0;background:none;color:inherit;font:inherit;font-size:10px;line-height:1;padding:1px 0 1px 2px;cursor:pointer;opacity:.6}
+.wt-x:hover,.wt-x:focus-visible{opacity:1}
+.wt-in{background:var(--bg);border:1px dashed var(--line);border-radius:3px;color:var(--fg);font-family:var(--mono);font-size:11px;
+  line-height:17px;padding:0 6px;width:130px;min-width:0}
+.wt-in:focus{border-style:solid;border-color:var(--accent)}
+.wt-msg[hidden]{display:none}
+.wt-hint{margin:0;font-size:12px;line-height:1.4;color:var(--muted)}
+.wt-by{font-size:12px;color:var(--muted)}
+.wt-was{font-size:11px}

@@ -3,35 +3,66 @@
 
 mod cards;
 mod channel;
+mod check_size;
 mod move_in;
 mod columns;
 mod config;
+mod done_when;
+mod evidence;
+mod feed;
 mod import;
 mod secret;
+// The Router's own sessions and log (card #119).
+mod router;
 mod marks;
+pub mod search;
 mod sessions;
 mod ships;
 mod stacks;
 mod start_queue;
 mod templates;
+pub mod testapp;
+// Time in each column (card #111).
+mod times;
+mod waits;
 
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub use channel::{app_name, channel, data_dir_for, is_test, live_board, quit_event};
-pub use move_in::{import_if_asked, IMPORT_DONE, IMPORT_REQUEST};
-pub use cards::{clean_auto_to, clean_labels, Card, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, MAX_LABELS, MAX_LABEL_LEN, TEST_KEY};
+pub use move_in::{import_if_asked, Imported, IMPORT_DONE, IMPORT_REQUEST};
+pub use config::PRIVATE_DIR_KEY;
+pub use channel::{app_name, app_name_for, channel, data_dir_for, devtools_port_for, exe_name_for, home_var, identifier_for, is_test, kb_data_dir, DATA_DIR_ENV, label_for, live_board, product_name_for, quit_event, quit_event_for, slot, slot_of, LIVE_DEVTOOLS_PORT};
+pub use cards::{clean_auto_to, clean_labels, Card, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, CRITIQUE_KEY, MAX_LABELS, MAX_LABEL_LEN, MERGE_KEY, repro_open, REPRO_KEY, RESET_ON_IN_PROGRESS, REVIEW_KEY, ROUTE_KEY, SMALL_BY, SMALL_KEY, SMALL_OPT_OUT_KEY, SMALL_WAITING, SMALL_WENT_ON, TEST_KEY};
+pub use cards::{CHECK_SIZE_KEY, RESET_ON_HUMAN_TEST};
+pub use cards::{clean_changes_outputs, output_path_problem, OUTPUTS_KEY, SAVED_KEY};
 pub use columns::{ColumnCfg, Pending};
-pub use config::{default_profiles, page_default, profile_for, Profile, EFFORTS, MAX_RUNNING_DEFAULT, MAX_RUNNING_KEY, IDLE_PAUSE_DEFAULT, IDLE_PAUSE_KEY, PAGE_SETTINGS, PRIVATE_DIR_KEY, PROFILES_KEY, TEST_RULE_KEY};
+pub use config::{default_profiles, page_default, profile_for, Profile, CRITIC_RULE_KEY, EFFORTS, MAX_RUNNING_DEFAULT, MAX_RUNNING_KEY, IDLE_PAUSE_DEFAULT, IDLE_PAUSE_KEY, PAGE_SETTINGS, PROFILES_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, RULE_KEYS, SMALL_GO_ON_KEY, STUCK_CHECK_DEFAULT, STUCK_CHECK_KEY, TEST_RULE_KEY, check_small_repos, SettingChange, SmallRepo, SMALL_REPOS_KEY};
+pub use evidence::{add_run, has_tested_evidence, EVIDENCE_KEY};
+pub use feed::{agent_of_by, agent_of_field, FeedItem, FeedPage, FeedQuery, FEED_DEFAULT_LIMIT, FEED_MAX_LIMIT, VERDICT_FIELDS, VERDICT_TEXT_MAX};
+pub use config::TODO_TOOLS_KEY;
+pub use done_when::{
+    clean_done_when, clean_done_when_checks, looks_like_sign_in, DONE_WHEN_CHECKS_KEY, DONE_WHEN_CHECK_LEN,
+    DONE_WHEN_KEY, DONE_WHEN_MAX_CHECKS, DONE_WHEN_MAX_LEN, DONE_WHEN_NOTE_LEN, DONE_WHEN_STATES,
+};
 pub use import::{CheckReport, FieldDiff, ImportReport};
-pub use secret::{looks_like_token, looks_secret};
+pub use config::ROUTER_MODELS;
+pub use router::{
+    Revision, RouterLogLine, RouterSession, ROUTER_BY, ROUTER_EFFORT_DEFAULT, ROUTER_EFFORT_KEY, ROUTER_LAST_OPENED_KEY, ROUTER_LOG_KINDS,
+    ROUTER_MAY_START_KEY, ROUTER_MODEL_DEFAULT, ROUTER_MODEL_KEY, ROUTER_ON_KEY, ROUTER_RESUME_AFTER_KEY,
+};
+pub use secret::{looks_like_token, looks_secret, mask_secrets, mask_tokens};
+pub use search::SearchIndex;
 pub use marks::{CardMarks, LatestSession};
 pub use sessions::{SessionRow, MID_TURN, RESUME_OFFER_KEY};
 pub use ships::{ship_goes_first, ship_lane, ship_started, QUEUED as SHIP_QUEUED};
-pub use stacks::{stack_ready, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_RULE_KEY};
+pub use stacks::{children_reviewed as stack_children_reviewed, lead_missing, lead_missing_in_stack, merged as stack_merged, own_build as stack_own_build, OWN_BUILD_KEY as STACK_OWN_BUILD_KEY, stack_ready, stack_stage, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_HELD_KEY, STACK_RULE_KEY};
 pub use start_queue::{StartQueue, WaitingStart, DEFAULT_CAP as DEFAULT_SESSION_CAP, MAX_CAP as MAX_SESSION_CAP};
 pub use templates::{Template, TemplateInput};
+// Time in each column (card #111).
+pub use times::{card_columns, column_since, median, medians, timeline, CardTimes, ColumnMedian, ColumnTime, LogIn, RevIn, Timeline, Visit, LOG_WINDOW_MS, MEDIAN_DAYS};
+pub use testapp::{take_refused, Ask, Ended, Take, TestAppQueue, Turn, Waiting, INSTALL as TESTAPP_INSTALL, TESTER as TESTAPP_TESTER, TESTER_COLUMNS};
+pub use waits::{clean_blocked_by, is_met, wait_path, Wait, WaitKind, WaitOutcome, BLOCKED_KEY, LEAD_NOTE, MAX_WAITS, MET_OTHER_REPO, MET_SAME_REPO, WAITED_KEY, WAIT_BY};
 
 pub const COLUMNS: [&str; 8] = [
     "Backlog",
@@ -44,7 +75,7 @@ pub const COLUMNS: [&str; 8] = [
     "Done",
 ];
 
-const MIGRATIONS: [&str; 10] = [
+const MIGRATIONS: [&str; 14] = [
     include_str!("schema.sql"),
     include_str!("schema2.sql"),
     include_str!("schema3.sql"),
@@ -55,7 +86,17 @@ const MIGRATIONS: [&str; 10] = [
     include_str!("schema8.sql"),
     include_str!("schema9.sql"),
     include_str!("schema10.sql"),
+    include_str!("schema11.sql"),
+    include_str!("schema12.sql"),
+    // Card #114: the column prompts name their folder as {prompts}.
+    include_str!("schema13.sql"),
+    // Card #119: the Router's own sessions and log.
+    include_str!("schema14.sql"),
 ];
+
+/// The schema version this build brings a board up to: the number of migrations. A board at a
+/// higher version (from a newer build) is opened as it is.
+pub const SCHEMA_VERSION: usize = MIGRATIONS.len();
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -208,7 +249,7 @@ pub(crate) fn now() -> String {
 }
 
 /// The folder that holds the board, its backups, session files and the API's port and token:
-/// `%USERPROFILE%\.claude-kanban-dsh`, or `%USERPROFILE%\.claude-kanban-dsh-test` for a test build. It is
+/// `%USERPROFILE%\.claude-kanban-dsh`, or `%USERPROFILE%\.claude-kanban-dsh-test` (`-test2`, ...) for a test build. It is
 /// outside AppData on purpose. Windows redirects AppData writes made by processes started from
 /// a packaged app (the Claude desktop app is one), so an AppData folder showed different boards
 /// to different launches of the same app.
@@ -279,6 +320,12 @@ pub fn copy_board(from: &Path, to: &Path, replace: bool) -> Result<CopyReport> {
     copy.set_setting(sessions::RESUME_OFFER_KEY, &last.to_string())?;
     // Starts waiting under the cap belong to the board this came from too.
     copy.save_start_queue(&StartQueue::default())?;
+    // So are the test app's turns (card #115): a test board never starts with the live
+    // holder and line, and so never tells test-board sessions about turns they never took.
+    copy.save_test_app_queue(&TestAppQueue::default())?;
+    // And the Router (card #119): a copy never resumes the source's Router conversation, and
+    // starts with it off.
+    copy.detach_router()?;
     let cards = copy.list(true)?.len();
     Ok(CopyReport { cards, sessions_detached: running.len(), moved_aside })
 }
