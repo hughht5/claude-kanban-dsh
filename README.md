@@ -1,122 +1,158 @@
-# Claude Kanban DSH
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.png">
+    <img alt="Claude Kanban DSH: your board of Claude Code agents" src="docs/images/banner-light.png" width="100%">
+  </picture>
+</p>
 
-**Run a dozen Claude Code sessions without losing track of any of them.**
+<h3 align="center">Drag a card. Claude builds it. You ship it.</h3>
 
-Claude Kanban DSH is a desktop kanban board where every card is a live Claude Code session. Drag a card into Planning and its session plans the work. Move it to In progress and it builds. When it's ready for you, it lands in Human test with the steps to check it, and it ships only when you say so.
+<p align="center">
+  A desktop kanban board where every card is a live Claude Code session.<br>
+  A team of agents plans, builds, tests and reviews each card before it reaches you.<br>
+  <b>Runs on your own Claude subscription. No API keys. Your code stays on your machine.</b>
+</p>
 
-Most people lose track at about three to five Claude Code sessions: which one is waiting for an answer, which has stalled, which is done. The board keeps track for you. One look tells you what each card is doing, what it needs from you, and what's ready to ship.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-3a4fd9?style=flat-square"></a>
+  <img alt="Windows, and macOS (untested)" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20(untested)-3a4fd9?style=flat-square">
+  <img alt="Rust and Tauri 2" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-3a4fd9?style=flat-square">
+  <img alt="Works with Claude Code" src="https://img.shields.io/badge/works%20with-Claude%20Code-d97757?style=flat-square">
+</p>
 
-It runs on your own Claude subscription through the Claude Code CLI on your machine. There are no API keys and no extra bill, and your code stays local.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#the-agents">The agents</a> ·
+  <a href="docs/GUIDE.md">Full guide</a> ·
+  <a href="https://github.com/hughht5/claude-kanban-dsh/discussions">Discussions</a>
+</p>
 
-> **Status:** a working personal tool, used daily, and still changing fast. It's Windows-only for now, and you build it from source.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/board-dark.png">
+    <img alt="The board: cards in Planning, In progress, Human test and Ship it. Each card shows its plan, its progress, what it is waiting on you for, and the verdicts of the agents that checked it." src="docs/images/board-light.png" width="100%">
+  </picture>
+</p>
 
----
+## Why
 
-## What it does
+Run more than three or four Claude Code sessions and you start to lose track. Which one is waiting for you? Which has been looping on the same failing test for twenty minutes? Which one is actually done, and does it work?
 
-- **Every card is a session.** Each card owns a real Claude Code session in an embedded terminal, with a chat view beside it. Open a card to talk to it, watch it work, or take over its terminal.
-- **Columns drive the work.** Moving a card sends its session that column's instructions: plan in Planning, build in In progress, hand over in Human test, merge and release in Ship it. The instructions are plain Markdown files you can edit.
-- **You stay in charge of shipping.** Sessions build and test on their own, but only you move a card into Ship it, unless you've set that card to go on by itself.
-- **Tested before it reaches you.** Every card is tried for real by a separate tester subagent before it lands in Human test. If it fails, the session fixes it and tests again.
-- **Questions come to you.** When a session needs a decision, the card shows the question and the answers to pick from, so you can reply from the board.
-- **Stacks:** group cards that ship together, then test them together and ship them as one.
-- **Resume after a restart.** Quitting suspends every session; the next start resumes the ones that were running.
-- **Drive it from anywhere.** `kb`, the command-line tool, plus an MCP server, lets any Claude session create, move and message cards.
-- **A separate test copy.** A second build, Claude Kanban DSH Test, runs beside your real board with its own data, for trying changes safely.
-- **Keeps a full history.** Card history, logs and session events are append-only: nothing is ever deleted, only archived.
+Claude Kanban DSH is built around one idea: **not more agents, fewer surprises.** Every card gets its own session. A router sizes it, a critic tears into the plan before any code is written, a tester and a reviewer check the work, and a monitor keeps everything moving. By the time a card reaches you, it has been tested, reviewed and proved, and it comes with screenshots and the steps to check it.
 
-### Coming next
+You stay in charge of the one decision that matters: what ships.
 
-Ideas from [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), rebuilt on Claude Code:
+## What you get
 
-- **A team of helper agents** on every card: a **router** that sizes and splits work, a **critic** that attacks the plan before anything is built, a **reviewer** that reads the diff, a **reproducer** that proves bugs and fixes, a **merger** for clean ships, and a **monitor** that spots stuck sessions and nudges them.
-- **Faster review:** before-and-after screenshots on every hand-over, Previous and Next through cards waiting for you, and a "30-second look" label for small changes.
-- **Cards you can read at a glance:** "Done when…" with acceptance checks, step progress, what changed, and what each card is waiting on you for.
-- **Ordering and history:** "Blocked by #12", search across every session, and time spent in each column.
-- **Stacks that build in parallel**, each card in its own session and branch.
+- **Every card is a live session.** Each card owns a real Claude Code session in an embedded terminal, with a chat view beside it. Open a card to talk to it, watch it work or take over the terminal.
+- **Truly parallel.** Every card builds in its own git worktree and branch, so a dozen cards can work at once without stepping on each other.
+- **Plans that survive a critic.** A critic agent attacks every plan for missing cases, wrong assumptions and broken rules before a line of code is written.
+- **Tested and reviewed before you see it.** A tester uses the real app and saves before-and-after screenshots. A reviewer reads the diff for bugs, risk and scope creep. Nothing reaches you until both pass.
+- **Bugs proved, fixes proved.** When something fails, a reproducer shows the bug in a few steps, then shows that it's gone after the fix. No more re-testing by hand.
+- **Never stuck.** A monitor watches every session. If one loops or stalls, it gets a nudge, and if it's still stuck, you get a notification.
+- **Review in seconds.** Step through every card waiting for you with ← and →. Press P then Enter to pass and ship, or F to fail it with a note. Small changes are labelled "30-second look", and docs-only changes can go on by themselves if you allow them.
+- **Know everything at a glance.** Every card shows "Done when…" with its acceptance checks, step progress ("Step 4 of 7: writing the tests"), what changed, and the exact question it's waiting on you for.
+- **Ship together, cleanly.** Group related cards into a stack. They build in parallel, a merger brings their branches together and resolves conflicts, and you test and ship them as one.
+- **Order and history.** Mark a card "Blocked by #12" and it starts by itself when #12 is ready. Search every session that has ever run. See how long cards spend in each column, so you know where the waiting happens.
 
----
+## How it works
 
-## Requirements
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/flow-dark.png">
+    <img alt="Plan, build, check, you review, ship: the agents involved at each stage" src="docs/images/flow-light.png" width="100%">
+  </picture>
+</p>
 
-- Windows 10 or 11 with the WebView2 Runtime (built into Windows 11)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), signed in to your Claude account
-- To build: [Rust](https://rustup.rs) (stable, `x86_64-pc-windows-msvc`), Visual Studio Build Tools 2022 with the "Desktop development with C++" workload, Node.js, Git, and optionally the GitHub CLI (`gh`)
+1. **Add a card and drop it into Planning.** The router decides whether it's small, normal or worth splitting, and picks the model and effort. The card's session reads your repo and writes a plan with "Done when…" checks. The critic attacks the plan before anything is built.
+2. **In progress.** The session builds on its own branch, runs your tests and reviews its own diff. The monitor keeps an eye on it.
+3. **Checked.** The tester tries the change for real and captures before-and-after screenshots. The reviewer reads the diff. The reproducer proves any bug and its fix.
+4. **Human test.** The card lands in front of you with its evidence, its verdicts and the steps to check it. Pass it or fail it with a note. A fail sends it straight back to work.
+5. **Ship it.** The merger brings the branch up to date with main and resolves conflicts. Only you move a card into Ship it, unless you've told a card to go on by itself.
 
-## Install
+Each column's instructions are plain Markdown files you can read and change.
 
-```powershell
-git clone https://github.com/hughht5/claude-kanban-dsh
-cd claude-kanban-dsh
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-```
+## The agents
 
-It installs for your user only and needs no admin rights. The app goes in `%USERPROFILE%\Programs\Claude Kanban DSH`, your board in `%USERPROFILE%\.claude-kanban-dsh`, and `kb` on your PATH.
+| Agent | What it does | When |
+|---|---|---|
+| **Router** | Sizes each card: small, normal or split into several. Picks the model and effort. Runs at low effort, so it's fast and cheap. | A card enters Planning |
+| **Critic** | Attacks the plan for missing cases, wrong assumptions and broken rules. | Before building |
+| **Tester** | Uses the real app, follows the card's checks and saves before-and-after screenshots. | After building |
+| **Reviewer** | Reads the diff for mistakes, risky changes and work nobody asked for. | After building |
+| **Reproducer** | Proves a reported bug, then proves the fix. | Any failure |
+| **Monitor** | Spots sessions that loop, stall or wait on each other. Nudges first, then tells you. | All the time |
+| **Merger** | Brings branches up to date with main and resolves conflicts. | At ship time |
 
-To install the test copy beside it:
+Every agent is a Claude Code subagent running on your own plan, and the app records each one's verdict on the card. None of them can move a card into Ship it.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">
+    <img alt="A card in Human test: before-and-after screenshots, the critic, tester, reviewer and reproducer verdicts, the acceptance checks, and Pass or Fail" src="docs/images/panel-light.png" width="70%">
+  </picture>
+</p>
 
 ## Quick start
 
-1. Open **Claude Kanban DSH** from the Start menu.
-2. In **Settings › Sessions**, add your repositories (or point **Private folder** at a folder with your own `repos.json` and column prompts).
-3. Click **Add card**, describe the work, pick a repo, and drop it into **Planning**. Its session starts and writes a plan.
-4. Read the plan on the card. Move it to **In progress** to build.
-5. When it reaches **Human test**, follow the steps on the card. Move it to **Ship it** when you're happy.
+**You need:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) signed in to your Claude account, plus [Rust](https://rustup.rs), Node.js and Git.
 
-From any terminal or Claude session:
+**macOS** (Apple silicon or Intel, with the Xcode command-line tools). **Untested:** the macOS build passes CI but hasn't been tried on a real Mac yet, and the app isn't signed with an Apple Developer ID, so macOS will ask you to allow it in **System Settings › Privacy & Security** the first time. Please [open an issue](https://github.com/hughht5/claude-kanban-dsh/issues) with anything you hit.
+
+```bash
+git clone https://github.com/hughht5/claude-kanban-dsh
+cd claude-kanban-dsh && ./scripts/install.sh
+```
+
+**Windows 10 or 11** (with Visual Studio Build Tools 2022, "Desktop development with C++"):
+
+```powershell
+git clone https://github.com/hughht5/claude-kanban-dsh
+cd claude-kanban-dsh; powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+Both install for your user only, with no admin rights. Then:
+
+1. Open **Claude Kanban DSH** from Applications or the Start menu.
+2. In **Settings › Sessions**, add your repos, or point **Private folder** at your own `repos.json` and column prompts.
+3. Click **Add card**, describe the work, pick a repo and drop it into **Planning**.
+4. Watch it go. Answer its questions when it asks. Review it when it lands in **Human test**.
+
+Want to try changes to the app itself without touching your real board? Add `--channel test` (macOS) or `-Channel test` (Windows) and a separate test copy installs beside it, with its own data.
+
+## Drive it from anywhere
+
+`kb` is a command-line tool and an MCP server, so any Claude session (or script) can run the board:
 
 ```text
-kb list                      the board
-kb create --title "Fix the login redirect" --repo you/your-app --column Planning
-kb card 12                   one card as JSON
+kb create --title "Fix the login redirect" --repo you/web-app --column Planning
+kb list --column "Human test"
 kb send 12 "Use the v2 endpoint instead"
 kb move 12 "In progress"
 ```
 
-Add `kb mcp` to Claude Code as an MCP server, and the `kanban_*` tools let any session manage the board.
+Add `kb mcp` to Claude Code as an MCP server, and every session gets the `kanban_*` tools.
 
-## Make it yours
+## Who it's for
 
-- **Column prompts:** each column's instructions are Markdown files. The repo ships generic examples in `prompts\`. Put your own in a private folder (**Settings › Sessions › Private folder**) and the app uses those instead.
-- **Repos:** list them in `<private folder>\repos.json`, so your own projects never land in this repo.
-- **Templates:** card templates set a starting prompt for a kind of work, such as a bug fix.
+**For you if** you run several Claude Code sessions at once and want them organised, checked and reviewable, and you'd rather spend your time reviewing finished work than babysitting terminals.
 
-## How it's built
+**Not for you (yet) if** you're on Linux, you use agents other than Claude Code, or you want a hosted service. It's a local desktop app for macOS and Windows, built deeply around Claude Code.
 
-| Folder | What |
-|---|---|
-| `src-tauri/` | The Tauri 2 app: sessions, dispatch, the localhost API (MCP, REST, hooks), updates |
-| `crates/store/` | The SQLite store and its migrations |
-| `crates/kb/` | `kb.exe`, the CLI and MCP bridge |
-| `ui/` | The board and card panel: plain JavaScript, no bundler |
-| `prompts/` | Example column prompts |
-| `scripts/` | `install.ps1`, the public-repo check and its pre-commit hook |
-| `tools/` | `cdp.mjs`, which drives the app's WebView for testing |
+## Your data
 
-```powershell
-cargo test --workspace
-cargo build -p claude-kanban-dsh -p kb
-```
-
-The full guide to every feature is in [docs/GUIDE.md](docs/GUIDE.md). The design notes are in [PLAN.md](PLAN.md), and each change's undo is in [UNDO.md](UNDO.md).
-
-## Safety
-
-- Sessions run Claude Code on your machine, in your repos, with the permissions you give them. Read the column prompts before you use them on code that matters.
-- Nothing pushes to your main branch or deploys outside **Ship it**.
-- Your board and logs stay in your user folder. The app talks to nothing but Claude Code and, if your prompts use them, `git` and `gh`.
+- Everything stays on your machine: the board, logs and sessions live in your user folder.
+- There's no telemetry and no account. The app talks only to Claude Code on your machine and, if your column prompts use them, `git` and `gh`.
+- Nothing is ever deleted. Card history, logs and session events are append-only, and finished cards are archived.
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `cargo test --workspace` before you send one, and turn on the pre-commit check with `git config core.hooksPath scripts/hooks`.
+Issues and pull requests are welcome. Before you open one, run `cargo test --workspace` and turn on the pre-commit check with `git config core.hooksPath scripts/hooks`. The [full guide](docs/GUIDE.md) explains every feature in detail.
 
 ## Credits
 
-Built by [Hugh Halford-Thompson](https://github.com/hughht5) with Claude Code. The helper-agent ideas come from DeepSeek's [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and AI Labs' Claude Code "super agent" workflow.
+Built by [Hugh Halford-Thompson](https://github.com/hughht5), with Claude Code. The agent team takes its ideas from DeepSeek's [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and the AI Labs "super agent" workflow for Claude Code.
 
 Not affiliated with or endorsed by Anthropic or DeepSeek. Claude and Claude Code are trademarks of Anthropic.
 
