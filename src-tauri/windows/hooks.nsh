@@ -7,11 +7,55 @@
   !define KANBAN_KB_EXE "${__FILEDIR__}\..\..\target\release\kb.exe"
 !endif
 
+; kb.exe is often running while the app installs: every Claude session in a checkout with the
+; repo's .mcp.json keeps a `kb mcp` open. Windows won't overwrite or delete a running exe, and a
+; silent install ignores the failed write, so the old kb.exe used to stay (card #126). Windows
+; does let a running exe be renamed in its own folder, so the hook moves the old one aside to the
+; first free kb.old-N.exe, writes the new one, then deletes the moved copy if nothing runs it.
+; Copies still in use stay; the next install deletes them. They don't resolve as `kb`, so PATH
+; and new sessions get the new kb.exe, and running ones keep the old copy until they end.
+; If the new kb.exe doesn't land, the old one is moved back, so `kb` never goes missing.
+
+; This file is included at the top level of Tauri's installer.nsi, so it can declare these.
+Var KanbanKbN
+Var KanbanKbOld
+
 !macro NSIS_HOOK_POSTINSTALL
   SetOutPath "$INSTDIR"
+  ; Copies left by earlier installs; those still in use stay (the delete just fails).
+  Delete "$INSTDIR\kb.old-*.exe"
+  StrCpy $KanbanKbOld ""
+  IfFileExists "$INSTDIR\kb.exe" 0 kanban_kb_write
+  StrCpy $KanbanKbN 1
+  kanban_kb_try:
+    IfFileExists "$INSTDIR\kb.old-$KanbanKbN.exe" kanban_kb_next 0
+    ClearErrors
+    Rename "$INSTDIR\kb.exe" "$INSTDIR\kb.old-$KanbanKbN.exe"
+    IfErrors kanban_kb_next 0
+    StrCpy $KanbanKbOld "$INSTDIR\kb.old-$KanbanKbN.exe"
+    Goto kanban_kb_write
+  kanban_kb_next:
+    IntOp $KanbanKbN $KanbanKbN + 1
+    IntCmp $KanbanKbN 99 kanban_kb_try kanban_kb_try 0
+  ; Nothing could move it (99 copies in use, or a lock that refuses renames): the write below
+  ; fails as it used to and the old kb.exe stays. Saying so loudly is card #133.
+  DetailPrint "kb.exe is in use and couldn't be moved aside; the old one stays"
+  kanban_kb_write:
   File "${KANBAN_KB_EXE}"
+  StrCmp $KanbanKbOld "" kanban_kb_done 0
+  IfFileExists "$INSTDIR\kb.exe" kanban_kb_landed 0
+    ; The new one didn't land: put the old one back, so kb still runs.
+    Rename "$KanbanKbOld" "$INSTDIR\kb.exe"
+    Goto kanban_kb_done
+  kanban_kb_landed:
+    ; Not in use after all: the copy goes now. In use: the delete fails and it waits.
+    Delete "$KanbanKbOld"
+  kanban_kb_done:
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
   Delete "$INSTDIR\kb.exe"
+  Delete "$INSTDIR\kb.old-*.exe"
+  ; Tauri's own RMDir ran before this hook, while kb.exe was still there.
+  RMDir "$INSTDIR"
 !macroend
