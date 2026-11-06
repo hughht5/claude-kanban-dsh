@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-3a4fd9?style=flat-square"></a>
-  <img alt="macOS and Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-3a4fd9?style=flat-square">
+  <img alt="Windows, and macOS (untested)" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20(untested)-3a4fd9?style=flat-square">
   <img alt="Rust and Tauri 2" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-3a4fd9?style=flat-square">
   <img alt="Works with Claude Code" src="https://img.shields.io/badge/works%20with-Claude%20Code-d97757?style=flat-square">
 </p>
@@ -98,7 +98,7 @@ Every agent is a Claude Code subagent running on your own plan, and the app reco
 
 **You need:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) signed in to your Claude account, plus [Rust](https://rustup.rs), Node.js and Git.
 
-**macOS** (Apple silicon or Intel, with the Xcode command-line tools):
+**macOS** (Apple silicon or Intel, with the Xcode command-line tools). **Untested:** the macOS build passes CI but hasn't been tried on a real Mac yet, and the app isn't signed with an Apple Developer ID, so macOS will ask you to allow it in **System Settings › Privacy & Security** the first time. Please [open an issue](https://github.com/hughht5/claude-kanban-dsh/issues) with anything you hit.
 
 ```bash
 git clone https://github.com/hughht5/claude-kanban-dsh
