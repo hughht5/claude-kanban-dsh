@@ -688,3 +688,15 @@ No migration: the feed's indexes were left out because card #119 takes migration
 | `src-tauri\src\notify.rs`: `looking_at` reads a focus flag (`FOCUSED`, kept by `notify::on_window_event` from `WindowEvent::Focused`) instead of asking the window `is_focused()` | `git revert` the card's commit. Do not put `is_focused()` back on its own: under the board lock it deadlocks the app |
 | `src-tauri\src\lockwatch.rs` (`Watched<T>`, the watchdog) and `Board` / `Sessions.live` using it (`main.rs`, `sessions.rs`); `lockwatch::start` in `main.rs` setup | Same revert. The watchdog writes `locks.log` in the data folder; deleting that file by hand is not needed (it is only appended to) |
 | `src-tauri\src\hang_tests.rs`, the test `no_window_getter_off_the_main_thread` in `notify.rs`, `tools\stress-api.mjs` | Same revert, or `Remove-Item src-tauri\src\hang_tests.rs, tools\stress-api.mjs -Confirm:$false` and delete `mod hang_tests;` from `main.rs` |
+
+## The DSH port to the public repo
+
+| Change | Undo |
+|---|---|
+| The merger takes a repo's merge rules and check commands from its brief or the repo's CLAUDE.md / AGENTS.md, not from rules built in for one repo (`src-tauri\src\merger.rs`) | Put the rules back in the merger's brief through your private `ship-it.md`, or `git revert` the commit |
+| The size check's sign-in folders come from `loginDirs` in the private folder's `repos.json` (`check_size.rs`, `private.rs`) | Remove `loginDirs` from `repos.json`: a change then needs a sign-in only for its logins or dev stack |
+| Migration 13 matches the old prompt wording around any folder, not one person's path | Edit a column's prompt in Settings; the migration never touches an edited prompt |
+| Sign-in links are hidden when their URL holds `signin`, `sign-in`, `login` or `log-in` (`secret.rs`, `search.rs`, `done_when.rs`, `monitor.rs`, `steps.rs`) | `git revert` the commit; the patterns only hide more, never less |
+| `import-from.txt` may set page settings on the imported board (`key=value` lines), and copies every file of the old data folder but its port, token, log and staged update | Quit the app, move `board.db` out of the new data folder; the old folder is only read |
+| `install.ps1 -StageVia <old data folder>` stages a renamed build through the old app | Delete `update\update.json` in that folder before Restart now |
+| The example prompts are installed beside the app (`prompts\` in the install folder, `bundle.resources`) | Set a private folder; it wins over the installed examples |
