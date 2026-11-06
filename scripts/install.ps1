@@ -106,7 +106,12 @@ param(
     [int]$NoticeSeconds = 120,
     # Only the lock and the waits, then "LOCK OK"; with -AssumeAppRunning the test app counts as running.
     [switch]$LockOnly,
-    [switch]$AssumeAppRunning
+    [switch]$AssumeAppRunning,
+    # Stage into another app's data folder (its update\ folder) instead of this app's own: for a
+    # renamed app, whose new install doesn't exist yet. The old app shows "Update ready", and its
+    # Restart now installs this build into this build's own folder and starts it there. Write
+    # import-from.txt into the new data folder first, so the new app takes the old board.
+    [string]$StageVia = ''
 )
 
 $ErrorActionPreference = 'Stop'
