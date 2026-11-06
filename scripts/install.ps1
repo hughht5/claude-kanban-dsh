@@ -540,6 +540,8 @@ if ($Slot -eq 1) {
     $Identifier = 'io.github.hughht5.claude-kanban-dsh'
 }
 $UpdateDir = Join-Path $DataDir 'update'
+# -StageVia: the old app's update folder, so the old app installs this build.
+if ($StageVia) { $UpdateDir = Join-Path $StageVia 'update' }
 $DevToolsPort = 9333 + $Slot
 
 if ($NamesOnly) {
