@@ -134,6 +134,8 @@ kb move 12 "In progress"
 
 Add `kb mcp` to Claude Code as an MCP server, and every session gets the `kanban_*` tools.
 
+On Windows, an update replaces `kb.exe` even while sessions are running it: the running copy is renamed to `kb.old-N.exe` beside it, and the next install deletes those copies once nothing uses them.
+
 ## Who it's for
 
 **For you if** you run several Claude Code sessions at once and want them organised, checked and reviewable, and you'd rather spend your time reviewing finished work than babysitting terminals.

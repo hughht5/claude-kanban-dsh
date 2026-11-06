@@ -26,7 +26,8 @@
 #      resumed later (the other channel's app is left alone);
 #   3. runs the installer silently into %USERPROFILE%\Programs\Claude Kanban DSH (live) or
 #      %USERPROFILE%\Programs\Claude Kanban DSH Test (test);
-#   4. makes sure kb.exe is in that folder;
+#   4. makes sure kb.exe is in that folder (the installer replaces it even while a session's
+#      `kb mcp` runs it, by renaming the old one to kb.old-N.exe first; card #126);
 #   5. live: adds that folder to your user PATH, once. test: never, so `kb` stays the live one;
 #   6. test: on the first install, or with -FreshCopy, copies the live board into the test
 #      data folder (%USERPROFILE%\.claude-kanban-dsh-test) with `kb copy-board`, while the test app
@@ -46,7 +47,8 @@
 # Tauri config and NSIS hooks are made from tauri.test.conf.json into target\testN at build time.
 # -NamesOnly prints those names as JSON and stops (a store test checks them against channel.rs).
 #
-# Running it twice is safe: the installer upgrades in place, kb.exe is copied over, and the
+# Running it twice is safe: the installer upgrades in place, replaces kb.exe (moving a running
+# one aside to kb.old-N.exe; step 4 copies kb.exe only if it is missing), and the
 # PATH entry is only added when it is missing. It touches only your user account: no admin,
 # no machine-wide settings. Written for Windows PowerShell 5.1.
 #

@@ -1412,6 +1412,26 @@ or any session with `kanban_router`. The decisions below are the router's after 
   The Router's sessions have no `session_events` rows (that table's rows belong to cards), so
   its mid-turn state at a quit isn't kept; `resume_at_start` resumes it either way.
 
+## kb.exe is replaced even while it runs (6 Nov 2026, card #126, branch `dsh-126`)
+
+- **The bug:** every Claude session in a checkout with the repo's `.mcp.json` keeps a `kb mcp`
+  running from the install folder's kb.exe. Windows won't overwrite or delete a running exe, and
+  the silent installer ignored the failed `File`, so kb.exe stayed old while the app updated.
+- **The fix** (`src-tauri\windows\hooks.nsh`, NSIS_HOOK_POSTINSTALL): delete `kb.old-*.exe` left
+  by earlier installs (those still in use stay), rename kb.exe to the first free `kb.old-N.exe`
+  (N up to 99; Windows allows renaming a running exe in its own folder), write the new kb.exe,
+  then delete the moved copy (it goes now if nothing runs it). If the new kb.exe didn't land, the
+  old one is moved back, so `kb` never goes missing. Running `kb mcp` processes keep the old copy
+  until their session ends; `kb` on PATH and new sessions get the new one. Every path gets it:
+  live `-Now`, Restart now and every test slot (they all `!include` hooks.nsh). Uninstall also
+  deletes `kb.old-*.exe` and then the emptied install folder (Tauri's own `RMDir` runs before the
+  hook, while kb.exe is still there).
+- **If it can't:** when no rename works (99 copies in use, or a lock that refuses renames) the
+  installer logs a line no one sees in a silent install and the old kb.exe stays, as before.
+  Saying so loudly is card #133, with the Windows update-failed notice.
+- **Test:** `scripts\test-kb-locked.ps1 [-Channel test]` (test channels only), in your test-app
+  turn. It installs three times; see its header.
+
 ## Decisions taken (beyond PLAN.md)
 
 - **Time to check (card #103, 6 Nov 2026):** two classes, not minutes. Only styles, markup, images, docs and tests can be a 30-second look; JavaScript and TypeScript are code wherever they are, and prompts and agent instructions need real testing (the router's decisions, after the critic). The router's guess can only make it stricter. No manual override and no setting.

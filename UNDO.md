@@ -700,3 +700,10 @@ No migration: the feed's indexes were left out because card #119 takes migration
 | `import-from.txt` may set page settings on the imported board (`key=value` lines), and copies every file of the old data folder but its port, token, log and staged update | Quit the app, move `board.db` out of the new data folder; the old folder is only read |
 | `install.ps1 -StageVia <old data folder>` stages a renamed build through the old app | Delete `update\update.json` in that folder before Restart now |
 | The example prompts are installed beside the app (`prompts\` in the install folder, `bundle.resources`) | Set a private folder; it wins over the installed examples |
+
+## Card #126: kb.exe replaced while in use (6 Nov 2026, branch `dsh-126`)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\windows\hooks.nsh`: the installer deletes old `kb.old-*.exe` copies, renames kb.exe to a free `kb.old-N.exe` (N up to 99), writes the new kb.exe, then deletes the moved copy if nothing runs it (or moves it back if the write failed); uninstall also deletes `kb.old-*.exe` and the emptied folder | `git revert` the card's commit. Leftover `kb.old-N.exe` files are only old copies, in the live folder and every test slot: `Get-ChildItem "$env:USERPROFILE\Programs\Claude Kanban DSH*\kb.old-*.exe" -ErrorAction SilentlyContinue \| Remove-Item -ErrorAction SilentlyContinue` (those still in use stay) |
+| `scripts\test-kb-locked.ps1` (new) | `Remove-Item scripts\test-kb-locked.ps1 -Confirm:$false` |
