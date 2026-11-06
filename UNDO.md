@@ -700,3 +700,7 @@ No migration: the feed's indexes were left out because card #119 takes migration
 | `import-from.txt` may set page settings on the imported board (`key=value` lines), and copies every file of the old data folder but its port, token, log and staged update | Quit the app, move `board.db` out of the new data folder; the old folder is only read |
 | `install.ps1 -StageVia <old data folder>` stages a renamed build through the old app | Delete `update\update.json` in that folder before Restart now |
 | The example prompts are installed beside the app (`prompts\` in the install folder, `bundle.resources`) | Set a private folder; it wins over the installed examples |
+
+## Card worktrees inside the checkout (6 Nov 2026)
+
+Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit>`

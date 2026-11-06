@@ -48,14 +48,14 @@ the stack builds in parallel (planning.md and in-progress.md, their stack sectio
 stack's cards this section replaces "work on `main`" and "one kanban-app card builds at a time"
 below, because each card has its own worktree:
 
-- **The lead** makes the stack's worktree `<checkout>-<n>` (its own number) on a
+- **The lead** makes the stack's worktree `<checkout>/.claude/worktrees/card-<n>` (its own number) on a
   branch of its own, for example `stack-<n>`, from `main`
-  (`git -C <checkout> worktree add -b stack-<n> <checkout>-<n> main`),
+  (`git -C <checkout> worktree add -b stack-<n> <checkout>/.claude/worktrees/card-<n> main`),
   and records `worktreePath` and `branch`. The merger fast-forwards that branch, and the lead pushes it
   (`git push origin stack-<n>`); nothing reaches `main` until the stack ships.
-- **A child** works in `<checkout>-<n>` (its own number) on the branch
+- **A child** works in `<checkout>/.claude/worktrees/card-<n>` (its own number) on the branch
   `<stack branch>-<n>`, made from the stack's branch
-  (`git -C <checkout> worktree add -b <stack branch>-<n> <checkout>-<n> <stack branch>`),
+  (`git -C <checkout> worktree add -b <stack branch>-<n> <checkout>/.claude/worktrees/card-<n> <stack branch>`),
   and records both. It never commits to the
   stack's branch or to `main`. It pushes its own branch (`git push origin <its branch>`), never
   `main`.

@@ -59,7 +59,9 @@ If it doesn't, say so on the card in one log line and go on to *Plan it*.
 ## Plan it
 
 1. Read the card: its summary, links and issue (`gh issue view <n>`), and anything they point at.
-2. Make a worktree for the card off `origin/main`, in or beside the repo's checkout
+2. Make a worktree for the card off `origin/main`, inside the repo's checkout at
+   `<checkout>/.claude/worktrees/card-<n>` (never beside it: Claude Code trusts a trusted folder's
+   subfolders, so the session never stops at "Do you trust this folder?")
    (`git fetch origin && git worktree add -b <branch> <path> origin/main`), and record it with
    `kanban_update_card` (`worktreePath`, `branch`).
 3. Read the code the change touches, and the repo's README and AGENTS.md / CLAUDE.md, before
