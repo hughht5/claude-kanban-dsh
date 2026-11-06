@@ -5,7 +5,7 @@ members = ["crates/store", "crates/kb", "src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "MIT"
 
 [workspace.dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
