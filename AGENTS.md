@@ -161,4 +161,12 @@ In Git Bash:
 - Tests for every data rule and migration, in `crates/store/tests/` or beside the code.
 - Update `README.md` and `HANDOVER.md` when behaviour changes; `ACCEPTANCE.md` when a phase's tests
   change; `PLAN.md` for decisions.
-- Commit locally on `main` with a clear message; push only when the brief or column prompt says so.
+- Every change to the app is pushed to GitHub, to the right repo: the app's code, tests and docs to
+  this public repo (`hughht5/claude-kanban-dsh`, built in `~\claude-kanban-dsh`, also for cards whose
+  repo is the old `hughht5/kanban-app`); the owner's own material (column prompts, skills,
+  `repos.json`) to the owner's private repo, never here.
+  - In progress: commit on `main` locally with a clear message, then push the card's own branch
+    (`git push origin HEAD:refs/heads/card-<n>`, or a stack card's branch). Never push `main`.
+  - Ship it: merge to `main`, push `main`, delete the card's branch, then stage the live update
+    (`scripts\install.ps1`, never `-Now`).
+  - The pre-commit check (`scripts\check-public.sh`) must pass before every commit here.

@@ -17,6 +17,15 @@
 - [Deploy complete](#deploy-complete)
 <!-- /toc -->
 
+## Where changes go
+
+Every change to the app is pushed to GitHub, to one of two repos:
+
+- **The app's code, tests and docs** go to the public repo `hughht5/claude-kanban-dsh`, in `~\claude-kanban-dsh` (a card for `hughht5/kanban-app` or `hughht5/claude-kanban-dsh` builds there; `~\kanban-app` is the old archive, never build in it).
+- **Owner-only material** (column prompts, skills, `repos.json`) goes to the owner's private repo (the private folder in Settings).
+- In progress pushes the card's own branch, never `main`. Ship it merges to `main`, pushes `main`, then stages the live update (never `-Now`).
+- Before a commit to the public repo, its pre-commit check (`scripts/check-public.sh`) must pass: no employer names, work emails, home paths or private repo names.
+
 ## What this card is
 
 This card changes the kanban app itself (this repo). The column prompts are written for a web
@@ -42,13 +51,14 @@ below, because each card has its own worktree:
 - **The lead** makes the stack's worktree `<checkout>-<n>` (its own number) on a
   branch of its own, for example `stack-<n>`, from `main`
   (`git -C <checkout> worktree add -b stack-<n> <checkout>-<n> main`),
-  and records `worktreePath` and `branch`. The merger fast-forwards that branch; nothing reaches
-  `main` until the stack ships.
+  and records `worktreePath` and `branch`. The merger fast-forwards that branch, and the lead pushes it
+  (`git push origin stack-<n>`); nothing reaches `main` until the stack ships.
 - **A child** works in `<checkout>-<n>` (its own number) on the branch
   `<stack branch>-<n>`, made from the stack's branch
   (`git -C <checkout> worktree add -b <stack branch>-<n> <checkout>-<n> <stack branch>`),
   and records both. It never commits to the
-  stack's branch or to `main`, and never pushes.
+  stack's branch or to `main`. It pushes its own branch (`git push origin <its branch>`), never
+  `main`.
 - **Children don't install the test app for the owner.** A child builds, runs
   `cargo test --workspace`, `/code-review`, its review and its test on its own branch, and commits
   there. Its `nextStep` starts "Built on `<branch>`, commit `<short sha>`; the lead merges it and
@@ -90,7 +100,7 @@ Otherwise, as before: the stack's lead works on `main` in `<checkout>`, as below
 
 ## In progress
 
-1. Build on `main` in `<checkout>`. Don't push.
+1. Build on `main` in `<checkout>`. Never push `main` here (step 7 pushes the card's branch).
 1a. If the card's `repro` is needed (a bug report) and your session has the `card-reproducer`
    subagent, prove the bug before you fix it, and the fix after it (in-progress.md, *Prove a
    reported bug first*). Its second run needs the fix in the test app first (step 5). If your
@@ -136,8 +146,9 @@ Otherwise, as before: the stack's lead works on `main` in `<checkout>`, as below
 6b. If the card has `doneWhenChecks` (and `kanban_update_card` lists `doneWhen`), mark each check as
    you verify it in step 6, and say in the tester's brief that the card has them: its `CHECK <n>`
    lines mark them on the card.
-7. Commit on `main` locally (a clear message, the Co-Authored-By line). **Don't push** until the
-   owner has tested it.
+7. Commit on `main` locally (a clear message, the Co-Authored-By line). Then push the card's work
+   to GitHub as its own branch, never as `main`: `git push origin HEAD:refs/heads/card-<n>`
+   (`--force-with-lease` when you push it again). `main` is pushed only in Ship it.
 8. Route: no diff goes to Done; otherwise hand over (below) and move to Human test.
 
 ## Human test
@@ -184,7 +195,8 @@ exactly <sha>", push that commit and nothing else, to the branch the message nam
      reason, and stop. A commit with no `(card #<n>)` of this ship is someone else's unshipped
      work: never push it.
 2. Make sure the tested commit is what's on `main` (`git status` clean for your files, tests pass).
-3. `git push origin main`.
+3. `git push origin main`. Then delete the card's branch on GitHub if you pushed one:
+   `git push origin --delete card-<n>` (each card of a stack: its own branch).
 4. Stage the live update: `powershell -ExecutionPolicy Bypass -File scripts/install.ps1` (no
    `-Channel`; its default is `-Stage`). **Never `-Now`, never restart or quit the live app
    yourself.** Check `%USERPROFILE%\.claude-kanban-dsh\update\update.json` names your commit.
