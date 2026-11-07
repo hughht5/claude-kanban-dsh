@@ -1151,6 +1151,9 @@ card into Ship it.
   start). Nothing changes on the board until you do. Its panel docks on the right: a digest when
   you have been away 2 hours or more, the Router's log, then **Chat** and **Terminal**. **Stop**
   turns it off; while it is on, the app resumes it after a restart.
+- **Send it a screenshot.** Paste an image into its message box, or drop a file on the panel: a
+  thumbnail shows above the box, and Send adds an `[Attached: <path>]` line the Router can Read,
+  as in a card chat. The Router must be running to attach files.
 - **Talk to it** in the panel, or from any shell with `kb router "what is stuck?"` and
   `kb router --replies 3`. Card sessions can reach it with the `kanban_router` tool. A question it
   asks you shows with answer buttons, a "Router asks" pill and a notification that never takes

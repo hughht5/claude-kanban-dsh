@@ -100,13 +100,13 @@ function openPane(){
   <div class="rpane-tabs" role="tablist" aria-label="Router views"><button class="sub on" type="button" role="tab" data-tab="chat" aria-selected="true"><b>Chat</b></button><button class="sub" type="button" role="tab" data-tab="term" aria-selected="false"><b>Terminal</b></button></div>
   <div class="rpane-body" id="r-body">
     <div class="rpane-chat chat" id="r-chat"><div class="msgs" id="r-msgs"><div class="quiet">Reading the Router's conversation…</div></div><div class="busy" id="r-busy" hidden></div><div class="rtrust" id="r-trust" hidden></div>
-      <div class="compose" id="r-compose"><textarea id="r-text" rows="2" aria-label="Message to the Router"></textarea><button class="btn" id="r-send" type="button">Send</button></div>
+      <div class="compose" id="r-compose"><div class="atts" id="r-atts"></div><textarea id="r-text" rows="2" aria-label="Message to the Router"></textarea><button class="btn" id="r-send" type="button">Send</button></div>
       <div class="rpane-foot" id="r-foot"></div></div>
     <div class="rpane-term" id="r-termhost" hidden></div>
   </div>`;
   document.body.appendChild(el);
   pane={el,tab:"chat",entries:[],tools:{},offset:0,open:new Set(),more:new Set(),ask:{},reading:false,timer:null,term:null,fit:null,
-    feed:null,feedOpen:store("router.feedOpen")!=="0",digest:null,unlisten:[],question:null};
+    feed:null,feedOpen:store("router.feedOpen")!=="0",digest:null,unlisten:[],question:null,att:[]};
   document.body.classList.add("rpane-open");
   applyWidth(width());
   el.querySelector("#r-close").onclick=closePane;
@@ -447,14 +447,75 @@ function setupChat(el){
   const ta=el.querySelector("#r-text");
   ta.addEventListener("keydown",e=>{if(e.isComposing)return;if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
   el.querySelector("#r-send").onclick=send;
+  ta.addEventListener("paste",onPaste);
+  el.addEventListener("dragover",onDragOver);
+  el.addEventListener("drop",onDrop);
+  el.querySelector("#r-atts").addEventListener("click",e=>{
+    const b=e.target.closest(".rm");if(!b||!pane)return;
+    pane.att.splice(+b.dataset.i,1);renderAtts();clearErr();ta.focus();
+  });
+}
+// ---------- attachments: pasted or dropped images and files, saved in the data folder ----------
+// As the card chat (panel.js): saved in the data folder under attachments/router, and sent as "[Attached: <path>]" lines.
+// Uses panel.js's hasFiles, withAttachments, readDataUrl, baseName and IMG_EXT.
+const clearErr=()=>{if(pane){const f=pane.el.querySelector("#r-foot");if(f&&f.querySelector(".err"))f.innerHTML=""}};
+function onPaste(e){
+  const files=[...(e.clipboardData?e.clipboardData.files:[])];
+  if(!files.length||!pane||!st.live)return;
+  // Keep any text that came with the image; only an image-only paste is taken over.
+  if(!e.clipboardData.getData("text/plain"))e.preventDefault();
+  addFiles(files);
+}
+async function addFiles(files){
+  if(!pane)return;const p=pane;
+  for(const f of files){
+    const a={path:null,name:f.name||"screenshot.png",thumb:null};
+    p.att.push(a);renderAtts();
+    try{
+      if(f.size>25*1024*1024)throw new Error("it is over 25 MB");
+      const data=await readDataUrl(f);
+      if((f.type||"").startsWith("image/"))a.thumb=data;
+      const name=f.name&&f.name!=="image.png"?f.name:`screenshot${f.type==="image/jpeg"?".jpg":".png"}`;
+      const path=await invoke("attachment_save",{cardId:RID,name,data});
+      a.path=path;a.name=baseName(path);
+      if(pane===p)clearErr();
+    }catch(err){
+      p.att=p.att.filter(x=>x!==a);
+      if(pane===p)foot(`<span class="err">Couldn't attach ${esc(a.name)}: ${esc(errText(err))}</span>`);
+    }
+    if(pane===p)renderAtts();
+  }
+}
+function renderAtts(){
+  if(!pane)return;const box=pane.el.querySelector("#r-atts");if(!box)return;
+  box.innerHTML=pane.att.map((a,i)=>`<span class="att${a.path?"":" saving"}" title="${esc(a.path||"Saving…")}">${a.thumb?`<img src="${esc(a.thumb)}" alt="">`:`<span class="ficon" aria-hidden="true">${IMG_EXT.test(a.name)?"IMG":"FILE"}</span>`}<span class="nm">${esc(a.name)}</span><button type="button" class="rm" data-i="${i}" aria-label="Remove ${esc(a.name)}">✕</button></span>`).join("");
+}
+// dragDropEnabled is off, so a file dropped anywhere on the pane must be cancelled or the window opens it.
+// File drags only (a text drag in the box still works). dropEffect stays "copy" so a drop fires
+// even with the Router off, and says why nothing was added.
+function onDragOver(e){
+  if(!hasFiles(e))return;e.preventDefault();e.dataTransfer.dropEffect="copy";
+}
+function onDrop(e){
+  if(!hasFiles(e))return;e.preventDefault();
+  if(!pane)return;
+  if(!st.live){if(typeof status==="function")status("Start the Router to attach files",true);return}
+  if(pane.tab!=="chat")showTab("chat");
+  addFiles([...e.dataTransfer.files]);
 }
 async function send(){
-  if(!pane||!st.live||pane.sending)return;const ta=pane.el.querySelector("#r-text"),text=ta.value;
+  if(!pane||!st.live||pane.sending)return;const p=pane,ta=p.el.querySelector("#r-text");
+  const snap=p.att.slice();
+  if(snap.some(a=>!a.path)){foot(`<span class="err">Wait for the attachments to finish saving.</span>`);return}
+  const text=withAttachments(ta.value,snap.map(a=>a.path));
   if(!text.trim())return;
-  pane.sending=true;
-  try{await invoke("router_send",{text});if(pane){ta.value="";foot("")}}
-  catch(e){foot(`<span class="err">Not sent: ${esc(errText(e))}</span>`)}
-  finally{if(pane)pane.sending=false;refreshStatus()}
+  p.sending=true;
+  try{await invoke("router_send",{text});if(pane===p){ta.value="";p.att=p.att.filter(a=>!snap.includes(a));renderAtts();foot("")}}
+  catch(e){
+    // The same message comes when the typed text holds a secret; a saved file's name can too.
+    const m=errText(e),hint=snap.length&&/looks like it holds a token, key/.test(m)?" If your text is fine, rename the file and attach it again.":"";
+    foot(`<span class="err">Not sent: ${esc(m)}${hint}</span>`)}
+  finally{if(pane===p)p.sending=false;refreshStatus()}
 }
 function drawCompose(){
   if(!pane)return;const ta=pane.el.querySelector("#r-text"),b=pane.el.querySelector("#r-send");
