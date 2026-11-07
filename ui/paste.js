@@ -1,6 +1,7 @@
 // Pasting screenshots where text goes: a card's description (the Add card box and the card's
 // Summary and Next step), a stack child's "Found a problem" and answer boxes, and the session's
-// terminal. The message box has its own attachment strip (panel.js). The image is saved in the
+// terminal. The card chat's message box has its own attachment strip (panel.js), and so has the
+// Router panel's (router.js). The image is saved in the
 // app's data folder, and its path goes in as text for Claude to read: "[Image: <path>]" in a
 // description or a stack box, the bare path in the terminal, where Claude Code turns a pasted
 // image path into an attached image.

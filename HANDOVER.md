@@ -1321,6 +1321,14 @@ proof so far is CI on GitHub's Mac runners. ACCEPTANCE.md has the list for a rea
 - **Test slots (card #118):** `KANBAN_CHANNEL` also takes `test2` to `test10` (ports up to 9343). `crates/store/src/channel.rs` derives every name from the slot number (live 0, test 1, testN N): `app_name_for`, `quit_event_for`, `product_name_for`, `exe_name_for`, `identifier_for`, `devtools_port_for` (9333 + N), `data_dir_for`. Any other value stops the build (a `const` assert), so a typo can't make a build that opens the live board. `install.ps1 -Channel testN` derives the same names, writes `target\testN\tauri.testN.conf.json` (tauri.test.conf.json with the slot's productName, binary, identifier and title) and `target\testN\hooks.nsh` (kb.exe from `target\testN\release`), and builds with them; nothing is generated in the checkout. `-NamesOnly` prints the names as JSON; `crates/store/tests/channels.rs` holds the script and `tauri.test.conf.json` to `channel.rs`. The UI takes its name from the `app_name` command ("Claude Kanban DSH (test 2)") for the bar and titles; toasts say "(test 2)". `test` itself is unchanged. **Sessions reach only their own board (final-test finding F1):** a test build's `build_env` passes `build_env_for` its data folder and install folder, so each card session gets `KANBAN_DATA_DIR` and the test app's folder first on PATH; `kb` and `kb mcp` take the board folder from `KANBAN_DATA_DIR` first (`kanban_store::kb_data_dir`). That covers the repo's `.mcp.json` `kb mcp` (the live kb on PATH, once it has this change; until then the PATH entry makes it the test kb) and `kb` in Bash. The live build passes no board and drops an inherited `KANBAN_DATA_DIR`.
 - **Copied sessions:** `copy_board` records each session still running on the source as suspended ("copied", not mid-turn) in the copy and moves `app.run_started_seq` past them, so the test app never resumes a live conversation.
 
+## Router panel: images (7 Nov 2026, card #127)
+
+UI only. The Router panel's message box takes pasted images and dropped files like a card chat's:
+`router.js` `onPaste`, `addFiles`, `renderAtts`, `onDragOver`, `onDrop`; files are saved with
+`attachment_save` as card id `router` and sent as `[Attached: <path>]` lines. File drags over the
+whole `.rpane` are cancelled (the window has no native drop), with `dropEffect` "copy" so the
+Router-off message shows; the disabled box has `pointer-events:none`.
+
 ## The Router session (6 Nov 2026, card #119, branch `dsh-119`)
 
 One long-running Claude Code session the app owns for the whole board (the DSH "router"). Hugh

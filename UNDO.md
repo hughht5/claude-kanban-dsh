@@ -704,3 +704,9 @@ No migration: the feed's indexes were left out because card #119 takes migration
 ## Card worktrees inside the checkout (6 Nov 2026)
 
 Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit>`
+
+## Router panel: paste and send images (7 Nov 2026, card #127)
+
+UI only; nothing on the board or in the data folder changes (saved images are plain files in `attachments/router` in the data folder).
+
+Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit>`
