@@ -1,0 +1,14 @@
+/* The Done pile (card #131): the Router's asks to archive, before the Archive column. */
+.c-DonePile .dot{background:var(--ok)}
+.pile-head{font-size:12px;color:var(--muted);margin:0 4px 8px}
+.pile-all{margin:0 2px 10px;padding:8px 10px;border:1px solid var(--ok);border-radius:8px;background:var(--panel);color:var(--ok);font:inherit;font-weight:600;cursor:pointer}
+.pile-all:hover{background:var(--ok);color:var(--panel)}
+.pile-all:disabled{opacity:.5;cursor:default}
+.pile-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.pile-row .card{margin-bottom:0}
+.pile-note{font-size:12px;color:var(--muted);padding:0 6px;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+.pile-reason{color:var(--fg)}
+.pile-run{color:var(--warn)}
+.pile-why{color:var(--bad)}
+.pile-not{align-self:flex-start;margin:0 6px;padding:2px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
+.pile-not:hover{color:var(--fg);border-color:var(--muted)}

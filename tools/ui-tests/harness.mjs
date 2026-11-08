@@ -10,7 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const UI = path.resolve(here, "..", "..", "ui");
 
 // The files a board face needs, in index.html's order (panel.js, stacks.js and the rest are left out).
-export const FILES = ["labels.js", "board.js", "small.js", "needs.js", "check-size.js", "steps.js", "done-when.js", "waits.js", "changes.js", "filterbar.js", "face.js"];
+export const FILES = ["labels.js", "board.js", "small.js", "needs.js", "check-size.js", "steps.js", "done-when.js", "waits.js", "changes.js", "filterbar.js", "face.js", "archive-ask.js"];
 
 export function boot({ files = FILES, invoke = {} } = {}) {
   const html = fs.readFileSync(path.join(UI, "index.html"), "utf8");

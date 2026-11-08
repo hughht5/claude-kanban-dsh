@@ -608,6 +608,18 @@ pub(crate) fn write_tx(tx: &Transaction, card: &mut Card, expected: i64, changed
         }
         archived_now = true;
     }
+    // An ask from the Router to archive the card goes once it no longer holds (card #131): the
+    // card changed column, was archived or restored, or joined a stack.
+    if card.fields.contains_key(crate::ARCHIVE_ASK_KEY) {
+        if let Some(old) = get_tx(tx, &card.id)? {
+            if crate::archive_ask::stale(&old, card) {
+                card.fields.remove(crate::ARCHIVE_ASK_KEY);
+                if !changed.iter().any(|k| k == crate::ARCHIVE_ASK_KEY) {
+                    changed.push(crate::ARCHIVE_ASK_KEY.into());
+                }
+            }
+        }
+    }
     let changed = &changed[..];
     card.fields.insert("updatedAt".into(), json!(at));
     card.fields.insert("updatedBy".into(), json!(by));

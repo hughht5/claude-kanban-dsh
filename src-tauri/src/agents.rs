@@ -93,7 +93,9 @@ pub const GATES: &[Gate] = &[
 /// The `kanban` tools that change cards. No subagent may use them, under either server name:
 /// the app's own (`kanban`, from `--mcp-config`) and the repo's (`kanban-app`, from
 /// kanban-app's `.mcp.json`, which a card session in that checkout also loads).
-const CARD_TOOLS: [&str; 9] = [
+const CARD_TOOLS: [&str; 10] = [
+    // The Router's ask to archive a card (card #131): never its subagents'.
+    "kanban_archive_card",
     "kanban_move_card",
     "kanban_update_card",
     "kanban_create_card",
@@ -772,7 +774,7 @@ mod tests {
             assert_eq!(d["model"], "inherit");
             assert_eq!(d.get("effort").and_then(Value::as_str), a.effort, "{}", a.name);
             let denied: Vec<&str> = d["disallowedTools"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
-            for tool in ["mcp__kanban__kanban_move_card", "mcp__kanban-app__kanban_move_card", "mcp__kanban-app__kanban_update_card", "mcp__kanban__kanban_ship_result"] {
+            for tool in ["mcp__kanban__kanban_move_card", "mcp__kanban-app__kanban_move_card", "mcp__kanban-app__kanban_update_card", "mcp__kanban__kanban_ship_result", "mcp__kanban__kanban_archive_card"] {
                 assert!(denied.contains(&tool), "{} may use {tool}", a.name);
             }
             // No rule with a specifier on a shell: it would take the whole shell away (card #100).

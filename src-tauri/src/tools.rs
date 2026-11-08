@@ -489,6 +489,16 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
 mod tests {
     use super::*;
 
+    /// Card #131: no session, `kb` or the Router can write the Done pile's fields through
+    /// kanban_update_card; only kanban_archive_card asks, and only Hugh's page answers.
+    #[test]
+    fn no_mcp_caller_sets_the_done_piles_fields() {
+        for k in [kanban_store::ARCHIVE_ASK_KEY, kanban_store::ARCHIVE_DECLINED_KEY] {
+            let f = json!({ k: { "reason": "x" } });
+            assert_eq!(not_updatable(f.as_object().unwrap()).map(String::as_str), Some(k), "{k}");
+        }
+    }
+
     #[test]
     fn t4_6_ship_request_needs_the_flag_and_an_outside_session() {
         assert!(ship_request_allowed(None, &json!({ "card": 34 })).unwrap_err().starts_with("refused"));

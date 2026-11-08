@@ -1370,6 +1370,21 @@ or any session with `kanban_router`. The decisions below are the router's after 
   `worktreePath`, through the cap and queue), `kanban_router_log`, a compact `kanban_list_cards`
   (no summaries), and `kanban_session_send/status/read` (a send that would resume a stopped
   session needs the setting). No `kanban_set_passed`, `kanban_ship_result` or ship request.
+- **The Done pile (card #131).** `kanban_archive_card {card, if_version, reason, evidence?}` never
+  archives: after `card_for_write` it calls `Store::ask_archive` (`crates/store/src/archive_ask.rs`),
+  which writes `archiveAsk` = {reason, evidence, at, by, column}. Refused in Ship it, for a stack's
+  child, for a lead with a child in Ship it, and while Hugh's Not now (`archiveAskDeclined`, the
+  version it made) stands: only a later write by "Hugh..." or "card #N's session" for that card
+  lifts it (`lifts_decline`, `revisions_after`). `write_tx` removes the ask when the card changes
+  column, is archived or restored, or joins a stack (`archive_ask::stale`). The board
+  (`ui/archive-ask.js`) draws the pile before the Archive and takes those cards out of their
+  columns; **Archive all** calls `router_archive_approve` (`Store::approve_archive`: still asked,
+  same column, `archive_refused`, then `move_by_hugh` into Done, so `write_tx` archives it), then
+  `dispatch::after_move` per card and `Sessions::stop` for a lead's live children (archived in
+  place, which no after-move reaches). **Not now** calls `router_archive_dismiss`. Neither field is
+  in `UPDATABLE`, and `kanban_archive_card` is in `agents::CARD_TOOLS`, so no session, `kb` or
+  subagent sets them. Tests: `crates/store/tests/archive_ask.rs`, `tools/ui-tests/archive-ask.test.mjs`,
+  and the Router's tool list and prompt tests.
 - **Verdicts.** `agents::own_or_named`: for the Router's session the card is the one the report
   (or the brief's `CARD:` line, for #104's work snapshot) names. Used by `record_check`, the
   merger, the reproducer and the card-router.

@@ -29,6 +29,8 @@ pub fn own_schemas() -> Value {
     json!([
         { "name": "kanban_start_card", "description": "Start (or resume) a card's session, as Hugh's start does: in its worktree (worktreePath) when it has one, else in its repo's folder. Only for a card in Planning or In progress, and only while Hugh's \"Router may start cards\" setting is on; refused otherwise. The running-sessions cap and queue still apply.",
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "message": { "type": "string", "description": "A first message for the session." } }, "required": ["card", "if_version"] } },
+        { "name": "kanban_archive_card", "description": "Ask Hugh to archive a card whose work is live (merged, shipped, in Deploy complete) or that he asked for. It does not archive: the card goes into the board's Done pile, and Hugh's Archive all moves it into Done. Refused in Ship it, for a stack's child (ask for the lead), and after Hugh said Not now until he or the card's own session changes it.",
+          "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "reason": { "type": "string", "description": "Why it can go, for Hugh's Done pile." }, "evidence": { "type": "string", "description": "What shows the work is live (a merged branch, a ship, Hugh's words)." } }, "required": ["card", "if_version", "reason"] } },
         { "name": "kanban_router_log", "description": "Your own log. With text: add a line (kind decision or note; card: the card it is about). Without text: read your last lines, newest first (limit, default 20).",
           "inputSchema": { "type": "object", "properties": { "text": { "type": "string" }, "kind": { "type": "string", "enum": ["decision", "note"] }, "card": { "type": "integer" }, "limit": { "type": "integer" } } } },
     ])
@@ -184,6 +186,7 @@ pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Valu
             crate::testapp::tool(app, None, args)
         }
         "kanban_start_card" => start_card(app, args, may_start),
+        "kanban_archive_card" => ask_archive(app, args),
         "kanban_router_log" => router_log(app, args),
         "kanban_session_status" | "kanban_session_read" => crate::control::call(app, name, args),
         "kanban_session_send" => {
@@ -307,6 +310,22 @@ fn start_card(app: &AppHandle, args: &Value, may_start: bool) -> Result<Value, S
     Ok(json!(text))
 }
 
+/// The Router's ask to archive a card (card #131): the store's rules, after the Router's own
+/// checks (its version, not archived, hands off a card Hugh has open or just changed).
+fn ask_archive(app: &AppHandle, args: &Value) -> Result<Value, String> {
+    let board = app.state::<Board>();
+    let mut store = board.0.lock().map_err(|e| e.to_string())?;
+    let c = card_for_write(app, &store, args)?;
+    let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
+    let evidence = args.get("evidence").and_then(Value::as_str);
+    store.ask_archive(c.number, c.version, reason, evidence).map_err(|e| format!("refused: {e}"))?;
+    let pile = store.list(false).map(|l| l.iter().filter(|k| k.fields.contains_key(kanban_store::ARCHIVE_ASK_KEY)).count()).unwrap_or(0);
+    drop(store);
+    let _ = tauri::Emitter::emit(app, "cards-changed", ());
+    let _ = tauri::Emitter::emit(app, "router-changed", ());
+    Ok(json!(format!("Card #{} is in Hugh's Done pile ({pile} there now). He archives the pile with one click.", c.number)))
+}
+
 fn router_log(app: &AppHandle, args: &Value) -> Result<Value, String> {
     let board = app.state::<Board>();
     let mut store = board.0.lock().map_err(|e| e.to_string())?;
@@ -364,7 +383,7 @@ mod tests {
     #[test]
     fn the_router_is_offered_its_tools_and_never_a_ship() {
         let names: Vec<String> = tool_list().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
-        for t in ["kanban_get_card", "kanban_list_cards", "kanban_move_card", "kanban_update_card", "kanban_create_card", "kanban_start_card", "kanban_router_log", "kanban_session_send", "kanban_notify"] {
+        for t in ["kanban_get_card", "kanban_list_cards", "kanban_move_card", "kanban_update_card", "kanban_create_card", "kanban_start_card", "kanban_router_log", "kanban_session_send", "kanban_notify", "kanban_archive_card"] {
             assert!(names.iter().any(|n| n == t), "{t}");
         }
         for t in ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_session_start", "kanban_session_stop", "kanban_session_keys", "kanban_search"] {
@@ -372,6 +391,12 @@ mod tests {
         }
         let mv = tool_list().as_array().unwrap().iter().find(|t| t["name"] == "kanban_move_card").cloned().unwrap();
         assert!(mv["inputSchema"]["required"].as_array().unwrap().iter().any(|v| v == "if_version"));
+        // Card #131: the archive ask needs the card's version and a reason.
+        let ar = tool_list().as_array().unwrap().iter().find(|t| t["name"] == "kanban_archive_card").cloned().unwrap();
+        let req: Vec<&str> = ar["inputSchema"]["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        for k in ["card", "if_version", "reason"] {
+            assert!(req.contains(&k), "{k}");
+        }
     }
 
     #[test]

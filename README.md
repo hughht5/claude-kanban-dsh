@@ -70,6 +70,7 @@ You stay in charge of the one decision that matters: what ships.
 3. **Checked.** The tester tries the change for real and captures before-and-after screenshots. The reviewer reads the diff. The reproducer proves any bug and its fix.
 4. **Human test.** The card lands in front of you with its evidence, its verdicts and the steps to check it. Pass it or fail it with a note. A fail sends it straight back to work.
 5. **Ship it.** The merger brings the branch up to date with main and resolves conflicts. Only you move a card into Ship it, unless you've told a card to go on by itself.
+6. **Clear the board.** The Router puts cards whose work is live into a **Done pile**, and one **Archive all** click archives them. It never archives a card by itself.
 
 Each column's instructions are plain Markdown files you can read and change.
 

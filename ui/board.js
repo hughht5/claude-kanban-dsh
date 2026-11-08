@@ -171,7 +171,8 @@ function render(){
   const arch=cards.filter(c=>!isSystemCard(c)&&(isArch(c)||colOf(c)==="Done"));
   for(const col of BOARD_COLS){
     // A stack's children leave the columns (stacks.js); a stack shows when it or a child matches.
-    let list=cards.filter(c=>!isSystemCard(c)&&!isArch(c)&&colOf(c)===col&&!(typeof stackHidden==="function"&&stackHidden(c))&&(typeof stackMatches==="function"?stackMatches(c):matches(c))).sort(byOrder);
+    // A card the Router asked to archive waits in the Done pile instead (archive-ask.js, card #131).
+    let list=cards.filter(c=>!isSystemCard(c)&&!isArch(c)&&colOf(c)===col&&!(typeof inDonePile==="function"&&inDonePile(c))&&!(typeof stackHidden==="function"&&stackHidden(c))&&(typeof stackMatches==="function"?stackMatches(c):matches(c))).sort(byOrder);
     if(typeof pinFirst==="function")list=pinFirst(list); // cards that need Hugh go first (needs.js)
     const el=document.createElement("section");
     el.className="col c-"+col.replace(/ /g,"-");el.dataset.col=col;

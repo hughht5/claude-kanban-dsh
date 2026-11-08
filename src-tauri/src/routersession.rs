@@ -1024,7 +1024,9 @@ mod tests {
 
     #[test]
     fn the_prompt_holds_the_rules_and_stays_short() {
-        for must in ["Ship it", "poll", "kanban_get_card", "data", "dry", "if_version", "Hugh", "card-merger", "integrate"] {
+        for must in ["Ship it", "poll", "kanban_get_card", "data", "dry", "if_version", "Hugh", "card-merger", "integrate", "kanban_archive_card", "Done pile",
+            // Card #131: asking to archive is not a move into Done.
+            "Asking with kanban_archive_card is not a move"] {
             assert!(PROMPT.contains(must), "router.md says {must}");
         }
         assert!(PROMPT.len() < 9000, "the system prompt is {} characters", PROMPT.len());

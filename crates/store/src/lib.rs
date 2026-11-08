@@ -1,6 +1,8 @@
 //! The board's store: SQLite, owned by one process, with version-pinned card
 //! writes and append-only logs. Nothing here ever removes a row.
 
+// The Router's asks to archive a card, and Hugh's answer (card #131).
+mod archive_ask;
 mod cards;
 mod channel;
 mod check_size;
@@ -30,6 +32,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub use archive_ask::{archive_refused, lifts_decline, ArchiveResult, ARCHIVE_ASK_KEY, ARCHIVE_DECLINED_KEY, ASK_TEXT_MAX};
 pub use move_in::{import_if_asked, Imported, IMPORT_DONE, IMPORT_REQUEST};
 pub use config::PRIVATE_DIR_KEY;
 pub use channel::{app_name, app_name_for, channel, data_dir_for, devtools_port_for, exe_name_for, home_var, identifier_for, is_test, kb_data_dir, DATA_DIR_ENV, label_for, live_board, product_name_for, quit_event, quit_event_for, slot, slot_of, LIVE_DEVTOOLS_PORT};

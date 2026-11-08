@@ -704,3 +704,14 @@ No migration: the feed's indexes were left out because card #119 takes migration
 ## Card worktrees inside the checkout (6 Nov 2026)
 
 Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit>`
+
+## Card #131: the Done pile, the Router's asks to archive (8 Nov 2026, branch `card-131`)
+
+| Change | Undo |
+|---|---|
+| `crates\store\src\archive_ask.rs`, `Store::revisions_after`, the stale-ask removal in `write_tx` (`cards.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #131 commits>`. Cards keep any `archiveAsk` / `archiveAskDeclined` field; an older build ignores both |
+| `kanban_archive_card` (`routertools.rs`), in `agents::CARD_TOOLS` | Same revert |
+| `router_archive_approve`, `router_archive_dismiss` (`main.rs`) | Same revert |
+| `ui\archive-ask.js`, `ui\archive-ask.css`, their tags in `ui\index.html`, the Done-pile filter in `ui\board.js` render | Same revert. Without it, cards with an ask show in their own columns again |
+| The Router prompt's job 6 and rule 1's sentence (`prompts\router.md`; the private copy in the private repo) | Same revert here; in your private repo, `git revert --no-edit` its card #131 commit |
+| A card archived from the Done pile | Open it in the Archive and press **Restore** |

@@ -663,6 +663,55 @@ fn archive_card(app: AppHandle, board: State<Board>, id: String, version: i64, o
     Ok(out)
 }
 
+/// One row of the Done pile Hugh acts on: a card and the version the board drew it at.
+#[derive(serde::Deserialize)]
+struct PileItem {
+    id: String,
+    version: i64,
+}
+
+/// Hugh's Archive all on the Done pile (card #131): each card the Router asked to archive moves
+/// into Done as his Archive drop does (the store's rules, `Store::approve_archive`), then gets the
+/// drop's after-move (its session stopped, waits met). Children archived with a lead are archived
+/// in place, which no after-move reaches, so their running sessions are stopped here.
+#[tauri::command]
+fn router_archive_approve(app: AppHandle, board: State<Board>, items: Vec<PileItem>) -> CmdResult<Value> {
+    let pairs: Vec<(String, i64)> = items.into_iter().map(|i| (i.id, i.version)).collect();
+    let mut store = board.0.lock().map_err(CmdError::other)?;
+    let out = store.approve_archive(&pairs);
+    // The stack rules after the move, as for Hugh's drag (hugh_move).
+    for r in out.iter().filter(|r| r.done) {
+        dispatch::after_stack_move(&app, &mut store, &r.id, HUGH);
+    }
+    drop(store);
+    changed(&app);
+    let _ = app.emit("router-changed", ());
+    for r in out.iter().filter(|r| r.done) {
+        let (a, id, from, kids) = (app.clone(), r.id.clone(), r.from.clone().unwrap_or_default(), r.children.clone());
+        std::thread::spawn(move || {
+            dispatch::after_move(&a, &id, &from);
+            let live = a.state::<Arc<sessions::Sessions>>();
+            for k in kids.iter().filter(|k| live.is_live(k).is_some()) {
+                let _ = live.stop(&a, k);
+            }
+        });
+    }
+    Ok(serde_json::to_value(out).unwrap_or(json!([])))
+}
+
+/// Hugh's Not now on cards in the Done pile (card #131): their asks go, and the Router can't ask
+/// again until he or the card's own session changes the card.
+#[tauri::command]
+fn router_archive_dismiss(app: AppHandle, board: State<Board>, items: Vec<PileItem>) -> CmdResult<Value> {
+    let pairs: Vec<(String, i64)> = items.into_iter().map(|i| (i.id, i.version)).collect();
+    let mut store = board.0.lock().map_err(CmdError::other)?;
+    let out = store.dismiss_archive(&pairs);
+    drop(store);
+    changed(&app);
+    let _ = app.emit("router-changed", ());
+    Ok(serde_json::to_value(out).unwrap_or(json!([])))
+}
+
 #[tauri::command]
 fn open_external(url: String) -> CmdResult<()> {
     launch::open_external(&url).map_err(CmdError::other)
@@ -834,6 +883,8 @@ fn main() {
             update_card,
             move_card,
             archive_card,
+            router_archive_approve,
+            router_archive_dismiss,
             stack_add,
             stack_remove,
             stack_detach,

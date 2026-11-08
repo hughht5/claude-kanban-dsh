@@ -478,6 +478,24 @@ older** shows the rest, and the filter box searches them too).
   the column starts one. A card that is shipping can't be archived until the ship has finished.
 - Migration 10 archived the cards that were in Done, with their last update as `archivedAt`.
 
+### The Done pile (card #131)
+
+The Router can ask to archive a card whose work is live (merged, shipped, or in Deploy complete),
+or one you asked it to clear. It never archives by itself: the card goes into the **Done pile**, a
+column just before the Archive, and leaves its own column while it waits. Each card there shows
+where it came from, the Router's reason and evidence, and any running session archiving would
+stop (for a stack's lead, its children's too).
+
+- **Archive all N** moves every card shown in the pile into Done, exactly as your Archive drop
+  does: it archives them, stops their sessions (a lead's children's as well) and counts as done for
+  any card waiting on them. A card that changed since the pile was drawn, or went into Ship it,
+  stays with the reason on it. The filter box narrows what Archive all takes.
+- **Not now** on a card puts it back in its column. The Router can't ask again for it until you or
+  the card's own session change the card.
+- An ask goes by itself when the card moves to another column, is archived or restored, or joins a
+  stack. The Router never asks for a card in Ship it, or for a stack's child (it asks for the lead).
+- The pile shows only while it holds a card. **Restore** brings a card back as for any archived card.
+
 ## Take it to: cards that go on by themselves
 
 The Add card form has a **Take it to** choice. It sets how far the card goes by itself before it
@@ -1142,6 +1160,8 @@ card into Ship it.
   Router may start cards** (off by default) also lets it move a card from Backlog to Planning and
   start a card's session in its own worktree. It leaves a card alone while you have its panel open
   or changed it in the last 2 minutes.
+- **Clearing finished cards:** it puts them in the board's **Done pile** (see *The Done pile*), and
+  your **Archive all** archives them. It never archives a card itself.
 - It runs on Sonnet at low effort (its subagents on Sonnet at medium); Settings › Router changes
   the model and effort. It sits outside the running-sessions cap and is never paused for being
   idle. It wakes only on events (moves, new cards, verdicts, the Monitor, your messages), joined

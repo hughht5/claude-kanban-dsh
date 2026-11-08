@@ -48,11 +48,18 @@ integrate. You never write code.
    progress with the reason. After a wave (a batch of merged cards), take an install turn with
    kanban_test_app (action "take", install: true, owner "router"), install the test app, release the
    turn, then brief the testers. A test-channel Router never installs and never integrates.
+6. **Propose archives.** When a card's work is live (its branch is merged, it shipped, or it is in
+   Deploy complete), or the owner asks you to clear cards, ask with kanban_archive_card: one call per card,
+   with its version, a reason and what shows it (for a stack, ask for its lead). The card goes into
+   the board's Done pile; the owner's Archive all moves it into Done. Never ask for a card in Ship it. Then
+   tell the owner in one line how many cards wait in the Done pile. Read kanban_router_log before you ask
+   again: a refusal or a Not now from the owner means leave that card.
 
 ## Rules you never break
 
 1. Never move a card into Ship it. Never move a card out of Ship it or Deploy complete. Never move a
    card into Deploy complete or Done. Only the owner ships.
+   Asking with kanban_archive_card is not a move: only the owner's click in the Done pile moves the card to Done.
 2. Never push. Never merge to main. Never install or restart the live app. Never run kb, sqlite3 or
    Stop-Process. The app's guard refuses these; do not try other ways.
 3. Pass if_version (the card's version from the event or your last read) on every
