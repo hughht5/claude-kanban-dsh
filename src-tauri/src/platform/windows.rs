@@ -332,7 +332,7 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
          try {{ Wait-Process -Id {pid} -Timeout 300 -ErrorAction Stop }} catch {{}}\n\
          if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Note 'The app is still running after 5 minutes; not installing.'; Result $false 'install' 'The app was still running after 5 minutes, so the update was not installed.'; exit 1 }}\n\
          Note ('Installing ' + {setup})\n\
-         $code = $null\n\
+         $code = $null; $p = $null\n\
          try {{\n\
            $p = Start-Process -FilePath {setup} -ArgumentList '/S', {d_arg} -Wait -PassThru\n\
            $code = $p.ExitCode\n\
@@ -346,6 +346,7 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
            Result $false 'kb' $who\n\
          }}\n\
          elseif ($code -ne $null) {{ Result $false 'install' \"The installer exited with code $code\" }}\n\
+         elseif ($p) {{ Result $false 'install' 'The installer gave no exit code' }}\n\
          Note ('Starting ' + {exe})\n\
          Start-Process -FilePath {exe} -WorkingDirectory {dir}\n\
          Note 'Done'\n"
@@ -472,15 +473,12 @@ mod tests {
     }
 
     /// Runs the real helper (hidden, no window) with an installer that isn't there and an app
-    /// that has already exited: it writes a kind "install" result with no byte-order mark.
+    /// that isn't running: it writes a kind "install" result with no byte-order mark.
     #[test]
     fn helper_result_has_no_bom() {
         let t = tempfile::tempdir().unwrap();
-        let Ok(mut done) = Command::new("powershell.exe").args(["-NoProfile", "-Command", "exit 0"]).stdout(Stdio::null()).spawn() else {
-            return; // no PowerShell here
-        };
-        let pid = done.id();
-        done.wait().unwrap();
+        // Windows' process ids are multiples of 4, so 3 is never a running process.
+        let pid = 3;
         let log = t.path().join("restart.log");
         let s = update_helper(pid, &t.path().join("no-setup.exe"), t.path(), &t.path().join("no-app.exe"), &log);
         let file = t.path().join("helper.ps1");
