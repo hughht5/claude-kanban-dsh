@@ -87,7 +87,7 @@ impl Card {
     }
 }
 
-fn row_to_card(r: &rusqlite::Row) -> rusqlite::Result<Card> {
+pub(crate) fn row_to_card(r: &rusqlite::Row) -> rusqlite::Result<Card> {
     let fields: String = r.get("fields")?;
     let fields: Map<String, Value> = serde_json::from_str(&fields).unwrap_or_default();
     Ok(Card {

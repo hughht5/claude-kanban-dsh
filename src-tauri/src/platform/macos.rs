@@ -637,3 +637,8 @@ mod tests {
         assert_eq!(text::quit_step(2, Some(PAGE_WAIT.as_millis() as u64), false), text::QuitStep::NativeAlert);
     }
 }
+
+/// The command a card session runs to install its build into test app `channel` (card #147).
+pub fn install_command(channel: &str) -> String {
+    format!("sh scripts/install.sh --channel {channel}")
+}

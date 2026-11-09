@@ -41,13 +41,17 @@ through the running app (a card session's own card when <n> is left out):
   kb ship <n> --asked-by-hugh          ask Hugh to confirm "Ship #n?" in the app (only when he asked;
                                        from a session outside the app; it never ships by itself)
   kb notify <n> "<text>"               tell Hugh
-  kb testapp                           turns on the shared test app: who has it, the line, any install
-  kb testapp take                      a card session: a tester turn for its own card (In progress or Human test)
-  kb testapp take --install [--owner o] [--label "wave 3"] [--wait]
-                                       outside a card session: an install turn, ahead of every tester;
-                                       --owner is the KANBAN_LOCK_OWNER install.ps1 runs with (default
-                                       $KANBAN_LOCK_OWNER, else hugh); --wait waits until it is yours
-  kb testapp release [--owner o] [--force]   give it back; --force (outside only) releases whoever has it
+  kb testapp                           the test apps: each one's card, turn, line and install
+  kb testapp take                      a card session: its own card's test app (Test, Test 2, ...) and a
+                                       tester turn on it (In progress or Human test)
+  kb testapp take --install [--owner o] [--label "wave 3"] [--slot N] [--wait]
+                                       outside a card session: an install turn on test app N (default 1,
+                                       Test), ahead of every tester; --owner is the KANBAN_LOCK_OWNER
+                                       install.ps1 runs with (default $KANBAN_LOCK_OWNER, else hugh);
+                                       --wait waits until it is yours
+  kb testapp release [--owner o] [--slot N] [--force]   give the turn back; --force (outside only)
+                                       releases whoever has it; a card keeps its test app
+  kb testapp free --slot N             outside only: take test app N from the card that has it
   kb testapp release-mkdir             outside only: rename the old DSH lock folder aside
   kb status                            Claude Code statusLine (reads its JSON on stdin)
   kb router "<text>"                   send the Router (the board's long-running session) a message
@@ -318,21 +322,46 @@ fn testapp_args(args: &[String]) -> Result<serde_json::Value, String> {
     let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let has = |name: &str| args.iter().any(|a| a == name);
     let owner = || opt("--owner").or_else(|| std::env::var("KANBAN_LOCK_OWNER").ok()).filter(|o| !o.trim().is_empty());
+    // --slot N: the test app (card #147), 1 to 10.
+    let slot = match opt("--slot") {
+        None => None,
+        Some(s) => match s.trim().parse::<u32>() {
+            Ok(n) if (1..=10).contains(&n) => Some(n),
+            _ => return Err(format!("--slot is a test app's number, 1 to 10, not {s}")),
+        },
+    };
+    let with_slot = |mut v: serde_json::Value| {
+        if let Some(n) = slot {
+            v["slot"] = json!(n);
+        }
+        v
+    };
     match args.first().map(String::as_str) {
         None | Some("status") => Ok(json!({ "action": "status" })),
-        Some("take") if has("--install") => {
-            Ok(json!({ "action": "take", "install": true, "owner": owner().unwrap_or_else(|| "hugh".into()), "label": opt("--label").unwrap_or_default() }))
-        }
+        Some("take") if has("--install") => Ok(with_slot(
+            json!({ "action": "take", "install": true, "owner": owner().unwrap_or_else(|| "hugh".into()), "label": opt("--label").unwrap_or_default() }),
+        )),
         Some("take") => Ok(json!({ "action": "take" })),
         Some("release") => {
             let mut v = json!({ "action": "release", "force": has("--force") });
             if let Some(o) = owner() {
                 v["owner"] = json!(o);
             }
-            Ok(v)
+            Ok(with_slot(v))
         }
+        Some("free") if slot.is_some() => Ok(with_slot(json!({ "action": "free" }))),
+        Some("free") => Err("kb testapp free --slot N: name the test app to free".into()),
         Some("release-mkdir") => Ok(json!({ "action": "release-mkdir" })),
-        Some(other) => Err(format!("kb testapp [status] | take [--install ...] [--wait] | release [--force] | release-mkdir, not {other}")),
+        Some(other) => Err(format!("kb testapp [status] | take [--install ...] [--slot N] [--wait] | release [--slot N] [--force] | free --slot N | release-mkdir, not {other}")),
+    }
+}
+
+/// The holder of test app `slot`'s turn in a status: from its entry in `slots` (card #147), or
+/// the old top-level `holder` from an app without that change.
+fn status_holder(st: &serde_json::Value, slot: u64) -> serde_json::Value {
+    match st.get("slots").and_then(serde_json::Value::as_array) {
+        Some(slots) => slots.iter().find(|s| s["slot"].as_u64() == Some(slot)).map(|s| s["holder"].clone()).unwrap_or(serde_json::Value::Null),
+        None => st.get("holder").cloned().unwrap_or(serde_json::Value::Null),
     }
 }
 
@@ -357,7 +386,7 @@ fn testapp(args: &[String]) -> Result<ExitCode, Box<dyn std::error::Error>> {
         // Whose turn it is comes from the status, not from the reply's wording.
         let yours = !wait || {
             let st = api::tool("kanban_test_app", json!({ "action": "status" })).unwrap_or_default();
-            let h = &st["holder"];
+            let h = &status_holder(&st, body.get("slot").and_then(serde_json::Value::as_u64).unwrap_or(1));
             !h.is_null() && h["kind"] == body.get("install").map_or("tester", |_| "install") && body.get("owner").map_or(true, |o| h["owner"] == *o)
         };
         if !wait || yours {
@@ -432,6 +461,17 @@ mod tests {
         assert_eq!(testapp_args(&a(&["release", "--force", "--owner", "router"])).unwrap(), json!({ "action": "release", "force": true, "owner": "router" }));
         assert_eq!(testapp_args(&a(&["release-mkdir"])).unwrap(), json!({ "action": "release-mkdir" }));
         assert!(testapp_args(&a(&["grab"])).is_err());
+        // Card #147: a test app by number.
+        let t = testapp_args(&a(&["take", "--install", "--owner", "router", "--slot", "3"])).unwrap();
+        assert_eq!(t["slot"], 3);
+        assert_eq!(testapp_args(&a(&["free", "--slot", "2"])).unwrap(), json!({ "action": "free", "slot": 2 }));
+        assert!(testapp_args(&a(&["free"])).is_err());
+        assert!(testapp_args(&a(&["take", "--install", "--slot", "11"])).is_err());
+        assert_eq!(testapp_args(&a(&["release", "--slot", "4"])).unwrap()["slot"], 4);
+        let st = json!({ "slots": [{ "slot": 2, "holder": { "owner": "router" } }] });
+        assert_eq!(status_holder(&st, 2)["owner"], "router");
+        assert!(status_holder(&st, 1).is_null());
+        assert_eq!(status_holder(&json!({ "holder": { "owner": "x" } }), 1)["owner"], "x", "an older app's status");
     }
 
     #[test]

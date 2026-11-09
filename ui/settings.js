@@ -152,6 +152,20 @@ async function sessions(m){
     if(!/^\d+$/.test(v)||+v<1||+v>100){note(msg,"Give a whole number from 1 to 100.","err");return}
     try{const x=await invoke("set_setting",{key:"sessions.max_running",value:v});m.querySelector("#st-max").value=x;note(msg,"Saved","ok")}
     catch(e){note(msg,"Not saved: "+errText(e),"err")}};
+  // Test apps (card #147): the highest-numbered test app the board gives out. An older backend: the box says it couldn't read it.
+  let ta=null,taErr="";try{ta=await invoke("get_setting",{key:"testapp.slots"})}catch(e){taErr=errText(e)}
+  const tbox=document.createElement("div");tbox.className="st-box";tbox.dataset.setting="testapp-slots";
+  tbox.innerHTML=`<label class="f">Test apps, at most<input class="tx st-num" id="st-tapps" type="number" min="1" max="10" step="1" value="${esc(ta?ta.value:"")}"${ta?"":" disabled"}></label>
+  <p class="meta">The highest-numbered test app the board gives out. Each card that takes a test-app turn gets one of its own (Test, Test 2, ...), the lowest free one; a card's install creates a test app that isn't there yet. 1 to 10 (default ${esc(ta?ta.default:"10")}).</p>
+  <div class="row"><button class="btn" id="st-tasave" type="button"${ta?"":" disabled"}>Save</button><span class="msg" id="st-tamsg"></span></div>`;
+  m.appendChild(tbox);
+  const tm=tbox.querySelector("#st-tamsg");
+  if(!ta)note(tm,"Couldn't read this setting: "+taErr,"err");
+  tbox.querySelector("#st-tasave").onclick=async()=>{
+    const v=tbox.querySelector("#st-tapps").value.trim();
+    if(!/^\d+$/.test(v)||+v<1||+v>10){note(tm,"Give a whole number from 1 to 10.","err");return}
+    try{const x=await invoke("set_setting",{key:"testapp.slots",value:v});tbox.querySelector("#st-tapps").value=x;note(tm,"Saved","ok")}
+    catch(e){note(tm,"Not saved: "+errText(e),"err")}};
   // The private folder: your own column prompts (prompts\) and repo list (repos.json), kept out of the public repo.
   const pv=await invoke("get_setting",{key:"private.dir"});
   const pbox=document.createElement("div");pbox.className="st-box";

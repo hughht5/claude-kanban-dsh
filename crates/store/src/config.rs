@@ -83,6 +83,8 @@ pub const PAGE_SETTINGS: &[&str] = &[
     crate::router::ROUTER_MODEL_KEY,
     crate::router::ROUTER_EFFORT_KEY,
     crate::router::ROUTER_MAY_START_KEY,
+    // The highest test app the board gives a card (card #147).
+    crate::testapp::SLOTS_KEY,
     // The private folder: the owner's own prompts and repo list.
     PRIVATE_DIR_KEY,
 ];
@@ -503,6 +505,16 @@ impl Store {
                 _ => return Err(Error::Invalid("\"Router may start cards\" is \"on\" or \"off\"".into())),
             },
             PRIVATE_DIR_KEY => check_private_dir(value)?,
+            crate::testapp::SLOTS_KEY => {
+                let n: u32 = value
+                    .trim()
+                    .parse()
+                    .map_err(|_| Error::Invalid("the number of test apps must be a whole number".into()))?;
+                if !(1..=crate::testapp::MAX_SLOTS).contains(&n) {
+                    return Err(Error::Invalid(format!("the number of test apps must be between 1 and {}", crate::testapp::MAX_SLOTS)));
+                }
+                n.to_string()
+            }
             _ => unreachable!(),
         };
         let changed = self.page_setting(key)? != stored;
@@ -538,6 +550,7 @@ pub fn page_default(key: &str) -> Result<String> {
     page_key(key)?;
     Ok(match key {
         MAX_RUNNING_KEY => MAX_RUNNING_DEFAULT.to_string(),
+        crate::testapp::SLOTS_KEY => crate::testapp::DEFAULT_SLOTS.to_string(),
         PROFILES_KEY => serde_json::to_string(&default_profiles())?,
         IDLE_PAUSE_KEY => IDLE_PAUSE_DEFAULT.to_string(),
         STUCK_CHECK_KEY => STUCK_CHECK_DEFAULT.to_string(),

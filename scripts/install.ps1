@@ -50,34 +50,48 @@
 # PATH entry is only added when it is missing. It touches only your user account: no admin,
 # no machine-wide settings. Written for Windows PowerShell 5.1.
 #
-# Test installs take turns (-Channel test in mode now only; live and -Stage runs don't). After
-# the build, before step 2, the script:
-#   1. waits, saying why, while an app gave the turn to someone else (turn-live.json,
-#      turn-test.json, while that app runs), Hugh holds the test app (hold.json) or used it in
-#      the last 10 minutes (input-test.json), or the DSH lock folder
-#      (%USERPROFILE%\.dsh-test-app.lock) is someone else's. It holds nothing meanwhile; it
+# Test installs take turns (every test channel, test and test2 to test10, in mode now only; live
+# and -Stage runs don't). Each slot has its own turns and its own card (card #147). After the
+# build, before step 2, the script:
+#   1. waits, saying why, while one of these stands in the way. It holds nothing meanwhile; it
 #      announces itself in install-wait-<pid>.json in the shared folder
-#      (%USERPROFILE%\.claude-kanban-dsh-shared\testapp);
-#   2. then gives a restart notice: -NoticeSeconds when the test app is running and Hugh used
+#      (%USERPROFILE%\.claude-kanban-dsh-shared\testapp):
+#      - the turn wait: an app gave this run's slot's turn to someone else. Every app writes
+#        turn-<its channel>.json, and every such file counts while its app runs. A file with
+#        "slots" names each slot's holder. An older file without it counts its one holder for
+#        test when it is turn-live.json, and for its own channel;
+#      - the owner wait: an app gave this slot to a card that isn't this run's owner, and this
+#        run's owner doesn't hold that slot's turn;
+#      - Hugh holds the test apps (hold.json, one for all of them), or used this test app in the
+#        last 10 minutes (input-<channel>.json: input-test.json, input-test2.json, ...);
+#      - the DSH lock folder (%USERPROFILE%\.dsh-test-app.lock) is someone else's.
+#      A run whose owner is a card number stops at once when an app gave that card another
+#      slot, and says which -Channel to use. It looks before the waits, and again in 4;
+#   2. then gives a restart notice: -NoticeSeconds when this test app is running and Hugh used
 #      it in the last hour, else none (it starts again if a wait in 1 comes back).
 #      hold.json's allowUntil ("let it restart") skips the hold, input and notice waits;
 #   3. takes install.lock, open with delete-on-close, so a killed run frees it; while another
 #      run holds it, it says who and tries again (the only wait that counts towards
-#      -LockWaitMinutes);
-#   4. looks at the turns once more: a turn given meanwhile sends it back to 1;
+#      -LockWaitMinutes). It is one file for every slot: it covers only the quit, the install
+#      and the start;
+#   4. looks at the turns and the cards once more: a card given another slot meanwhile stops it
+#      (it lets go of install.lock first); a turn or a card given meanwhile sends it back to 1;
 #   5. takes the DSH lock folder (or uses it when it is already this run's; a folder left by
 #      a run that has ended is renamed aside), installs (steps 2 to 7), then lets go of both.
 # The apps write those files and show install.lock's phase; the script only reads them and
 # never calls an app. A run's owner is KANBAN_LOCK_OWNER, else KANBAN_CARD, else "hugh".
+# install.lock and the wait file carry the run's channel.
 #
 #   -For "wave 3"          the label the apps show for this run (default "#<card>", else the owner)
-#   -IgnoreTurn            Hugh only: don't wait for the apps' turns (prints a warning)
+#   -IgnoreTurn            Hugh only: don't wait for the apps' turns or cards, and don't stop for
+#                          another slot's card (prints a warning)
 #   -LockDir <path>        the shared folder; -DshLockDir <path> the DSH lock folder
 #   -LockWaitMinutes 30    how long to wait for install.lock before giving up
 #   -PollSeconds 5         how often to look again; -NoticeSeconds 120 the restart notice
-#   -LockOnly              only the lock and the waits, then "LOCK OK" (scripts\test-install-lock.ps1);
-#                          no build, no install. -AssumeAppRunning goes with it: count the test
-#                          app as running for the notice (otherwise it counts as stopped).
+#   -LockOnly              only the lock and the waits, then "LOCK OK" (scripts\test-install-lock.ps1),
+#                          for any test channel; no build, no install. -AssumeAppRunning goes with
+#                          it: count the test app as running for the notice (otherwise it counts
+#                          as stopped).
 
 param(
     # live, test, or a further test slot test2 to test10 (test1 is not a name: it is "test").
@@ -102,7 +116,7 @@ param(
     # How long to wait for another run's install.lock (fractions allowed), and how often to look.
     [double]$LockWaitMinutes = 30,
     [int]$PollSeconds = 5,
-    # The restart notice when Hugh used the test app in the last hour.
+    # The restart notice when Hugh used this test app in the last hour.
     [int]$NoticeSeconds = 120,
     # Only the lock and the waits, then "LOCK OK"; with -AssumeAppRunning the test app counts as running.
     [switch]$LockOnly,
@@ -243,13 +257,55 @@ function Move-DeadDshLock {
     return $true
 }
 
-# A turn an app gave to someone else (check a), or $null. The test app read is this run's own
-# slot (turn-test.json, turn-test2.json, ...: each app writes turn-<its channel>.json, card #118).
+# A slot as Hugh sees it: test is "Test", testN is "Test N" (anything else as it is written).
+function Get-SlotLabel([string]$Ch) {
+    if ($Ch -eq 'test') { return 'Test' }
+    if ($Ch -match '^test(\d+)$') { return "Test $($Matches[1])" }
+    return $Ch
+}
+
+# Every app's turn file in the shared folder (turn-live.json, turn-test.json, turn-test2.json,
+# ...), live first: its channel (from the file's name) and its read (Read-LockJsonState).
+function Get-TurnFiles {
+    $names = @()
+    try {
+        $names = @(Get-ChildItem -LiteralPath $LockDir -Filter 'turn-*.json' -File -ErrorAction Stop |
+            ForEach-Object { $_.Name } | Where-Object { $_ -match '^turn-[A-Za-z0-9]+\.json$' })
+    } catch { }
+    $chs = @($names | ForEach-Object { $_.Substring(5, $_.Length - 10).ToLowerInvariant() } |
+        Sort-Object -Property @{ Expression = { if ($_ -eq 'live') { 0 } else { 1 } } }, @{ Expression = { $_ } })
+    foreach ($ch in $chs) {
+        [pscustomobject]@{ Channel = $ch; Read = (Read-LockJsonState (Join-Path $LockDir "turn-$ch.json")) }
+    }
+}
+
+# A turn file in the shape of card #147: it has "slots" (a slot it doesn't list has no card and
+# no turn on that board). An older file has only "holder".
+function Test-TurnHasSlots($Turn) { $null -ne $Turn.PSObject.Properties['slots'] }
+
+# The turn wait and the owner wait (check 1 of "Test installs take turns"), or $null. Every
+# app's turn file counts while its app runs. For this run's slot: the holder (from
+# slots.<channel>.holder, or an older file's holder: turn-live.json's for test, and the file of
+# this run's own channel) when it hasn't expired and isn't this run's owner; and the card the
+# slot is given to (slots.<channel>.card, files with "slots" only) when it isn't this run's
+# owner and this run's owner doesn't hold that slot's turn. A turn wait comes before an owner
+# wait from any file.
 function Get-TurnWait {
     if ($IgnoreTurn) { return $null }
     $now = [datetime]::UtcNow
-    foreach ($ch in 'live', $Channel) {
-        $read = Read-LockJsonState (Join-Path $LockDir "turn-$ch.json")
+    $here = Get-SlotLabel $Channel
+    $ownerWait = $null
+    $files = @(Get-TurnFiles)
+    # A file that has gone is no longer unreadable.
+    foreach ($k in @($script:TurnBadSince.Keys)) {
+        if (@($files | Where-Object { $_.Channel -eq $k }).Count -eq 0) {
+            $script:TurnBadSince.Remove($k)
+            $script:TurnBadWarned.Remove($k)
+        }
+    }
+    foreach ($f in $files) {
+        $ch = $f.Channel
+        $read = $f.Read
         if ($read.State -eq 'bad') {
             # Unreadable is not "nobody's turn": wait, for 2 minutes at most.
             if (-not $script:TurnBadSince.ContainsKey($ch)) { $script:TurnBadSince[$ch] = $now }
@@ -263,13 +319,50 @@ function Get-TurnWait {
         $script:TurnBadSince.Remove($ch)
         $script:TurnBadWarned.Remove($ch)
         $turn = $read.Value
-        if (-not $turn -or -not $turn.holder) { continue }
-        $h = $turn.holder
-        $expires = ConvertTo-LockTime $h.expiresAt
-        if (-not $expires -or $expires -le $now) { continue }
-        if ([string]$h.owner -eq $LockOwner) { continue }
+        if (-not $turn) { continue }
+        $slot = $null
+        $h = $null
+        if (Test-TurnHasSlots $turn) {
+            if ($turn.slots) { $slot = $turn.slots.$Channel }
+            if ($slot) { $h = $slot.holder }
+        } elseif (($ch -eq 'live' -and $Channel -eq 'test') -or $ch -eq $Channel) {
+            $h = $turn.holder
+        }
+        $other = $false   # someone else holds this slot's turn
+        $mine = $false    # this run's owner does
+        if ($h) {
+            $expires = ConvertTo-LockTime $h.expiresAt
+            if ($expires -and $expires -gt $now) {
+                if ([string]$h.owner -eq $LockOwner) { $mine = $true } else { $other = $true }
+            }
+        }
+        $card = ''
+        if ($slot -and $null -ne $slot.card) { $card = [string]$slot.card }
+        $cardWait = $card -ne '' -and $card -ne $LockOwner -and -not $mine
+        if (-not $other -and -not $cardWait) { continue }
         if (-not (Test-LockAppAlive $turn.appPid $turn.appStart)) { continue }
-        return "the $ch app's turn: $($h.label) ($($h.kind))"
+        if ($other) { return "the $ch app's turn on ${here}: $($h.label) ($($h.kind))" }
+        if (-not $ownerWait) { $ownerWait = "$here holds card #$card's build (the $ch board)" }
+    }
+    return $ownerWait
+}
+
+# The wrong-slot stop: a run whose owner is a card number, when an app gave that card another
+# slot (slots.<other channel>.card, files with "slots" only, while their app runs). The message
+# to stop with, or $null. -IgnoreTurn skips it.
+function Get-WrongSlot {
+    if ($IgnoreTurn -or $LockOwner -notmatch '^\d+$') { return $null }
+    foreach ($f in @(Get-TurnFiles)) {
+        if ($f.Read.State -ne 'ok') { continue }
+        $turn = $f.Read.Value
+        if (-not $turn -or -not (Test-TurnHasSlots $turn) -or -not $turn.slots) { continue }
+        foreach ($p in $turn.slots.PSObject.Properties) {
+            $s = ([string]$p.Name).ToLowerInvariant()
+            if ($s -eq $Channel -or -not $p.Value -or $null -eq $p.Value.card) { continue }
+            if ([string]$p.Value.card -ne $LockOwner) { continue }
+            if (-not (Test-LockAppAlive $turn.appPid $turn.appStart)) { break }
+            return "card #$LockOwner's test app is $(Get-SlotLabel $s): run this with -Channel $s"
+        }
     }
     return $null
 }
@@ -296,10 +389,11 @@ function Get-TestLockWait {
             } catch { }
             if ($until -gt $now) { return "Hugh's hold until $($until.ToLocalTime().ToString('HH:mm'))" }
         }
-        $inp = Read-LockJson (Join-Path $LockDir 'input-test.json')
+        # Each test app writes its own input-<channel>.json.
+        $inp = Read-LockJson (Join-Path $LockDir "input-$Channel.json")
         $at = $null
         if ($inp) { $at = ConvertTo-LockTime $inp.at }
-        if ($at -and ($now - $at).TotalMinutes -lt 10) { return "Hugh used the test app at $($at.ToLocalTime().ToString('HH:mm'))" }
+        if ($at -and ($now - $at).TotalMinutes -lt 10) { return "Hugh used $(Get-SlotLabel $Channel) at $($at.ToLocalTime().ToString('HH:mm'))" }
     }
     if (Test-Path -LiteralPath $DshLockDir) {
         $o = Get-DshOwner
@@ -311,12 +405,12 @@ function Get-TestLockWait {
     return $null
 }
 
-# The notice before a restart: -NoticeSeconds when the test app runs and Hugh used it in the
-# last hour, else 0.
+# The notice before a restart: -NoticeSeconds when this test app runs and Hugh used it in the
+# last hour (its own input-<channel>.json), else 0.
 function Get-NoticeSeconds {
     if ($LockOnly) { $running = [bool]$AssumeAppRunning }
     else { $running = [bool](Get-Process -Name $AppNames -ErrorAction SilentlyContinue) }
-    $inp = Read-LockJson (Join-Path $LockDir 'input-test.json')
+    $inp = Read-LockJson (Join-Path $LockDir "input-$Channel.json")
     $at = $null
     if ($inp) { $at = ConvertTo-LockTime $inp.at }
     if ($running -and $at -and ([datetime]::UtcNow - $at).TotalMinutes -lt 60) { return $NoticeSeconds }
@@ -393,6 +487,7 @@ function Enter-TestLock {
             owner      = $LockOwner
             label      = $LockLabel
             card       = $card
+            channel    = $Channel   # the slot this run installs (install.lock is one for every slot)
             commit     = $Commit
             worktree   = $Root
             startedAt  = Format-LockTime ([datetime]::UtcNow)
@@ -400,7 +495,11 @@ function Enter-TestLock {
             waitingFor = $null
             restartAt  = $null
         }
-        if ($IgnoreTurn) { Write-Warning '-IgnoreTurn: not waiting for a turn the apps gave to someone else.' }
+        if ($IgnoreTurn) { Write-Warning '-IgnoreTurn: not waiting for a turn or a card the apps gave to someone else.' }
+        # A card's own test app is the slot its board gave it: another slot stops at once,
+        # before any wait (and again in 4).
+        $wrong = Get-WrongSlot
+        if ($wrong) { throw $wrong }
         $lockWaited = [timespan]::Zero
 
         while ($true) {
@@ -461,7 +560,13 @@ function Enter-TestLock {
             $script:LockInfo.waitingFor = $null
             Write-TestLock
 
-            # 4. A turn given while this run waited for install.lock: let it go and wait again.
+            # 4. The card given another slot while this run waited: let install.lock go and stop.
+            # A turn or a card given meanwhile: let it go and wait again.
+            $wrong = Get-WrongSlot
+            if ($wrong) {
+                Close-TestLockFile
+                throw $wrong
+            }
             $turn = Get-TurnWait
             if ($turn) {
                 Write-Host "  Took install.lock, but now $turn; letting it go and waiting again."
@@ -573,7 +678,7 @@ $Version = (Get-Content (Join-Path $Root 'src-tauri\tauri.conf.json') -Raw | Con
 
 # Test installs take turns (the functions are at the top). -LockOnly stops here.
 $LockGate = $Test -and $Mode -eq 'now'
-if ($LockOnly -and -not $LockGate) { throw '-LockOnly is for -Channel test in mode now only.' }
+if ($LockOnly -and -not $LockGate) { throw '-LockOnly is for a test channel (test, test2 to test10) in mode now only.' }
 if ($AssumeAppRunning -and -not $LockOnly) { throw '-AssumeAppRunning goes with -LockOnly only.' }
 if ($IgnoreTurn -and $LockOwner -ne 'hugh') { throw "-IgnoreTurn is for Hugh only (this run's owner is $LockOwner)." }
 if ($LockOnly) {

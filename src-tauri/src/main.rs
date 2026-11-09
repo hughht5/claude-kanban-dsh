@@ -939,6 +939,7 @@ fn main() {
             notify::panel_opened,
             testapp::testapp_status,
             testapp::testapp_release,
+            testapp::testapp_free,
             testapp::testapp_hold,
             testapp::testapp_let_restart,
             testapp::testapp_input,

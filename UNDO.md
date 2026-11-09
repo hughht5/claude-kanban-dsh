@@ -756,3 +756,19 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 | `placeCard` in `ui\board.js` works on the column as shown; a drop among the pinned cards sets held places instead of writing orders | Same revert. Card `order` values a drag wrote stay, as after any drag |
 | `tools\ui-tests\order.test.mjs`, the `storage` option of `boot` in `tools\ui-tests\harness.mjs` | Same revert |
 | `docs\GUIDE.md`, `HANDOVER.md` text | Same revert |
+
+## A test app per card (9 Nov 2026, card #147)
+
+Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <the card's commit>`, then
+reinstall the test apps you use. Nothing to migrate: `testApp`, `testapp.slots`,
+`testapp.slot_line` and `testapp.queue.N` are a card field and settings an older build ignores
+(`testapp.queue` stays Test's). Files in `%USERPROFILE%\.claude-kanban-dsh-shared\testapp\` that
+an older build doesn't write (`input-test2.json` and the like) are harmless and can be left.
+
+| Change | Undo |
+|---|---|
+| The store's test app per card, slot line, per-slot queues, `testapp.slots` (`crates\store\src\testapp.rs`, `config.rs`, `lib.rs`) | The revert |
+| The app's per-slot pump, turn file `slots`, `kanban_test_app` free and slot, `testapp_free`, input per test app (`src-tauri\src\testapp.rs`, `platform\*.rs`, `main.rs`) | The revert |
+| `kb testapp --slot N`, `kb testapp free --slot N` | The revert |
+| `install.ps1`: per-slot turn and input waits, the owner wait, `channel` in the lock | The revert; an older script still meets the new apps on Test |
+| The page: tile chips, popover per test app, card details row, Settings box | The revert |

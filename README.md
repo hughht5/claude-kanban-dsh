@@ -68,7 +68,7 @@ You stay in charge of the one decision that matters: what ships.
 1. **Add a card and drop it into Planning.** The router decides whether it's small, normal or worth splitting, and picks the model and effort. The card's session reads your repo and writes a plan with "Done when…" checks. The critic attacks the plan before anything is built.
 2. **In progress.** The session builds on its own branch, runs your tests and reviews its own diff. The monitor keeps an eye on it.
 3. **Checked.** The tester tries the change for real and captures before-and-after screenshots. The reviewer reads the diff. The reproducer proves any bug and its fix.
-4. **Human test.** The card lands in front of you with its evidence, its verdicts and the steps to check it. Pass it or fail it with a note. A fail sends it straight back to work.
+4. **Human test.** The card lands in front of you with its evidence, its verdicts and the steps to check it, and its own test app (Test, Test 2, ...) so several cards can wait for you side by side. Pass it or fail it with a note. A fail sends it straight back to work.
 5. **Ship it.** The merger brings the branch up to date with main and resolves conflicts. Only you move a card into Ship it, unless you've told a card to go on by itself.
 6. **Clear the board.** The Router puts cards whose work is live into a **Done pile**, and one **Archive all** click archives them. It never archives a card by itself.
 

@@ -14,9 +14,11 @@
 //! without the app. `scripts\install.ps1` never reads this: the app writes the holder to a
 //! file it does read (src-tauri/src/testapp.rs).
 
-use crate::{Error, Result, Store};
+use crate::{Card, Error, Patch, Result, Store};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const QUEUE_KEY: &str = "testapp.queue";
 pub const LIMIT_KEY: &str = "testapp.turn_minutes";
@@ -338,6 +340,357 @@ impl Store {
     }
 }
 
+// --- A test app per card (card #147) --------------------------------------------------------
+//
+// A card's session that takes a turn first gets a test app of its own: the lowest slot no card
+// holds, from 1 up to a ceiling. Hugh (9 Nov 2026): when every test app holds a card's build,
+// make a new one, so a card gets Test 4 when Test to Test 3 are taken, and its own install
+// creates it. The card keeps it while it is In progress or Human test, so Hugh tests its build
+// there and no other card installs over it. Turns stay as above, one queue per slot.
+
+/// The card field holding its own test app: `{slot, channel, name, label, port, since}`. Only
+/// the app writes it (it isn't in kanban_update_card's list).
+pub const TEST_APP_KEY: &str = "testApp";
+/// The highest slot the board gives out, 1 to MAX_SLOTS.
+pub const SLOTS_KEY: &str = "testapp.slots";
+pub const DEFAULT_SLOTS: u32 = 10;
+/// channel.rs and install.ps1 know test to test10.
+pub const MAX_SLOTS: u32 = 10;
+/// The cards waiting for a test app because every slot up to the ceiling is taken.
+pub const SLOT_LINE_KEY: &str = "testapp.slot_line";
+/// Who the app's own writes are by.
+const APP_BY: &str = "the app";
+
+/// The setting holding slot `slot`'s turns: `testapp.queue` for Test, so an older build still
+/// reads it, and `testapp.queue.N` for Test N.
+pub fn queue_key(slot: u32) -> String {
+    if slot <= 1 { QUEUE_KEY.to_string() } else { format!("{QUEUE_KEY}.{slot}") }
+}
+
+/// The slot's channel: "test", "test2", ...
+pub fn slot_channel(slot: u32) -> String {
+    if slot <= 1 { "test".into() } else { format!("test{slot}") }
+}
+
+/// The slot as Hugh sees it: "Test", "Test 2", ...
+pub fn slot_label(slot: u32) -> String {
+    if slot <= 1 { "Test".into() } else { format!("Test {slot}") }
+}
+
+/// The slot of a test channel's name; None for live and anything else.
+pub fn channel_slot(channel: &str) -> Option<u32> {
+    crate::slot_of(channel).filter(|s| (1..=MAX_SLOTS).contains(s))
+}
+
+/// The `testApp` value for `slot`.
+pub fn test_app_value(slot: u32, now: DateTime<Utc>) -> Value {
+    json!({ "slot": slot, "channel": slot_channel(slot), "name": crate::product_name_for(slot), "label": slot_label(slot),
+            "port": crate::devtools_port_for(slot), "since": stamp(now) })
+}
+
+/// The card's own test app, if it names one.
+pub fn card_slot(card: &Card) -> Option<u32> {
+    let s = card.fields.get(TEST_APP_KEY)?.get("slot")?.as_u64()?;
+    u32::try_from(s).ok().filter(|s| (1..=MAX_SLOTS).contains(s))
+}
+
+fn since(card: &Card) -> String {
+    card.fields.get(TEST_APP_KEY).and_then(|v| v.get("since")).and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+/// Why a card can't keep (or be given) a test app, if it can't: it is archived, outside In
+/// progress and Human test, or a stack's card in Human test (Hugh tests a stack on its lead's
+/// install).
+pub fn slot_refused(card: &Card) -> Option<String> {
+    // The column first: a move into Done archives the card too, and "moved to Done" says more.
+    if !TESTER_COLUMNS.contains(&card.column.as_str()) {
+        return Some(format!("the card moved to {}", card.column));
+    }
+    if card.archived {
+        return Some("the card was archived".into());
+    }
+    if card.stack_of().is_some() && card.column == "Human test" {
+        return Some("a stack's card is tested on its lead's test app".into());
+    }
+    None
+}
+
+/// The lowest slot from 1 to `ceiling` that isn't `own` (a test app never installs over itself;
+/// live is 0) and isn't taken.
+pub fn lowest_free(ceiling: u32, own: u32, taken: &BTreeSet<u32>) -> Option<u32> {
+    (1..=ceiling.min(MAX_SLOTS)).find(|s| *s != own && !taken.contains(s))
+}
+
+/// The stored ceiling: unset or unreadable is the default, kept within 1..=MAX_SLOTS.
+pub fn parse_slots(v: Option<&str>) -> u32 {
+    v.and_then(|s| s.trim().parse::<u32>().ok()).map(|n| n.clamp(1, MAX_SLOTS)).unwrap_or(DEFAULT_SLOTS)
+}
+
+/// A card waiting for a test app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotWait {
+    pub card_id: String,
+    pub card: i64,
+    pub asked_at: String,
+    pub seq: u64,
+}
+
+/// The cards waiting for a test app, first come first served.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotLine {
+    pub line: Vec<SlotWait>,
+    pub next_seq: u64,
+}
+
+impl SlotLine {
+    /// The card's place, from 1.
+    pub fn place(&self, card_id: &str) -> Option<usize> {
+        self.line.iter().position(|w| w.card_id == card_id).map(|i| i + 1)
+    }
+
+    /// Joins at the back, or keeps its place. Returns the place, from 1.
+    pub fn join(&mut self, card_id: &str, number: i64, now: DateTime<Utc>) -> usize {
+        if let Some(p) = self.place(card_id) {
+            return p;
+        }
+        self.next_seq += 1;
+        self.line.push(SlotWait { card_id: card_id.into(), card: number, asked_at: stamp(now), seq: self.next_seq });
+        self.line.len()
+    }
+
+    pub fn leave(&mut self, card_id: &str) -> bool {
+        let n = self.line.len();
+        self.line.retain(|w| w.card_id != card_id);
+        self.line.len() != n
+    }
+}
+
+/// What a card's take found about its test app.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotClaim {
+    /// The card had it already.
+    Kept(u32),
+    /// Given to it now.
+    Given(u32),
+    /// Every slot up to the ceiling is taken: its place in the slot line, from 1.
+    Waiting(usize),
+}
+
+/// What one pass over the slot line did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LineStep {
+    /// (card id, number, slot) given a test app.
+    pub given: Vec<(String, i64, u32)>,
+    /// (card id, why) taken out of the line: it can't use a test app now.
+    pub left: Vec<(String, String)>,
+}
+
+impl Store {
+    /// The highest slot the board gives out.
+    pub fn test_slots_ceiling(&self) -> Result<u32> {
+        Ok(parse_slots(self.setting(SLOTS_KEY)?.as_deref()))
+    }
+
+    /// Slot `slot`'s turns (slot 1 is `test_app_queue`). A queue that can't be read counts as empty.
+    pub fn test_app_queue_for(&self, slot: u32) -> Result<TestAppQueue> {
+        Ok(self.setting(&queue_key(slot))?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
+    }
+
+    pub fn save_test_app_queue_for(&mut self, slot: u32, q: &TestAppQueue) -> Result<()> {
+        self.set_setting(&queue_key(slot), &serde_json::to_string(q)?)
+    }
+
+    /// The cards waiting for a test app. A line that can't be read counts as empty.
+    pub fn slot_line(&self) -> Result<SlotLine> {
+        Ok(self.setting(SLOT_LINE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
+    }
+
+    pub fn save_slot_line(&mut self, l: &SlotLine) -> Result<()> {
+        self.set_setting(SLOT_LINE_KEY, &serde_json::to_string(l)?)
+    }
+
+    /// Every card with a `testApp`, archived ones too.
+    pub fn cards_with_test_apps(&self) -> Result<Vec<Card>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT * FROM cards WHERE json_valid(fields) AND json_extract(fields, '$.testApp') IS NOT NULL ORDER BY number")?;
+        let cards = st.query_map([], crate::cards::row_to_card)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(cards)
+    }
+
+    /// The test apps cards hold now, slot to card. When two cards name one slot, the one given
+    /// it first keeps it.
+    pub fn slot_owners(&self) -> Result<BTreeMap<u32, Card>> {
+        let mut out: BTreeMap<u32, Card> = BTreeMap::new();
+        for c in self.cards_with_test_apps()? {
+            let Some(s) = card_slot(&c) else { continue };
+            if slot_refused(&c).is_some() {
+                continue;
+            }
+            let keep = out.get(&s).map_or(false, |o| since(o) <= since(&c));
+            if !keep {
+                out.insert(s, c);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The cards whose `testApp` should go, with the slot and why: the card can't keep it, it
+    /// names no slot, or another card was given the same slot first.
+    pub fn stale_test_apps(&self) -> Result<Vec<(Card, Option<u32>, String)>> {
+        let owners = self.slot_owners()?;
+        let mut out = vec![];
+        for c in self.cards_with_test_apps()? {
+            let slot = card_slot(&c);
+            let why = match slot {
+                None => Some("it named no test app".to_string()),
+                Some(s) => slot_refused(&c).or_else(|| {
+                    owners.get(&s).filter(|o| o.id != c.id).map(|o| format!("{} was given to #{} first", slot_label(s), o.number))
+                }),
+            };
+            if let Some(why) = why {
+                out.push((c, slot, why));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The slots that can't be given now: held by a card here, with a turn or a line of its own
+    /// (an outside install), or `elsewhere` (another running app's board has it).
+    pub fn taken_slots(&self, elsewhere: &BTreeSet<u32>) -> Result<BTreeSet<u32>> {
+        let mut taken: BTreeSet<u32> = self.slot_owners()?.into_keys().collect();
+        taken.extend(elsewhere.iter().copied());
+        for s in 1..=MAX_SLOTS {
+            if !self.test_app_queue_for(s)?.is_empty() {
+                taken.insert(s);
+            }
+        }
+        Ok(taken)
+    }
+
+    /// Gives card `id` test app `slot`, with a log line.
+    pub fn give_test_app(&mut self, id: &str, slot: u32, now: DateTime<Utc>) -> Result<Card> {
+        let c = self.get(id)?;
+        let mut p = Patch::new();
+        p.insert(TEST_APP_KEY.into(), test_app_value(slot, now));
+        let c = self.update(id, c.version, &p, APP_BY)?;
+        self.add_log(
+            id,
+            &format!(
+                "Its test app is {} ({}, channel {}, CDP port {}); it stays this card's while the card is In progress or Human test",
+                slot_label(slot),
+                crate::product_name_for(slot),
+                slot_channel(slot),
+                crate::devtools_port_for(slot)
+            ),
+            APP_BY,
+        )?;
+        Ok(c)
+    }
+
+    /// Takes card `id`'s test app away, with its turn and its place in line on that slot, and
+    /// logs why. Returns the slot it named (None when it had no test app).
+    pub fn free_test_app(&mut self, id: &str, why: &str, by: &str) -> Result<Option<u32>> {
+        let c = self.get(id)?;
+        if !c.fields.contains_key(TEST_APP_KEY) {
+            return Ok(None);
+        }
+        let slot = card_slot(&c);
+        let mut p = Patch::new();
+        p.insert(TEST_APP_KEY.into(), Value::Null);
+        self.update(id, c.version, &p, by)?;
+        if let Some(s) = slot {
+            let mut q = self.test_app_queue_for(s)?;
+            if q.release(Some(id), &c.number.to_string(), TESTER).is_some() {
+                self.save_test_app_queue_for(s, &q)?;
+            }
+            self.add_log(id, &format!("Its test app ({}) is free again: {why}", slot_label(s)), by)?;
+        }
+        Ok(slot)
+    }
+
+    /// Card `id`'s test app: the one it holds, else the lowest free one (given now, unless
+    /// cards wait ahead of it), else a place in the slot line. `own`: this app's own slot (0 for
+    /// live). `elsewhere`: slots another running app's board has given out or has a turn on.
+    pub fn claim_test_app(&mut self, id: &str, now: DateTime<Utc>, own: u32, elsewhere: &BTreeSet<u32>) -> Result<SlotClaim> {
+        let c = self.get(id)?;
+        if let Some(why) = slot_refused(&c) {
+            return Err(Error::Invalid(format!("no test app for card #{}: {why}", c.number)));
+        }
+        if let Some(s) = card_slot(&c) {
+            if self.slot_owners()?.get(&s).map_or(false, |o| o.id == c.id) {
+                return Ok(SlotClaim::Kept(s));
+            }
+        }
+        let mut line = self.slot_line()?;
+        let first = line.place(id).map_or(line.line.is_empty(), |p| p == 1);
+        if first {
+            if let Some(s) = lowest_free(self.test_slots_ceiling()?, own, &self.taken_slots(elsewhere)?) {
+                if line.leave(id) {
+                    self.save_slot_line(&line)?;
+                }
+                self.give_test_app(id, s, now)?;
+                return Ok(SlotClaim::Given(s));
+            }
+        }
+        let p = line.join(id, c.number, now);
+        self.save_slot_line(&line)?;
+        Ok(SlotClaim::Waiting(p))
+    }
+
+    /// One pass over the slot line: takes out the cards that can't use a test app now, then
+    /// gives free slots to the rest in order, until none is free.
+    pub fn step_slot_line(&mut self, now: DateTime<Utc>, own: u32, elsewhere: &BTreeSet<u32>) -> Result<LineStep> {
+        let mut line = self.slot_line()?;
+        let mut out = LineStep::default();
+        if line.line.is_empty() {
+            return Ok(out);
+        }
+        let before = line.clone();
+        line.line.retain(|w| {
+            let why = match self.get(&w.card_id) {
+                Ok(c) => slot_refused(&c),
+                Err(_) => Some("the card is no longer on the board".into()),
+            };
+            match why {
+                Some(why) => {
+                    out.left.push((w.card_id.clone(), why));
+                    false
+                }
+                None => true,
+            }
+        });
+        let ceiling = self.test_slots_ceiling()?;
+        while let Some(w) = line.line.first().cloned() {
+            let Some(s) = lowest_free(ceiling, own, &self.taken_slots(elsewhere)?) else { break };
+            line.line.remove(0);
+            self.give_test_app(&w.card_id, s, now)?;
+            out.given.push((w.card_id, w.card, s));
+        }
+        if line != before {
+            self.save_slot_line(&line)?;
+        }
+        Ok(out)
+    }
+
+    /// The copy of a board starts with no test apps: no card's `testApp`, no slot line and no
+    /// turns on any slot (they belong to the board it was copied from).
+    pub fn clear_test_apps(&mut self) -> Result<()> {
+        for c in self.cards_with_test_apps()? {
+            let mut p = Patch::new();
+            p.insert(TEST_APP_KEY.into(), Value::Null);
+            self.update(&c.id, c.version, &p, APP_BY)?;
+        }
+        self.save_slot_line(&SlotLine::default())?;
+        for s in 1..=MAX_SLOTS {
+            self.save_test_app_queue_for(s, &TestAppQueue::default())?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +935,54 @@ mod tests {
         assert!(json.contains("\"cardId\"") && json.contains("\"renewedAt\""), "{json}");
         s.set_setting(QUEUE_KEY, "not json").unwrap();
         assert!(s.test_app_queue().unwrap().is_empty());
+    }
+
+    // --- card #147 ---
+
+    #[test]
+    fn slot_names_and_keys() {
+        assert_eq!(queue_key(1), "testapp.queue", "Test keeps #115's key");
+        assert_eq!(queue_key(4), "testapp.queue.4");
+        assert_eq!((slot_channel(1), slot_label(1)), ("test".into(), "Test".into()));
+        assert_eq!((slot_channel(10), slot_label(10)), ("test10".into(), "Test 10".into()));
+        assert_eq!(channel_slot("test"), Some(1));
+        assert_eq!(channel_slot("test7"), Some(7));
+        assert_eq!(channel_slot("live"), None);
+        assert_eq!(channel_slot("test1"), None);
+        let v = test_app_value(3, t(0));
+        assert_eq!(v["port"], 9336);
+        assert_eq!(v["since"], "2026-11-06T03:00:00Z");
+    }
+
+    #[test]
+    fn the_lowest_free_slot_skips_taken_and_own_and_stops_at_the_ceiling() {
+        let taken: BTreeSet<u32> = [1, 2, 3].into_iter().collect();
+        assert_eq!(lowest_free(10, 0, &taken), Some(4), "a new test app when the lower ones are taken");
+        assert_eq!(lowest_free(10, 4, &taken), Some(5), "never this app's own slot");
+        assert_eq!(lowest_free(3, 0, &taken), None, "at the ceiling");
+        assert_eq!(lowest_free(10, 0, &BTreeSet::new()), Some(1));
+        assert_eq!(lowest_free(99, 0, &(1..=10).collect()), None, "never past test10");
+    }
+
+    #[test]
+    fn slots_setting_parsing() {
+        assert_eq!(parse_slots(None), 10);
+        assert_eq!(parse_slots(Some(" 3 ")), 3);
+        assert_eq!(parse_slots(Some("0")), 1);
+        assert_eq!(parse_slots(Some("50")), 10);
+        assert_eq!(parse_slots(Some("lots")), 10);
+    }
+
+    #[test]
+    fn the_slot_line_keeps_places_and_survives_json() {
+        let mut l = SlotLine::default();
+        assert_eq!(l.join("a", 1, t(0)), 1);
+        assert_eq!(l.join("b", 2, t(1)), 2);
+        assert_eq!(l.join("a", 1, t(2)), 1, "joining again keeps the place");
+        assert!(l.leave("a"));
+        assert!(!l.leave("a"));
+        assert_eq!(l.place("b"), Some(1));
+        let back: SlotLine = serde_json::from_str(&serde_json::to_string(&l).unwrap()).unwrap();
+        assert_eq!(back, l);
     }
 }

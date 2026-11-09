@@ -1105,10 +1105,10 @@ covered only cards that knew about it.
 | File | Written by | What |
 |---|---|---|
 | `install-wait-<pid>.json` | install.ps1 | while it waits, without the lock (same fields, phase waiting); the board's "restart pending" banner reads it; one whose pid is dead is ignored |
-| `install.lock` | install.ps1 | held only once its waits are clear, while it quits, installs and starts the test app: `pid`, `pidStart`, `owner`, `label`, `card`, `commit`, `worktree`, `startedAt`, `phase` (waiting, installing, started), `waitingFor`, `restartAt` |
-| `turn-live.json`, `turn-test.json` | each app | its holder `{kind, card, owner, label, givenAt, expiresAt}` and `appPid`/`appStart`, written atomically (temp file, rename) |
+| `install.lock` | install.ps1 | held only once its waits are clear, while it quits, installs and starts the test app: `pid`, `pidStart`, `owner`, `label`, `card`, `commit`, `worktree`, `startedAt`, `phase` (waiting, installing, started), `waitingFor`, `restartAt`, and (card #147) `channel`, the test app it is for |
+| `turn-live.json`, `turn-test.json`, `turn-testN.json` | each app | its holder `{kind, card, owner, label, givenAt, expiresAt}` (Test's) and `appPid`/`appStart`, written atomically (temp file, rename); since card #147 also `slots`, per test app |
 | `hold.json` | either board | `until` (Hold, 30 min a click, at most 2 h) or `allowUntil` (Let it restart, 5 min) |
-| `input-test.json` | the test app | `at`: Hugh's last trusted input in its focused window (cdp.mjs sends no trusted input) |
+| `input-test.json`, `input-testN.json` (card #147) | each test app | `at`: Hugh's last trusted input in its focused window (cdp.mjs sends no trusted input) |
 
 **The lock protocol** (for #114 and #117 too):
 - The holder opens `install.lock` with OpenOrCreate, ReadWrite, FileShare Read|Delete,
@@ -1148,6 +1148,59 @@ paths (start-up release, 45-min amber, the limit) and a turn surviving its own a
 unit tests. The script's waits are the fixture test. After the ship: with a tester turn held in the
 live app, the next install from outside a card session waits for it, the banner shows on both boards, Hold
 works, and the install goes ahead after the release.
+## A test app per card (9 Nov 2026, card #147, stack #145)
+
+**Why.** #118 made test slots (Test, Test 2 ... Test 10), but the turns (#115) still covered one
+test app: every card took turns on Test, a live turn on Test held an install into Test 2, and
+once a card gave its turn back another card could install over its build while Hugh tested it.
+
+**Shape.** Two layers, all in `crates/store/src/testapp.rs` (rules) and `src-tauri/src/testapp.rs`
+(files, pump, tool).
+- *A test app per card.* `kanban_test_app` take (a card session) first gives the card a test
+  app of its own: the lowest free slot from 1 to the setting `testapp.slots` (a ceiling, 1 to 10,
+  default 10; Settings > Sessions, "Test apps, at most"). Hugh (9 Nov): when every test app holds
+  a card's build, make a new one, so a card gets Test 4 when Test to Test 3 are taken, and its
+  own install creates it (a first install copies the live board). Stored on the card as
+  `testApp` {slot, channel, name, label, port, since}; only the app writes it (it isn't in
+  tools.rs `UPDATABLE`). The card keeps it while it is In progress or Human test and not
+  archived; a stack's card (`stackOf`) only in In progress, since Hugh tests a stack on its
+  lead's install. The pump (`run`) frees it when the card moves on or is archived, logging why;
+  Hugh's Free (the popover, `testapp_free`) or `kb testapp free --slot N` takes it at once, and
+  the card's session hears so. Only at the ceiling does a card wait, in `testapp.slot_line`; the
+  pump gives it the next freed one, with a queued message.
+- *Turns per test app.* #115's queue, one per slot: `testapp.queue` stays Test's (an older
+  build still reads it), `testapp.queue.N` for Test N. A card's tester turn is on its own test
+  app. Outside install turns name one (`kb testapp take --install --slot N`, default 1).
+  `release` gives back the turn only: the test app stays the card's.
+- *Across boards.* A test app never gives out its own slot, and no board gives one that another
+  running app's turn file shows as given or held (`Shared::elsewhere`). `copy_board` clears every
+  `testApp`, the slot line and every queue (`Store::clear_test_apps`).
+
+**Shared folder** (Test keeps #115's names, so old scripts and apps still meet on it):
+- `install.lock` stays one file for every test app (it covers only the quit, install and
+  restart). It and `install-wait-<pid>.json` gain `channel`; an app holds turns only on that test
+  app while it is there, and a lock with no channel (an older script) holds every one.
+- `input-<channel>.json`: each test app writes its own (`input-test.json` for Test). The page
+  records input in every test channel, not only "test".
+- `hold.json`: still one, for every test app.
+- `turn-<channel>.json` keeps `holder` (Test's turn, for older scripts) and gains `slots`:
+  `{"test2": {slot, card, label, holder}}` for each test app the board gave a card or has a turn
+  on. An old file (no `slots`) counts as before: the live app's holder on Test, a test app's on
+  itself.
+
+**install.ps1** (`-Channel test|testN`, mode now): its turn wait reads every running app's turn
+file for its own test app only; a new owner wait holds it while its test app holds another card's
+build and this run has no turn on it ("Test 2 holds card #140's build"); it stops at once when
+the run's card has a different test app ("card #147's test app is Test 2: run this with
+-Channel test2"). `-IgnoreTurn` (Hugh only) skips all three. Input and the notice read the run's
+own `input-<channel>.json`. `scripts\test-install-lock.ps1` has cases for each.
+
+**The tool's replies** name the test app, its install command (`platform::install_command`) and
+CDP port, so a card session needs no prompt change to find its own. #148 has the rule text.
+
+**Open items.** The Mac side (`install.sh`, `kb install-lock`) has no per-slot turns and no owner
+wait yet. A freed test app keeps running with its last build until the next card installs into it.
+
 ## Cards that wait on others (6 Nov 2026, card #109, branch `dsh-order`)
 
 - **Fields:** `blockedBy: [n, ...]` and `waitedOn: [n, ...]` in the card's fields (no table).

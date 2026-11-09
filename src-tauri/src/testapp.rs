@@ -22,10 +22,10 @@
 
 use crate::{sessions::Sessions, Board};
 use chrono::{DateTime, Duration, Utc};
-use kanban_store::testapp::{self as q, stamp, Ask, Ended, Take, TestAppQueue, Turn, INSTALL, TESTER};
+use kanban_store::testapp::{self as q, stamp, Ask, Ended, SlotClaim, SlotLine, Take, TestAppQueue, Turn, INSTALL, TESTER};
 use kanban_store::Store;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
@@ -116,6 +116,9 @@ pub struct Lock {
     pub waiting_for: Option<String>,
     pub restart_at: Option<String>,
     pub started_at: Option<String>,
+    /// The test app the install is for (card #147): "test", "test2", ... None from a script
+    /// without that change, which may be installing any slot, so it counts for every one.
+    pub channel: Option<String>,
 }
 
 pub fn parse_lock(text: &str) -> Option<Lock> {
@@ -132,6 +135,7 @@ pub fn parse_lock(text: &str) -> Option<Lock> {
         waiting_for: s("waitingFor"),
         restart_at: s("restartAt"),
         started_at: s("startedAt"),
+        channel: s("channel").filter(|c| !c.trim().is_empty()),
     })
 }
 
@@ -195,9 +199,15 @@ pub fn held_until(current: Option<DateTime<Utc>>, now: DateTime<Utc>) -> DateTim
     (current.unwrap_or(now).max(now) + Duration::minutes(HOLD_STEP_MINUTES)).min(now + Duration::minutes(HOLD_MAX_MINUTES))
 }
 
-pub fn read_input(dir: &Path) -> Option<DateTime<Utc>> {
-    let v: Value = serde_json::from_str(&read_shared(&dir.join("input-test.json"))?).ok()?;
+/// Hugh's last input in test app `slot`: `input-test.json` for Test, `input-test2.json` for
+/// Test 2, ... (card #147; each test app writes its own).
+pub fn read_input(dir: &Path, slot: u32) -> Option<DateTime<Utc>> {
+    let v: Value = serde_json::from_str(&read_shared(&dir.join(input_file(slot)))?).ok()?;
     v.get("at").and_then(Value::as_str).and_then(parse)
+}
+
+pub fn input_file(slot: u32) -> String {
+    format!("input-{}.json", q::slot_channel(slot))
 }
 
 /// The old DSH lock folder: its owner and how long it has been there.
@@ -235,7 +245,7 @@ pub fn release_dsh(dir: &Path, now: DateTime<Utc>) -> Result<PathBuf, String> {
 
 // --- what the pump sees -------------------------------------------------------------------
 
-/// Everything read from files, before the board's mutex.
+/// One test app's view of the shared folder (`Shared::for_slot`): what its turns go by.
 #[derive(Debug, Clone, Default)]
 pub struct Seen {
     /// The install holding install.lock (it is quitting, installing or starting the app).
@@ -245,37 +255,121 @@ pub struct Seen {
     pub lock_present: bool,
     /// Installs waiting to restart the test app.
     pub waits: Vec<Lock>,
-    pub hold: Hold,
     pub input: Option<DateTime<Utc>>,
     pub dsh: Option<Dsh>,
-    /// The other board's turn on the same test app (its owner), if it holds one now.
+    /// Another board's turn on the same test app (its owner), if it holds one now.
     pub other: Option<String>,
 }
 
-pub fn look(dir: &Path, dsh: &Path, now: DateTime<Utc>) -> Seen {
-    let lock = read_lock(dir);
-    let lock_path = dir.join("install.lock");
-    let lock_present = lock.is_some() || crate::platform::file_lock_held(&lock_path).unwrap_or_else(|| lock_path.exists());
-    let other_ch = if kanban_store::is_test() { "live" } else { "test" };
-    Seen {
-        lock,
-        lock_present,
-        waits: read_waits(dir),
-        hold: read_hold(dir, now),
-        input: read_input(dir),
-        dsh: read_dsh(dsh, now),
-        other: read_shared(&dir.join(format!("turn-{other_ch}.json"))).and_then(|t| other_holder(&t, now)),
+/// What another running app's board has on one test app (its turn file, card #147).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OtherSlot {
+    /// The card that board gave this test app to.
+    pub card: Option<i64>,
+    /// The owner of that board's live turn on it.
+    pub holder: Option<String>,
+}
+
+/// Everything read from the shared folder, before the board's mutex, for every test app at once.
+#[derive(Debug, Clone, Default)]
+pub struct Shared {
+    pub lock: Option<Lock>,
+    pub lock_present: bool,
+    pub waits: Vec<Lock>,
+    pub hold: Hold,
+    /// Hugh's last input, per test app.
+    pub inputs: BTreeMap<u32, DateTime<Utc>>,
+    pub dsh: Option<Dsh>,
+    /// The other running apps' boards, test app by test app.
+    pub others: BTreeMap<u32, Vec<OtherSlot>>,
+}
+
+/// An install is for this channel, or names none (a script from before card #147).
+fn for_channel(l: &Lock, ch: &str) -> bool {
+    l.channel.as_deref().map_or(true, |c| c == ch)
+}
+
+impl Shared {
+    /// Test app `slot`'s view, for its turns: an install for another test app doesn't count, an
+    /// install that names none does.
+    pub fn for_slot(&self, slot: u32) -> Seen {
+        self.view(slot, false)
+    }
+
+    /// The same for the page: an install that names no test app shows on Test only.
+    fn shown(&self, slot: u32) -> Seen {
+        self.view(slot, true)
+    }
+
+    fn view(&self, slot: u32, shown: bool) -> Seen {
+        let ch = q::slot_channel(slot);
+        let ours = |l: &Lock| if shown && l.channel.is_none() { slot == 1 } else { for_channel(l, &ch) };
+        let lock = self.lock.clone().filter(|l| ours(l));
+        // A lock that is there but unreadable this instant counts for every test app.
+        let lock_present = if self.lock.is_some() { lock.is_some() } else { self.lock_present && (!shown || slot == 1) };
+        Seen {
+            lock,
+            lock_present,
+            waits: self.waits.iter().filter(|w| ours(w)).cloned().collect(),
+            input: self.inputs.get(&slot).copied(),
+            dsh: self.dsh.clone(),
+            other: self.others.get(&slot).and_then(|v| v.iter().find_map(|o| o.holder.clone())),
+        }
+    }
+
+    /// The test apps another running app's board has given to a card or has a turn on: this
+    /// board gives none of them out.
+    pub fn elsewhere(&self) -> BTreeSet<u32> {
+        self.others.iter().filter(|(_, v)| v.iter().any(|o| o.card.is_some() || o.holder.is_some())).map(|(s, _)| *s).collect()
     }
 }
 
-/// The owner in another app's turn file, if that app still runs and the turn hasn't expired.
-pub fn other_holder(text: &str, now: DateTime<Utc>) -> Option<String> {
-    let v: Value = serde_json::from_str(text).ok()?;
-    let h = v.get("holder").filter(|h| !h.is_null())?;
-    let expires = h.get("expiresAt").and_then(Value::as_str).and_then(parse)?;
-    let pid = v.get("appPid").and_then(Value::as_u64)? as u32;
+pub fn look(dir: &Path, dsh: &Path, now: DateTime<Utc>) -> Shared {
+    let lock = read_lock(dir);
+    let lock_path = dir.join("install.lock");
+    let lock_present = lock.is_some() || crate::platform::file_lock_held(&lock_path).unwrap_or_else(|| lock_path.exists());
+    let inputs = (1..=q::MAX_SLOTS).filter_map(|s| read_input(dir, s).map(|at| (s, at))).collect();
+    let mine = format!("turn-{}.json", kanban_store::channel());
+    let mut others: BTreeMap<u32, Vec<OtherSlot>> = BTreeMap::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with("turn-") || !name.ends_with(".json") || name == mine {
+                continue;
+            }
+            let Some(text) = read_shared(&e.path()) else { continue };
+            for (slot, o) in other_slots(&text, now) {
+                others.entry(slot).or_default().push(o);
+            }
+        }
+    }
+    Shared { lock, lock_present, waits: read_waits(dir), hold: read_hold(dir, now), inputs, dsh: read_dsh(dsh, now), others }
+}
+
+/// What another app's turn file says, test app by test app, while that app still runs. An old
+/// file (no `slots`: an app from before card #147) has only `holder`: the live app's is on Test,
+/// a test app's is on itself.
+pub fn other_slots(text: &str, now: DateTime<Utc>) -> Vec<(u32, OtherSlot)> {
+    let Ok(v) = serde_json::from_str::<Value>(text) else { return vec![] };
+    let Some(pid) = v.get("appPid").and_then(Value::as_u64) else { return vec![] };
     let start = v.get("appStart").and_then(Value::as_str).and_then(parse);
-    (expires > now && alive_since(pid, start)).then(|| h.get("owner").and_then(Value::as_str).unwrap_or("").to_string())
+    if !alive_since(pid as u32, start) {
+        return vec![];
+    }
+    let holder = |h: Option<&Value>| -> Option<String> {
+        let h = h.filter(|h| !h.is_null())?;
+        let expires = h.get("expiresAt").and_then(Value::as_str).and_then(parse)?;
+        (expires > now).then(|| h.get("owner").and_then(Value::as_str).unwrap_or("").to_string())
+    };
+    if let Some(slots) = v.get("slots").and_then(Value::as_object) {
+        return slots
+            .iter()
+            .filter_map(|(ch, e)| Some((q::channel_slot(ch)?, OtherSlot { card: e.get("card").and_then(Value::as_i64), holder: holder(e.get("holder")) })))
+            .collect();
+    }
+    let ch = v.get("channel").and_then(Value::as_str).unwrap_or("");
+    let Some(slot) = (if ch == "live" { Some(1) } else { q::channel_slot(ch) }) else { return vec![] };
+    holder(v.get("holder")).map(|h| vec![(slot, OtherSlot { card: None, holder: Some(h) })]).unwrap_or_default()
 }
 
 impl Seen {
@@ -315,21 +409,6 @@ pub struct Step {
     pub changed: bool,
 }
 
-/// The given message to a card's session.
-pub fn given_message(number: i64, limit: i64) -> String {
-    // The test app this queue gives turns on: this app itself in a test slot, else slot 1.
-    let port = kanban_store::devtools_port_for(if kanban_store::is_test() { kanban_store::slot() } else { 1 });
-    format!(
-        "It is your turn on the test app (card #{number}). Use it now for your own checks and your card-tester (CDP port {port}). \
-If your card needs its build installed first, run install.ps1 in the background now: it waits for other installs and for Hugh, and says why. When you are done with it, release the turn: kanban_test_app with action \"release\". \
-The turn ends by itself when this card leaves In progress and Human test, or after {limit} min with nothing running."
-    )
-}
-
-pub fn ended_message(why: &str) -> String {
-    format!("Your turn on the test app ended: {why}. If you still need the test app, take a new turn: kanban_test_app with action \"take\".")
-}
-
 /// One pass of the rules over the queue: pure apart from `card`, so it is tested here.
 pub fn step(
     queue: &mut TestAppQueue,
@@ -338,6 +417,7 @@ pub fn step(
     seen: &Seen,
     live: &Live,
     card: impl Fn(&str) -> q::CardState,
+    slot: u32,
 ) -> Step {
     let before = queue.clone();
     let mut out = Step::default();
@@ -376,7 +456,7 @@ pub fn step(
     if let Some(t) = queue.next(now, |id| live.live.contains(id), |owner| seen.blocks(owner)) {
         if let (Some(id), Some(n)) = (t.who.card_id.clone(), t.who.card) {
             out.logs.push((id.clone(), "Got its turn on the test app".into()));
-            out.messages.push((id, given_message(n, limit)));
+            out.messages.push((id, given_message(n, limit, slot)));
         }
     }
     out.changed = *queue != before;
@@ -398,8 +478,8 @@ fn who_json(a: &Ask) -> Value {
     json!({ "kind": a.kind, "card": a.card, "cardId": a.card_id, "owner": a.owner, "label": a.label })
 }
 
-/// The status the page, the tool and kb show.
-pub fn status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &Seen, live: &Live) -> Value {
+/// One test app's turns, as the page, the tool and kb show them.
+pub fn slot_status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &Seen, live: &Live) -> Value {
     let holder = queue.holder.as_ref().map(|h| {
         let mut v = who_json(&h.who);
         let held = parse(&h.given_at).map(|g| (now - g).num_minutes()).unwrap_or(0);
@@ -424,7 +504,7 @@ pub fn status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &Seen,
         .collect();
     let install = seen.lock.as_ref().or(seen.waits.first()).map(|l| {
         json!({ "owner": l.owner, "label": l.label, "card": l.card, "phase": l.phase, "waitingFor": l.waiting_for,
-                "restartAt": l.restart_at, "startedAt": l.started_at })
+                "restartAt": l.restart_at, "startedAt": l.started_at, "channel": l.channel })
     });
     // A restart is pending: an install waiting to restart, else an install turn held or in line.
     let pending = seen
@@ -437,29 +517,114 @@ pub fn status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &Seen,
         .map(|label| json!({ "label": label }));
     let input_recent = seen.input.map_or(false, |at| now - at < Duration::minutes(INPUT_QUIET_MINUTES));
     json!({
-        "channel": kanban_store::channel(),
-        "limitMinutes": limit,
         "holder": holder,
         "line": line,
         "install": install,
         "pending": pending,
-        "hold": seen.hold.until.map(|u| json!({ "until": stamp(u) })),
-        "allowUntil": seen.hold.allow_until.map(stamp),
         "hughInputAt": seen.input.map(stamp),
         "hughInputRecent": input_recent,
-        "mkdir": seen.dsh.as_ref().map(|d| json!({ "owner": d.owner, "ageMinutes": d.age_minutes, "stale": d.dead || d.age_minutes >= DSH_STALE_MINUTES, "dead": d.dead })),
         "otherBoard": seen.other,
     })
 }
 
-/// The turn file install.ps1 reads: this app's holder, and who this app is, so a file left
-/// by an app that has quit doesn't count.
-pub fn turn_file(queue: &TestAppQueue, limit: i64, me: (u32, Option<DateTime<Utc>>), now: DateTime<Utc>) -> Value {
-    let holder = queue.holder.as_ref().map(|h| {
-        json!({ "kind": h.who.kind, "card": h.who.card, "owner": h.who.owner, "label": h.who.label,
-                "givenAt": h.given_at, "expiresAt": queue.expires_at(limit).map(stamp) })
-    });
-    json!({ "channel": kanban_store::channel(), "appPid": me.0, "appStart": me.1.map(stamp), "writtenAt": stamp(now), "holder": holder })
+/// The board's test apps: each one's turns and card, and the cards waiting for one.
+#[derive(Debug, Clone, Default)]
+pub struct Apps {
+    pub queues: BTreeMap<u32, TestAppQueue>,
+    /// Test app to (card number, card id, since).
+    pub owners: BTreeMap<u32, (i64, String, String)>,
+    pub line: SlotLine,
+    pub ceiling: u32,
+}
+
+impl Apps {
+    pub fn read(store: &Store) -> Apps {
+        let queues = (1..=q::MAX_SLOTS).map(|s| (s, store.test_app_queue_for(s).unwrap_or_default())).collect();
+        let owners = store
+            .slot_owners()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(s, c)| {
+                let since = c.fields.get(q::TEST_APP_KEY).and_then(|v| v.get("since")).and_then(Value::as_str).unwrap_or("").to_string();
+                (s, (c.number, c.id, since))
+            })
+            .collect();
+        Apps { queues, owners, line: store.slot_line().unwrap_or_default(), ceiling: store.test_slots_ceiling().unwrap_or(q::DEFAULT_SLOTS) }
+    }
+
+    fn queue(&self, slot: u32) -> TestAppQueue {
+        self.queues.get(&slot).cloned().unwrap_or_default()
+    }
+}
+
+/// The status the page, the tool and kb show: each test app in use, the cards waiting for one,
+/// and what holds every restart.
+pub fn status(apps: &Apps, now: DateTime<Utc>, limit: i64, shared: &Shared, live: &Live) -> Value {
+    let mut slots = vec![];
+    let mut pending = Value::Null;
+    for s in 1..=q::MAX_SLOTS {
+        let queue = apps.queue(s);
+        let mut v = slot_status(&queue, now, limit, &shared.shown(s), live);
+        let owner = apps.owners.get(&s);
+        let used = owner.is_some() || !queue.is_empty() || ["install", "pending", "otherBoard"].iter().any(|k| !v[*k].is_null());
+        if !used {
+            continue;
+        }
+        if pending.is_null() && !v["pending"].is_null() {
+            pending = json!({ "label": v["pending"]["label"], "slot": s, "slotLabel": q::slot_label(s) });
+        }
+        v["slot"] = json!(s);
+        v["channel"] = json!(q::slot_channel(s));
+        v["label"] = json!(q::slot_label(s));
+        v["name"] = json!(kanban_store::product_name_for(s));
+        v["port"] = json!(kanban_store::devtools_port_for(s));
+        v["card"] = owner.map_or(Value::Null, |(n, id, since)| json!({ "number": n, "cardId": id, "label": format!("#{n}"), "since": since }));
+        slots.push(v);
+    }
+    let slot_line: Vec<Value> = apps
+        .line
+        .line
+        .iter()
+        .enumerate()
+        .map(|(i, w)| json!({ "card": w.card, "cardId": w.card_id, "label": format!("#{}", w.card), "place": i + 1, "askedAt": w.asked_at, "live": live.live.contains(&w.card_id) }))
+        .collect();
+    json!({
+        "channel": kanban_store::channel(),
+        "limitMinutes": limit,
+        "ceiling": apps.ceiling,
+        "slots": slots,
+        "slotLine": slot_line,
+        "pending": pending,
+        "hold": shared.hold.until.map(|u| json!({ "until": stamp(u) })),
+        "allowUntil": shared.hold.allow_until.map(stamp),
+        "mkdir": shared.dsh.as_ref().map(|d| json!({ "owner": d.owner, "ageMinutes": d.age_minutes, "stale": d.dead || d.age_minutes >= DSH_STALE_MINUTES, "dead": d.dead })),
+    })
+}
+
+/// The turn file install.ps1 reads: who this app is (so a file left by an app that has quit
+/// doesn't count), `holder` (Test's turn, as before card #147, for older scripts), and `slots`:
+/// each test app this board has given to a card or has a turn on.
+pub fn turn_file(apps: &Apps, limit: i64, me: (u32, Option<DateTime<Utc>>), now: DateTime<Utc>) -> Value {
+    let holder_of = |queue: &TestAppQueue| {
+        queue.holder.as_ref().map(|h| {
+            json!({ "kind": h.who.kind, "card": h.who.card, "owner": h.who.owner, "label": h.who.label,
+                    "givenAt": h.given_at, "expiresAt": queue.expires_at(limit).map(stamp) })
+        })
+    };
+    let mut slots = serde_json::Map::new();
+    for s in 1..=q::MAX_SLOTS {
+        let queue = apps.queue(s);
+        let owner = apps.owners.get(&s);
+        if owner.is_none() && queue.holder.is_none() {
+            continue;
+        }
+        slots.insert(
+            q::slot_channel(s),
+            json!({ "slot": s, "card": owner.map(|o| o.0), "label": owner.map(|o| format!("#{}", o.0)), "holder": holder_of(&queue) }),
+        );
+    }
+    json!({ "channel": kanban_store::channel(), "appPid": me.0, "appStart": me.1.map(stamp), "writtenAt": stamp(now),
+            "holder": holder_of(&apps.queue(1)), "slots": slots })
 }
 
 // --- the pump -----------------------------------------------------------------------------
@@ -477,41 +642,71 @@ fn card_state(store: &Store) -> impl Fn(&str) -> q::CardState + '_ {
     move |id: &str| store.get(id).ok().map(|c| (c.column.clone(), c.archived))
 }
 
+/// One pass of the rules over the store: frees the test apps cards can't keep, steps each test
+/// app's turns, and gives free test apps to the cards waiting for one. Logs and queued
+/// messages are written here. Returns whether a card changed or was logged on.
+pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, live: &Live) -> bool {
+    let mut logs: Vec<(String, String)> = vec![];
+    let mut messages: Vec<(String, String)> = vec![];
+    let mut changed = false;
+    for (c, _, why) in store.stale_test_apps().unwrap_or_default() {
+        changed |= store.free_test_app(&c.id, &why, "the app").is_ok();
+    }
+    for slot in 1..=q::MAX_SLOTS {
+        let mut queue = store.test_app_queue_for(slot).unwrap_or_default();
+        let st = step(&mut queue, now, limit, &shared.for_slot(slot), live, card_state(store), slot);
+        if st.changed {
+            let _ = store.save_test_app_queue_for(slot, &queue);
+        }
+        logs.extend(st.logs);
+        messages.extend(st.messages);
+    }
+    if let Ok(ls) = store.step_slot_line(now, kanban_store::slot(), &shared.elsewhere()) {
+        for (id, why) in ls.left {
+            logs.push((id, format!("Left the line for a test app: {why}")));
+        }
+        for (id, n, slot) in ls.given {
+            changed = true;
+            let mut queue = store.test_app_queue_for(slot).unwrap_or_default();
+            let t = queue.take(Ask::tester(&id, n), now, shared.for_slot(slot).blocks(&n.to_string()));
+            let _ = store.save_test_app_queue_for(slot, &queue);
+            messages.push((id, take_reply(&t, &format!("#{n}"), limit, Some(n), slot)));
+        }
+    }
+    for (id, line) in &logs {
+        let _ = store.add_log(id, line, "the app");
+    }
+    // Queued only: typed when the session is next free, or heard at its next start.
+    for (id, text) in &messages {
+        let _ = store.queue(id, "message", text);
+    }
+    changed || !logs.is_empty()
+}
+
 /// Every 2 s from the dispatch loop, and after each tool call or command.
 pub fn pump(app: &AppHandle) {
     let now = Utc::now();
-    let seen = look(&shared_dir(), &dsh_dir(), now);
+    let shared = look(&shared_dir(), &dsh_dir(), now);
     let live = live_of(app);
     let board = app.state::<Board>();
-    let (st, queue, limit) = {
+    let (apps, limit, changed) = {
         let Ok(mut store) = board.0.lock() else { return };
-        let mut queue = store.test_app_queue().unwrap_or_default();
         let limit = store.test_app_limit().unwrap_or(q::DEFAULT_LIMIT);
-        let st = step(&mut queue, now, limit, &seen, &live, card_state(&store));
-        if st.changed {
-            let _ = store.save_test_app_queue(&queue);
-        }
-        for (id, line) in &st.logs {
-            let _ = store.add_log(id, line, "the app");
-        }
-        // Queued only: typed when the session is next free, or heard at its next start.
-        for (id, text) in &st.messages {
-            let _ = store.queue(id, "message", text);
-        }
-        (st, queue, limit)
+        let changed = run(&mut store, now, limit, &shared, &live);
+        (Apps::read(&store), limit, changed)
     };
-    publish(app, &queue, limit, &seen, &live, now);
-    if !st.logs.is_empty() {
+    publish(app, &apps, limit, &shared, &live, now);
+    if changed {
         let _ = app.emit("cards-changed", ());
     }
 }
 
 /// Writes the turn file and sends "testapp" when either changed.
-fn publish(app: &AppHandle, queue: &TestAppQueue, limit: i64, seen: &Seen, live: &Live, now: DateTime<Utc>) {
+fn publish(app: &AppHandle, apps: &Apps, limit: i64, shared: &Shared, live: &Live, now: DateTime<Utc>) {
     static ME: std::sync::OnceLock<(u32, Option<DateTime<Utc>>)> = std::sync::OnceLock::new();
     let me = *ME.get_or_init(|| (std::process::id(), process_start(std::process::id())));
-    let turn = turn_file(queue, limit, me, now);
-    let status = status(queue, now, limit, seen, live);
+    let turn = turn_file(apps, limit, me, now);
+    let status = status(apps, now, limit, shared, live);
     let Ok(mut last) = LAST.lock() else { return };
     let last = last.get_or_insert_with(Last::default);
     // writtenAt alone isn't a change.
@@ -525,8 +720,12 @@ fn publish(app: &AppHandle, queue: &TestAppQueue, limit: i64, seen: &Seen, live:
     }
     // The minutes held move on their own; the page counts them from the times.
     let mut scmp = status.clone();
-    if let Some(h) = scmp.get_mut("holder").and_then(Value::as_object_mut) {
-        h.remove("heldMinutes");
+    if let Some(slots) = scmp.get_mut("slots").and_then(Value::as_array_mut) {
+        for s in slots {
+            if let Some(h) = s.get_mut("holder").and_then(Value::as_object_mut) {
+                h.remove("heldMinutes");
+            }
+        }
     }
     if last.status.as_ref() != Some(&scmp) {
         last.status = Some(scmp);
@@ -537,34 +736,91 @@ fn publish(app: &AppHandle, queue: &TestAppQueue, limit: i64, seen: &Seen, live:
 /// The current status, read fresh.
 pub fn snapshot(app: &AppHandle) -> Result<Value, String> {
     let now = Utc::now();
-    let seen = look(&shared_dir(), &dsh_dir(), now);
+    let shared = look(&shared_dir(), &dsh_dir(), now);
     let live = live_of(app);
     let board = app.state::<Board>();
     let store = board.0.lock().map_err(|e| e.to_string())?;
-    let queue = store.test_app_queue().map_err(|e| e.to_string())?;
     let limit = store.test_app_limit().unwrap_or(q::DEFAULT_LIMIT);
-    Ok(status(&queue, now, limit, &seen, &live))
+    Ok(status(&Apps::read(&store), now, limit, &shared, &live))
 }
 
 // --- the tool -----------------------------------------------------------------------------
 
+/// The install command for test app `slot`.
+pub fn install_command(slot: u32) -> String {
+    crate::platform::install_command(&q::slot_channel(slot))
+}
+
+/// The given message to a card's session: its own test app and its turn on it.
+pub fn given_message(number: i64, limit: i64, slot: u32) -> String {
+    let (label, port) = (q::slot_label(slot), kanban_store::devtools_port_for(slot));
+    let not_test = if slot == 1 { String::new() } else { " (not -Channel test)".to_string() };
+    format!(
+        "It is your turn on your test app, {label} ({}), card #{number}. If your card needs its build installed first, run this in the background now: `{}`{not_test}. \
+It waits for other installs and for Hugh, and says why; if {label} isn't installed yet, it creates it and copies the live board. \
+Then use it for your own checks and your card-tester (CDP port {port}). {label} stays this card's while the card is In progress or Human test, so Hugh tests your build there. \
+When you are done with it, release the turn: kanban_test_app with action \"release\" ({label} stays yours). \
+The turn ends by itself when this card leaves In progress and Human test, or after {limit} min with nothing running.",
+        kanban_store::product_name_for(slot),
+        install_command(slot),
+    )
+}
+
+pub fn ended_message(why: &str) -> String {
+    format!("Your turn on the test app ended: {why}. If you still need the test app, take a new turn: kanban_test_app with action \"take\".")
+}
+
+/// The message to a card whose test app was taken from it.
+pub fn freed_message(slot: u32, why: &str) -> String {
+    format!(
+        "Your test app, {}, was taken from this card: {why}. Another card's build may go there now. If you need a test app again, take a turn: kanban_test_app with action \"take\".",
+        q::slot_label(slot)
+    )
+}
+
 /// What a take or release told the asker.
-fn take_reply(t: &Take, label: &str, limit: i64, number: Option<i64>) -> String {
+fn take_reply(t: &Take, label: &str, limit: i64, number: Option<i64>, slot: u32) -> String {
+    let app = q::slot_label(slot);
     match t {
         Take::Given => match number {
-            Some(n) => given_message(n, limit),
-            None => format!("The test app is yours ({label}): install it now. The turn ends when your install has started the test app again, when you release it, or after {limit} min with nothing running."),
+            Some(n) => given_message(n, limit, slot),
+            None => format!("{app} is yours ({label}): install it now (`{}`). The turn ends when your install has started {app} again, when you release it, or after {limit} min with nothing running.", install_command(slot)),
         },
-        Take::Renewed => format!("The test app is still yours ({label}); its {limit} min start again."),
+        Take::Renewed => format!("Your turn on {app} is still yours ({label}); its {limit} min start again."),
         Take::Waiting(p) => match number {
-            Some(_) => format!("You are number {p} in line for the test app. The app tells this session when it is your turn (a message, typed when you are next free). End your turn now; don't wait in a loop."),
-            None => format!("Number {p} in line for the test app (an install goes ahead of every tester, as soon as the current turn ends). Check with kb testapp, or wait with kb testapp take --install --wait."),
+            Some(n) => format!(
+                "Your test app is {app} ({}, CDP port {}), card #{n}; it stays this card's while the card is In progress or Human test. You are number {p} in line for its turn. \
+The app tells this session when the turn is yours (a message, typed when you are next free). End your turn now; don't wait in a loop.",
+                kanban_store::product_name_for(slot),
+                kanban_store::devtools_port_for(slot)
+            ),
+            None => format!("Number {p} in line for {app} (an install goes ahead of every tester, as soon as the current turn ends). Check with kb testapp, or wait with kb testapp take --install --slot {slot} --wait."),
         },
     }
 }
 
-/// kanban_test_app. A card's session takes and releases tester turns for its own card.
-/// A session outside the app takes install turns (owner, label) and may force a release.
+/// The reply to a card that waits for a test app: who has each.
+fn slot_wait_reply(store: &Store, place: usize) -> String {
+    let ceiling = store.test_slots_ceiling().unwrap_or(q::DEFAULT_SLOTS);
+    let held: Vec<String> = store.slot_owners().unwrap_or_default().iter().map(|(s, c)| format!("{} #{}", q::slot_label(*s), c.number)).collect();
+    let held = if held.is_empty() { String::new() } else { format!(" ({})", held.join(", ")) };
+    format!(
+        "Every test app up to {} is taken{held}. You are number {place} in line for one. The app tells this session when one is yours \
+(a message, typed when you are next free). End your turn now; don't wait in a loop. Hugh can free one on the board, or raise the number of test apps in Settings.",
+        q::slot_label(ceiling)
+    )
+}
+
+/// The test app an outside caller names (`slot`, 1 to 10; Test when left out).
+fn arg_slot(args: &Value) -> Result<u32, String> {
+    let Some(v) = args.get("slot").filter(|v| !v.is_null()) else { return Ok(1) };
+    let n = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or("slot is a test app's number, 1 to 10")?;
+    u32::try_from(n).ok().filter(|n| (1..=q::MAX_SLOTS).contains(n)).ok_or_else(|| format!("slot is 1 to {}, not {n}", q::MAX_SLOTS))
+}
+
+/// kanban_test_app. A card's session takes its own test app and its turn on it, and releases
+/// the turn. A session outside the app takes install turns (owner, label, slot), may force a
+/// release, and may free a test app.
 pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value, String> {
     let action = args.get("action").and_then(Value::as_str).unwrap_or("status");
     if action == "status" {
@@ -584,16 +840,13 @@ pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value
         pump(app);
         return Ok(json!(format!("Released the old DSH lock folder: renamed to {}.", aside.display())));
     }
-    let seen = look(&shared_dir(), &dsh_dir(), now);
+    let shared = look(&shared_dir(), &dsh_dir(), now);
     let reply = {
         let board = app.state::<Board>();
         let mut store = board.0.lock().map_err(|e| e.to_string())?;
         let own = crate::tools::caller_card(app, &store, caller);
-        let mut queue = store.test_app_queue().map_err(|e| e.to_string())?;
         let limit = store.test_app_limit().unwrap_or(q::DEFAULT_LIMIT);
-        let reply = act(&mut store, &mut queue, own.as_deref(), action, args, now, limit, &seen)?;
-        store.save_test_app_queue(&queue).map_err(|e| e.to_string())?;
-        reply
+        act(&mut store, own.as_deref(), action, args, now, limit, &shared)?
     };
     // Hands a released turn on, writes the turn file and tells the page.
     pump(app);
@@ -601,89 +854,146 @@ pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value
     Ok(json!(reply))
 }
 
+/// Who an outside session's writes are by.
+const OUTSIDE_BY: &str = "a session outside the app";
+
 /// The tool's rules over the store, apart from files and sessions.
-pub fn act(store: &mut Store, queue: &mut TestAppQueue, own: Option<&str>, action: &str, args: &Value, now: DateTime<Utc>, limit: i64, seen: &Seen) -> Result<String, String> {
+pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now: DateTime<Utc>, limit: i64, shared: &Shared) -> Result<String, String> {
     let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
     let install = args.get("install").and_then(Value::as_bool).unwrap_or(false) || args.get("kind").and_then(Value::as_str) == Some(INSTALL);
+    let e = |e: kanban_store::Error| e.to_string();
     match (own, action) {
         (Some(id), "take") => {
             if install {
                 return Err("a card's session takes a tester turn only; installs are taken from outside a card session (kb testapp take --install), by Hugh's own session".into());
             }
-            let c = store.get(id).map_err(|e| e.to_string())?;
+            let c = store.get(id).map_err(e)?;
             if let Some(why) = q::take_refused(&c.column, c.archived) {
                 return Err(format!("refused: {why}"));
             }
-            let ask = Ask::tester(id, c.number);
-            let blocked = seen.blocks(&ask.owner);
-            let t = queue.take(ask, now, blocked);
-            let line = match &t {
-                Take::Given => "Took its turn on the test app".to_string(),
-                Take::Renewed => "Renewed its turn on the test app".to_string(),
-                Take::Waiting(p) => format!("Waits for the test app: number {p} in line"),
+            let by = format!("card #{}'s session", c.number);
+            let slot = match store.claim_test_app(id, now, kanban_store::slot(), &shared.elsewhere()).map_err(|e| format!("refused: {e}"))? {
+                SlotClaim::Waiting(p) => {
+                    let _ = store.add_log(id, &format!("Waits for a test app: number {p} in line (every one is taken)"), &by);
+                    return Ok(slot_wait_reply(store, p));
+                }
+                SlotClaim::Kept(s) | SlotClaim::Given(s) => s,
             };
-            let _ = store.add_log(id, &line, &format!("card #{}'s session", c.number));
-            Ok(take_reply(&t, &format!("#{}", c.number), limit, Some(c.number)))
+            let mut queue = store.test_app_queue_for(slot).map_err(e)?;
+            let ask = Ask::tester(id, c.number);
+            let blocked = shared.for_slot(slot).blocks(&ask.owner);
+            let t = queue.take(ask, now, blocked);
+            store.save_test_app_queue_for(slot, &queue).map_err(e)?;
+            let app = q::slot_label(slot);
+            let line = match &t {
+                Take::Given => format!("Took its turn on {app}"),
+                Take::Renewed => format!("Renewed its turn on {app}"),
+                Take::Waiting(p) => format!("Waits for its turn on {app}: number {p} in line"),
+            };
+            let _ = store.add_log(id, &line, &by);
+            Ok(take_reply(&t, &format!("#{}", c.number), limit, Some(c.number), slot))
         }
         (Some(id), "release") => {
             if force {
                 return Err("a card's session can't force a release; it releases only its own turn".into());
             }
-            let c = store.get(id).map_err(|e| e.to_string())?;
-            match queue.release(Some(id), &c.number.to_string(), TESTER) {
-                Some(true) => {
-                    let _ = store.add_log(id, "Released its turn on the test app", &format!("card #{}'s session", c.number));
-                    Ok("Released. The next card in line gets the test app.".into())
-                }
-                Some(false) => Ok("Left the line for the test app.".into()),
-                None => Ok("This card has no turn on the test app and isn't in line.".into()),
+            let c = store.get(id).map_err(e)?;
+            let slot = q::card_slot(&c).unwrap_or(1);
+            let app = q::slot_label(slot);
+            let mut queue = store.test_app_queue_for(slot).map_err(e)?;
+            let r = queue.release(Some(id), &c.number.to_string(), TESTER);
+            store.save_test_app_queue_for(slot, &queue).map_err(e)?;
+            let mut line = store.slot_line().map_err(e)?;
+            let left = line.leave(id);
+            if left {
+                store.save_slot_line(&line).map_err(e)?;
             }
+            let keeps = if q::card_slot(&c).is_some() { format!(" {app} stays this card's test app while the card is In progress or Human test.") } else { String::new() };
+            Ok(match r {
+                Some(true) => {
+                    let _ = store.add_log(id, &format!("Released its turn on {app}"), &format!("card #{}'s session", c.number));
+                    format!("Released your turn on {app}.{keeps}")
+                }
+                Some(false) => format!("Left the line for {app}'s turn.{keeps}"),
+                None if left => "Left the line for a test app.".into(),
+                None => "This card has no turn on a test app and isn't in line.".into(),
+            })
         }
+        (Some(_), "free") => Err("a card's session can't free a test app: the app frees it when the card moves on, and Hugh can free it on the board".into()),
         (None, "take") => {
             if !install {
-                return Err("from outside a card session, take an install turn: kb testapp take --install --owner <name> --label <label>".into());
+                return Err("from outside a card session, take an install turn: kb testapp take --install --owner <name> --label <label> [--slot N]".into());
             }
             let owner = args.get("owner").and_then(Value::as_str).map(str::trim).filter(|o| !o.is_empty()).ok_or("pass the install's owner (the KANBAN_LOCK_OWNER its install.ps1 runs with), for example --owner hugh")?;
             let label = args.get("label").and_then(Value::as_str).unwrap_or("");
+            let slot = arg_slot(args)?;
             let ask = Ask::install(owner, label);
             let shown = ask.label.clone();
-            let blocked = seen.blocks(&ask.owner);
+            let mut queue = store.test_app_queue_for(slot).map_err(e)?;
+            let blocked = shared.for_slot(slot).blocks(&ask.owner);
             let t = queue.take(ask, now, blocked);
-            Ok(take_reply(&t, &shown, limit, None))
+            store.save_test_app_queue_for(slot, &queue).map_err(e)?;
+            Ok(take_reply(&t, &shown, limit, None, slot))
         }
         (None, "release") => {
+            let slot = arg_slot(args)?;
+            let app = q::slot_label(slot);
+            let mut queue = store.test_app_queue_for(slot).map_err(e)?;
             if force {
-                return Ok(match queue.force() {
+                let reply = match queue.force() {
                     Some(t) => {
                         if let Some(id) = &t.who.card_id {
-                            let _ = store.add_log(id, "Its turn on the test app was released by a session outside the app", "the app");
+                            let _ = store.add_log(id, &format!("Its turn on {app} was released by a session outside the app"), "the app");
                             let _ = store.queue(id, "message", &ended_message("a session outside the app released it"));
                         }
-                        format!("Released {}'s turn on the test app.", t.who.label)
+                        format!("Released {}'s turn on {app}.", t.who.label)
                     }
-                    None => "Nobody holds the test app.".into(),
-                });
+                    None => format!("Nobody holds {app}."),
+                };
+                store.save_test_app_queue_for(slot, &queue).map_err(e)?;
+                return Ok(reply);
             }
             let owner = args.get("owner").and_then(Value::as_str).map(str::trim).filter(|o| !o.is_empty()).unwrap_or("hugh");
-            Ok(match queue.release(None, owner, INSTALL) {
-                Some(true) => format!("Released {owner}'s install turn."),
-                Some(false) => format!("Took {owner}'s install out of the line."),
-                None => format!("{owner} has no install turn and isn't in line."),
+            let r = queue.release(None, owner, INSTALL);
+            store.save_test_app_queue_for(slot, &queue).map_err(e)?;
+            Ok(match r {
+                Some(true) => format!("Released {owner}'s install turn on {app}."),
+                Some(false) => format!("Took {owner}'s install on {app} out of the line."),
+                None => format!("{owner} has no install turn on {app} and isn't in line."),
             })
         }
-        (_, other) => Err(format!("action is take, release or status, not {other}")),
+        (None, "free") => {
+            if args.get("slot").map_or(true, Value::is_null) {
+                return Err("pass the test app to free: slot (kb testapp free --slot N)".into());
+            }
+            let slot = arg_slot(args)?;
+            free_slot(store, slot, "a session outside the app freed it", OUTSIDE_BY)
+        }
+        (_, other) => Err(format!("action is take, release, free or status, not {other}")),
     }
+}
+
+/// Takes test app `slot` from the card that has it (its turn and place on it too), and tells
+/// that card's session.
+pub fn free_slot(store: &mut Store, slot: u32, why: &str, by: &str) -> Result<String, String> {
+    let app = q::slot_label(slot);
+    let owners = store.slot_owners().map_err(|e| e.to_string())?;
+    let Some(c) = owners.get(&slot) else { return Ok(format!("{app} isn't any card's test app.")) };
+    store.free_test_app(&c.id, why, by).map_err(|e| e.to_string())?;
+    let _ = store.queue(&c.id, "message", &freed_message(slot, why));
+    Ok(format!("Freed {app}: card #{} no longer has it.", c.number))
 }
 
 pub fn schema() -> Value {
     json!({ "name": "kanban_test_app",
-            "description": "Turns on the shared test app. take: ask for a tester turn for your own card (In progress or Human test). You get it now, or a place in line and a message when it is yours; take again to renew it. Use the installed test app only during your turn, for your own checks and your card-tester. release: give it back (or leave the line). status: who has it, the line, and any install. The turn ends by itself when your card leaves In progress and Human test, or after a time with nothing running.",
+            "description": "Test apps and their turns. take: your card's own test app (Test, Test 2, ...: the app gives it one, a new one if every lower one holds another card's build, and it stays the card's while the card is In progress or Human test) and a turn on it. You get the turn now, or a place in line and a message when it is yours; take again to renew it. The reply names the test app, its install command (install.ps1 -Channel test2) and its CDP port. Use it only during your turn, for your own checks and your card-tester. release: give the turn back (the test app stays your card's). status: each test app's card, turn, line and install. The turn ends by itself when your card leaves In progress and Human test, or after a time with nothing running.",
             "inputSchema": { "type": "object", "properties": {
-                "action": { "type": "string", "enum": ["take", "release", "status"] },
+                "action": { "type": "string", "enum": ["take", "release", "free", "status"] },
                 "install": { "type": "boolean", "description": "Outside a card session only: an install turn (ahead of every tester)." },
                 "owner": { "type": "string", "description": "Outside only: the install's owner, the KANBAN_LOCK_OWNER its install.ps1 runs with (default hugh)." },
                 "label": { "type": "string", "description": "Outside only: what the board shows, for example wave 3." },
-                "force": { "type": "boolean", "description": "Outside only, with release: release whoever holds it." } }, "required": ["action"] } })
+                "slot": { "type": "integer", "description": "Outside only: the test app, 1 (Test, the default) to 10 (Test 10). free needs it." },
+                "force": { "type": "boolean", "description": "Outside only, with release: release whoever holds the turn." } }, "required": ["action"] } })
 }
 
 // --- the page's commands ------------------------------------------------------------------
@@ -698,20 +1008,36 @@ pub fn testapp_status(app: AppHandle) -> Result<Value, String> {
     snapshot(&app)
 }
 
-/// Hugh's Release on the chip: whoever holds the turn loses it.
+/// Hugh's Release on a test app's row: whoever holds its turn loses it.
 #[tauri::command]
-pub fn testapp_release(app: AppHandle) -> Result<Value, String> {
+pub fn testapp_release(app: AppHandle, slot: Option<u32>) -> Result<Value, String> {
+    let slot = slot.unwrap_or(1).clamp(1, q::MAX_SLOTS);
     {
         let board = app.state::<Board>();
         let mut store = board.0.lock().map_err(|e| e.to_string())?;
-        let mut queue = store.test_app_queue().map_err(|e| e.to_string())?;
+        let mut queue = store.test_app_queue_for(slot).map_err(|e| e.to_string())?;
         if let Some(t) = queue.force() {
-            store.save_test_app_queue(&queue).map_err(|e| e.to_string())?;
+            store.save_test_app_queue_for(slot, &queue).map_err(|e| e.to_string())?;
             if let Some(id) = &t.who.card_id {
-                let _ = store.add_log(id, "Hugh released its turn on the test app", "Hugh");
+                let _ = store.add_log(id, &format!("Hugh released its turn on {}", q::slot_label(slot)), "Hugh");
                 let _ = store.queue(id, "message", &ended_message("Hugh released it"));
             }
         }
+    }
+    let _ = app.emit("cards-changed", ());
+    changed(&app)
+}
+
+/// Hugh's Free on a test app's row: the card that has it loses it, and its session hears so.
+#[tauri::command]
+pub fn testapp_free(app: AppHandle, slot: u32) -> Result<Value, String> {
+    if !(1..=q::MAX_SLOTS).contains(&slot) {
+        return Err(format!("there is no test app {slot}"));
+    }
+    {
+        let board = app.state::<Board>();
+        let mut store = board.0.lock().map_err(|e| e.to_string())?;
+        free_slot(&mut store, slot, "Hugh freed it", "Hugh")?;
     }
     let _ = app.emit("cards-changed", ());
     changed(&app)
@@ -737,14 +1063,14 @@ pub fn testapp_let_restart(app: AppHandle) -> Result<Value, String> {
     changed(&app)
 }
 
-/// The test app's page: Hugh used it (trusted input in a focused window). The live app
-/// records nothing.
+/// A test app's page: Hugh used it (trusted input in a focused window). Each test app writes its
+/// own file (card #147); the live app records nothing.
 #[tauri::command]
 pub fn testapp_input() -> Result<(), String> {
     if !kanban_store::is_test() {
         return Ok(());
     }
-    write_atomic(&shared_dir().join("input-test.json"), &json!({ "at": stamp(Utc::now()) }))
+    write_atomic(&shared_dir().join(input_file(kanban_store::slot())), &json!({ "at": stamp(Utc::now()) }))
 }
 
 /// Hugh's Release of the old DSH lock folder (renamed aside, never deleted).
@@ -790,9 +1116,9 @@ mod tests {
         let card = cols(&[("a", "Human test"), ("b", "In progress"), ("c", "In progress")]);
         // a moved on to Blocked: its turn ends; b is paused, so c gets it.
         let card2 = cols(&[("a", "Blocked"), ("b", "In progress"), ("c", "In progress")]);
-        let s = step(&mut queue, t(1), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card);
+        let s = step(&mut queue, t(1), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card, 1);
         assert!(!s.changed, "Human test keeps the turn");
-        let s = step(&mut queue, t(2), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card2);
+        let s = step(&mut queue, t(2), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card2, 1);
         assert!(s.changed);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#3");
         assert_eq!(queue.line.len(), 1, "b keeps its place");
@@ -807,12 +1133,12 @@ mod tests {
         queue.take(Ask::tester("a", 1), t(0), false);
         queue.take(Ask::tester("b", 2), t(0), false);
         let card = cols(&[("a", "In progress"), ("b", "In progress")]);
-        step(&mut queue, t(50), 60, &Seen::default(), &lv(&["a", "b"], &["a"]), &card);
+        step(&mut queue, t(50), 60, &Seen::default(), &lv(&["a", "b"], &["a"]), &card, 1);
         let soon = t(50) + Duration::seconds(30);
-        assert!(!step(&mut queue, soon, 60, &Seen::default(), &lv(&["a", "b"], &["a"]), &card).changed, "renewed at most once a minute");
-        let s = step(&mut queue, t(100), 60, &Seen::default(), &lv(&["a", "b"], &[]), &card);
+        assert!(!step(&mut queue, soon, 60, &Seen::default(), &lv(&["a", "b"], &["a"]), &card, 1).changed, "renewed at most once a minute");
+        let s = step(&mut queue, t(100), 60, &Seen::default(), &lv(&["a", "b"], &[]), &card, 1);
         assert!(!s.changed, "renewed at 50, so not out until 110");
-        let s = step(&mut queue, t(111), 60, &Seen::default(), &lv(&["a", "b"], &[]), &card);
+        let s = step(&mut queue, t(111), 60, &Seen::default(), &lv(&["a", "b"], &[]), &card, 1);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#2");
         assert!(s.messages.iter().any(|(id, m)| id == "a" && m.contains("not used for 60 min")));
     }
@@ -824,15 +1150,15 @@ mod tests {
         queue.take(Ask::tester("a", 1), t(0), false);
         let card = cols(&[("a", "In progress")]);
         let lock = Seen { lock: Some(Lock { owner: "router".into(), phase: "installing".into(), ..Default::default() }), lock_present: true, ..Default::default() };
-        step(&mut queue, t(1), 60, &Seen::default(), &lv(&["a"], &[]), &card);
+        step(&mut queue, t(1), 60, &Seen::default(), &lv(&["a"], &[]), &card, 1);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "wave 3", "not seen installing yet: kept");
-        step(&mut queue, t(2), 60, &lock, &lv(&["a"], &[]), &card);
+        step(&mut queue, t(2), 60, &lock, &lv(&["a"], &[]), &card, 1);
         assert!(queue.holder.as_ref().unwrap().install_seen);
         // Someone else's install doesn't count as this one's.
         let other = Seen { lock: Some(Lock { owner: "hugh".into(), ..Default::default() }), lock_present: true, ..Default::default() };
-        step(&mut queue, t(3), 60, &other, &lv(&["a"], &[]), &card);
+        step(&mut queue, t(3), 60, &other, &lv(&["a"], &[]), &card, 1);
         assert!(queue.holder.is_none(), "router's install is done, and Hugh's install holds the lock: nobody yet");
-        let s = step(&mut queue, t(4), 60, &Seen::default(), &lv(&["a"], &[]), &card);
+        let s = step(&mut queue, t(4), 60, &Seen::default(), &lv(&["a"], &[]), &card, 1);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#1");
         assert!(s.messages.iter().any(|(id, _)| id == "a"));
     }
@@ -845,9 +1171,9 @@ mod tests {
         queue.force();
         let dsh = Seen { dsh: Some(Dsh { owner: "105".into(), age_minutes: 3, dead: false }), ..Default::default() };
         let card = cols(&[("a", "In progress"), ("b", "In progress")]);
-        assert!(!step(&mut queue, t(1), 60, &dsh, &lv(&["a", "b"], &[]), &card).changed);
+        assert!(!step(&mut queue, t(1), 60, &dsh, &lv(&["a", "b"], &[]), &card, 1).changed);
         let mine = Seen { dsh: Some(Dsh { owner: "2".into(), age_minutes: 3, dead: false }), ..Default::default() };
-        step(&mut queue, t(2), 60, &mine, &lv(&["a", "b"], &[]), &card);
+        step(&mut queue, t(2), 60, &mine, &lv(&["a", "b"], &[]), &card, 1);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#2");
     }
 
@@ -865,18 +1191,18 @@ mod tests {
         // Hugh's own install holds install.lock with no turn: nobody gets one.
         let hugh = Seen { lock: Some(Lock { owner: "hugh".into(), ..Default::default() }), lock_present: true, ..Default::default() };
         let mut q = mk();
-        assert!(!step(&mut q, t(1), 60, &hugh, &lv(&["a", "b"], &[]), &card).changed);
+        assert!(!step(&mut q, t(1), 60, &hugh, &lv(&["a", "b"], &[]), &card, 1).changed);
         // Present but unreadable this instant: still an install.
         let blur = Seen { lock_present: true, ..Default::default() };
-        assert!(!step(&mut q, t(1), 60, &blur, &lv(&["a", "b"], &[]), &card).changed);
+        assert!(!step(&mut q, t(1), 60, &blur, &lv(&["a", "b"], &[]), &card, 1).changed);
         // The live board's turn blocks the test board's queue, except for its own owner.
         let other = Seen { other: Some("2".into()), ..Default::default() };
-        step(&mut q, t(2), 60, &other, &lv(&["a", "b"], &[]), &card);
+        step(&mut q, t(2), 60, &other, &lv(&["a", "b"], &[]), &card, 1);
         assert_eq!(q.holder.as_ref().unwrap().who.label, "#2");
         // A killed run's DSH folder (dead pid) blocks nobody.
         let mut q = mk();
         let dead = Seen { dsh: Some(Dsh { owner: "router".into(), age_minutes: 5, dead: true }), ..Default::default() };
-        step(&mut q, t(3), 60, &dead, &lv(&["a", "b"], &[]), &card);
+        step(&mut q, t(3), 60, &dead, &lv(&["a", "b"], &[]), &card, 1);
         assert_eq!(q.holder.as_ref().unwrap().who.label, "#1");
     }
 
@@ -886,35 +1212,86 @@ mod tests {
         queue.take(Ask::install("router", "wave 3"), t(0), false);
         queue.holder.as_mut().unwrap().install_seen = true;
         let blur = Seen { lock_present: true, ..Default::default() };
-        step(&mut queue, t(1), 60, &blur, &Live::default(), cols(&[]));
+        step(&mut queue, t(1), 60, &blur, &Live::default(), cols(&[]), 1);
         assert!(queue.holder.is_some(), "unreadable for a moment is not done");
         let waiting = Seen { waits: vec![Lock { owner: "router".into(), ..Default::default() }], ..Default::default() };
-        step(&mut queue, t(2), 60, &waiting, &Live::default(), cols(&[]));
+        step(&mut queue, t(2), 60, &waiting, &Live::default(), cols(&[]), 1);
         assert!(queue.holder.is_some(), "its run is waiting to restart");
-        step(&mut queue, t(3), 60, &Seen::default(), &Live::default(), cols(&[]));
+        step(&mut queue, t(3), 60, &Seen::default(), &Live::default(), cols(&[]), 1);
         assert!(queue.holder.is_none());
     }
 
     #[test]
-    fn other_board_turn_counts_only_while_its_app_runs() {
+    fn other_board_files_count_only_while_their_app_runs_old_and_new() {
         let me = std::process::id();
         let start = process_start(me).map(stamp);
         let now = Utc::now();
-        let live = json!({ "appPid": me, "appStart": start, "holder": { "owner": "7", "expiresAt": stamp(now + Duration::minutes(5)) } }).to_string();
-        assert_eq!(other_holder(&live, now).as_deref(), Some("7"));
-        let gone = json!({ "appPid": me, "appStart": "2020-01-01T00:00:00Z", "holder": { "owner": "7", "expiresAt": stamp(now + Duration::minutes(5)) } }).to_string();
-        assert!(other_holder(&gone, now).is_none());
-        let expired = json!({ "appPid": me, "appStart": start, "holder": { "owner": "7", "expiresAt": stamp(now - Duration::minutes(1)) } }).to_string();
-        assert!(other_holder(&expired, now).is_none());
-        assert!(other_holder(&json!({ "appPid": me, "appStart": start, "holder": null }).to_string(), now).is_none());
+        let soon = stamp(now + Duration::minutes(5));
+        // An old live file: its holder is on Test.
+        let live = json!({ "channel": "live", "appPid": me, "appStart": start, "holder": { "owner": "7", "expiresAt": soon } }).to_string();
+        assert_eq!(other_slots(&live, now), vec![(1, OtherSlot { card: None, holder: Some("7".into()) })]);
+        // An old test app's file: its holder is on itself.
+        let t3 = json!({ "channel": "test3", "appPid": me, "appStart": start, "holder": { "owner": "7", "expiresAt": soon } }).to_string();
+        assert_eq!(other_slots(&t3, now)[0].0, 3);
+        // A new file: test app by test app, cards too.
+        let new = json!({ "channel": "test", "appPid": me, "appStart": start, "holder": null,
+            "slots": { "test2": { "slot": 2, "card": 140, "holder": null }, "test4": { "slot": 4, "card": null, "holder": { "owner": "router", "expiresAt": soon } } } }).to_string();
+        let got = other_slots(&new, now);
+        assert!(got.contains(&(2, OtherSlot { card: Some(140), holder: None })));
+        assert!(got.contains(&(4, OtherSlot { card: None, holder: Some("router".into()) })));
+        let gone = json!({ "appPid": me, "appStart": "2020-01-01T00:00:00Z", "channel": "live", "holder": { "owner": "7", "expiresAt": soon } }).to_string();
+        assert!(other_slots(&gone, now).is_empty());
+        let expired = json!({ "channel": "live", "appPid": me, "appStart": start, "holder": { "owner": "7", "expiresAt": stamp(now - Duration::minutes(1)) } }).to_string();
+        assert!(other_slots(&expired, now).is_empty());
+        // Shared: elsewhere, and a test app's other board.
+        let mut shared = Shared::default();
+        for (s, o) in got {
+            shared.others.entry(s).or_default().push(o);
+        }
+        assert_eq!(shared.elsewhere(), [2, 4].into_iter().collect());
+        assert_eq!(shared.for_slot(4).other.as_deref(), Some("router"));
+        assert!(shared.for_slot(2).other.is_none());
     }
 
     #[test]
-    fn the_turn_messages_name_the_port_and_no_router() {
-        let m = given_message(115, 60);
-        assert!(m.contains("card #115") && m.contains("CDP port 9334") && m.contains("60 min"), "{m}");
-        for text in [m, ended_message("Hugh released it")] {
+    fn an_install_counts_only_for_its_own_test_app_unless_it_names_none() {
+        let mut shared = Shared { lock: Some(Lock { owner: "140".into(), channel: Some("test2".into()), ..Default::default() }), lock_present: true, ..Default::default() };
+        assert!(shared.for_slot(2).blocks("1"), "Test 2's install holds Test 2");
+        assert!(!shared.for_slot(3).blocks("1"), "but not Test 3");
+        shared.lock.as_mut().unwrap().channel = None;
+        assert!(shared.for_slot(3).blocks("1"), "a lock from an older script holds every test app");
+        assert!(shared.shown(1).lock.is_some() && shared.shown(3).lock.is_none(), "and shows on Test only");
+        // Unreadable this instant: every test app waits.
+        let blur = Shared { lock_present: true, ..Default::default() };
+        assert!(blur.for_slot(5).blocks("1"));
+        let waits = Shared { waits: vec![Lock { owner: "x".into(), channel: Some("test3".into()), ..Default::default() }], ..Default::default() };
+        assert_eq!(waits.for_slot(3).waits.len(), 1);
+        assert!(waits.for_slot(2).waits.is_empty());
+        let input = Shared { inputs: [(3, t(0))].into_iter().collect(), ..Default::default() };
+        assert!(input.for_slot(3).input.is_some() && input.for_slot(2).input.is_none());
+        assert_eq!(input_file(1), "input-test.json");
+        assert_eq!(input_file(3), "input-test3.json");
+    }
+
+    #[test]
+    fn the_turn_messages_name_the_test_app_its_install_and_port_and_no_router() {
+        let m = given_message(115, 60, 1);
+        assert!(m.contains("card #115") && m.contains("CDP port 9334") && m.contains("60 min") && m.contains("-Channel test`"), "{m}");
+        let m2 = given_message(147, 60, 4);
+        assert!(m2.contains("Test 4") && m2.contains("-Channel test4") && m2.contains("CDP port 9337") && m2.contains("not -Channel test") && m2.contains("creates it"), "{m2}");
+        for text in [m, m2, ended_message("Hugh released it"), freed_message(2, "Hugh freed it")] {
             assert!(!text.to_lowercase().contains("router") && !text.contains("wave"), "{text}");
+        }
+    }
+
+    fn mk_card(store: &mut Store, col: &str) -> kanban_store::Card {
+        let mut p = kanban_store::Patch::new();
+        p.insert("title".into(), json!("x"));
+        let c = store.create(None, p, "t").unwrap();
+        if col == "Backlog" {
+            c
+        } else {
+            store.move_by_hugh(&c.id, c.version, col, kanban_store::Patch::new()).unwrap().card
         }
     }
 
@@ -922,72 +1299,153 @@ mod tests {
     fn tool_rules() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(dir.path().join("b.db")).unwrap();
-        let mut p = kanban_store::Patch::new();
-        p.insert("title".into(), json!("x"));
-        let c = store.create(None, p.clone(), "t").unwrap();
-        store.move_by_hugh(&c.id, c.version, "In progress", kanban_store::Patch::new()).unwrap();
-        let d = store.create(None, p, "t").unwrap();
-        let mut queue = TestAppQueue::default();
-        let run = |s: &mut Store, q: &mut TestAppQueue, own: Option<&str>, action: &str, args: Value| act(s, q, own, action, &args, t(0), 60, &Seen::default());
+        let c = mk_card(&mut store, "In progress");
+        let d = mk_card(&mut store, "Backlog");
+        let e2 = mk_card(&mut store, "In progress");
+        let call = |s: &mut Store, own: Option<&str>, action: &str, args: Value| act(s, own, action, &args, t(0), 60, &Shared::default());
         // A card in Backlog is told which columns take a turn.
-        let e = run(&mut store, &mut queue, Some(&d.id), "take", json!({})).unwrap_err();
+        let e = call(&mut store, Some(&d.id), "take", json!({})).unwrap_err();
         assert!(e.contains("In progress or Human test") && e.contains("Backlog"), "{e}");
-        assert!(run(&mut store, &mut queue, Some(&c.id), "take", json!({ "install": true })).is_err());
-        let r = run(&mut store, &mut queue, Some(&c.id), "take", json!({})).unwrap();
-        assert!(r.contains("your turn"), "{r}");
-        assert!(run(&mut store, &mut queue, Some(&c.id), "release", json!({ "force": true })).is_err());
-        // Outside: an install turn with an owner; a tester take is refused.
-        assert!(run(&mut store, &mut queue, None, "take", json!({})).is_err());
-        assert!(run(&mut store, &mut queue, None, "take", json!({ "install": true })).is_err());
-        let r = run(&mut store, &mut queue, None, "take", json!({ "install": true, "owner": "router", "label": "wave 3" })).unwrap();
-        assert!(r.contains("Number 1 in line"), "{r}");
-        let r = run(&mut store, &mut queue, None, "release", json!({ "force": true })).unwrap();
+        assert!(call(&mut store, Some(&c.id), "take", json!({ "install": true })).is_err());
+        // The first card gets Test and its turn; the second Test 2 and its turn.
+        let r = call(&mut store, Some(&c.id), "take", json!({})).unwrap();
+        assert!(r.contains("your turn") && r.contains("Test (") && r.contains("CDP port 9334"), "{r}");
+        let r = call(&mut store, Some(&e2.id), "take", json!({})).unwrap();
+        assert!(r.contains("Test 2") && r.contains("-Channel test2") && r.contains("CDP port 9335"), "{r}");
+        assert_eq!(kanban_store::card_slot(&store.get(&e2.id).unwrap()), Some(2));
+        assert!(store.test_app_queue_for(2).unwrap().holds(Some(&e2.id), &e2.number.to_string(), TESTER));
+        // Its release gives back the turn, not the test app.
+        let r = call(&mut store, Some(&e2.id), "release", json!({})).unwrap();
+        assert!(r.contains("Released your turn on Test 2") && r.contains("stays this card's"), "{r}");
+        assert_eq!(kanban_store::card_slot(&store.get(&e2.id).unwrap()), Some(2));
+        assert!(call(&mut store, Some(&c.id), "release", json!({ "force": true })).is_err());
+        assert!(call(&mut store, Some(&c.id), "free", json!({ "slot": 2 })).is_err(), "a card's session frees nothing");
+        // Outside: an install turn with an owner, on a test app; a tester take is refused.
+        assert!(call(&mut store, None, "take", json!({})).is_err());
+        assert!(call(&mut store, None, "take", json!({ "install": true })).is_err());
+        let r = call(&mut store, None, "take", json!({ "install": true, "owner": "router", "label": "wave 3" })).unwrap();
+        assert!(r.contains("Number 1 in line for Test"), "{r}");
+        let r = call(&mut store, None, "take", json!({ "install": true, "owner": "router", "label": "wave 3", "slot": 3 })).unwrap();
+        assert!(r.contains("Test 3 is yours") && r.contains("-Channel test3"), "{r}");
+        assert!(call(&mut store, None, "take", json!({ "install": true, "owner": "router", "slot": 11 })).is_err());
+        let r = call(&mut store, None, "release", json!({ "force": true })).unwrap();
         assert!(r.contains(&format!("#{}", c.number)), "{r}");
         // The forced card hears it, queued.
         assert!(store.waiting(&c.id, "message").unwrap().is_some());
-        assert_eq!(run(&mut store, &mut queue, None, "release", json!({ "owner": "router" })).unwrap(), "Took router's install out of the line.");
-        assert!(run(&mut store, &mut queue, None, "dance", json!({})).is_err());
+        assert_eq!(call(&mut store, None, "release", json!({ "owner": "router" })).unwrap(), "Took router's install on Test out of the line.");
+        assert_eq!(call(&mut store, None, "release", json!({ "owner": "router", "slot": 3 })).unwrap(), "Released router's install turn on Test 3.");
+        // Free: names its test app; the card loses it and hears so.
+        assert!(call(&mut store, None, "free", json!({})).is_err());
+        let r = call(&mut store, None, "free", json!({ "slot": 2 })).unwrap();
+        assert_eq!(r, format!("Freed Test 2: card #{} no longer has it.", e2.number));
+        assert_eq!(kanban_store::card_slot(&store.get(&e2.id).unwrap()), None);
+        assert!(store.waiting(&e2.id, "message").unwrap().unwrap().payload.contains("was taken from this card"));
+        assert_eq!(call(&mut store, None, "free", json!({ "slot": 2 })).unwrap(), "Test 2 isn't any card's test app.");
+        assert!(call(&mut store, None, "dance", json!({})).is_err());
     }
 
     #[test]
-    fn status_shows_the_pending_restart_and_the_paused_card() {
+    fn a_card_waits_for_a_test_app_only_at_the_ceiling_and_hears_when_one_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        store.set_page_setting("testapp.slots", "1").unwrap();
+        let a = mk_card(&mut store, "In progress");
+        let b = mk_card(&mut store, "In progress");
+        let take = |s: &mut Store, own: &str| act(s, Some(own), "take", &json!({}), t(0), 60, &Shared::default());
+        take(&mut store, &a.id).unwrap();
+        let r = take(&mut store, &b.id).unwrap();
+        assert!(r.contains("Every test app up to Test is taken") && r.contains(&format!("Test #{}", a.number)) && r.contains("number 1 in line"), "{r}");
+        // a goes to Ship it: the pump frees Test and gives it to b, whose session hears it.
+        let a2 = store.get(&a.id).unwrap();
+        store.move_by_hugh(&a.id, a2.version, "Ship it", kanban_store::Patch::new()).unwrap();
+        assert!(run(&mut store, t(1), 60, &Shared::default(), &lv(&[&b.id], &[])));
+        assert_eq!(kanban_store::card_slot(&store.get(&a.id).unwrap()), None);
+        assert_eq!(kanban_store::card_slot(&store.get(&b.id).unwrap()), Some(1));
+        assert!(store.test_app_queue_for(1).unwrap().holds(Some(&b.id), &b.number.to_string(), TESTER));
+        let m = store.waiting(&b.id, "message").unwrap().unwrap().payload;
+        assert!(m.contains("your turn on your test app, Test") && m.contains("CDP port 9334"), "{m}");
+    }
+
+    #[test]
+    fn turns_on_one_test_app_never_hold_another() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let a = mk_card(&mut store, "In progress");
+        let b = mk_card(&mut store, "In progress");
+        // An install into Test 2 runs; a gets Test and b Test 2.
+        let shared = Shared { lock: Some(Lock { owner: "x".into(), channel: Some("test2".into()), ..Default::default() }), lock_present: true, ..Default::default() };
+        let r = act(&mut store, Some(&a.id), "take", &json!({}), t(0), 60, &shared).unwrap();
+        assert!(r.contains("your turn") && r.contains("Test ("), "Test 2's install doesn't hold a turn on Test: {r}");
+        let r = act(&mut store, Some(&b.id), "take", &json!({}), t(0), 60, &shared).unwrap();
+        assert!(r.contains("Test 2") && r.contains("number 1 in line for its turn"), "Test 2's own install holds its turn: {r}");
+        assert_eq!(kanban_store::card_slot(&store.get(&b.id).unwrap()), Some(2));
+    }
+
+    #[test]
+    fn status_shows_each_test_app_in_use_the_line_and_the_pending_restart() {
+        let mut apps = Apps { ceiling: 10, ..Default::default() };
         let mut queue = TestAppQueue::default();
         queue.take(Ask::tester("a", 1), t(0), false);
         queue.take(Ask::tester("b", 2), t(0), false);
         queue.take(Ask::install("router", "wave 3"), t(0), false);
-        let seen = Seen {
-            lock: Some(Lock { owner: "router".into(), label: "wave 3".into(), phase: "waiting".into(), waiting_for: Some("the test app's turn: #1 (tester)".into()), ..Default::default() }),
+        apps.queues.insert(2, queue);
+        apps.owners.insert(2, (1, "a".into(), "2026-11-06T03:00:00Z".into()));
+        apps.owners.insert(5, (9, "z".into(), "2026-11-06T03:00:00Z".into()));
+        apps.line.join("w", 12, t(1));
+        let shared = Shared {
+            waits: vec![Lock { owner: "router".into(), label: "wave 3".into(), phase: "waiting".into(), waiting_for: Some("the test app's turn: #1 (tester)".into()), channel: Some("test2".into()), ..Default::default() }],
             hold: Hold { until: Some(t(20)), allow_until: None },
-            input: Some(t(-3)),
+            inputs: [(2, t(-3))].into_iter().collect(),
             dsh: Some(Dsh { owner: "105".into(), age_minutes: 70, dead: false }),
             ..Default::default()
         };
-        let s = status(&queue, t(46), 60, &seen, &lv(&["a"], &[]));
-        assert_eq!(s["holder"]["label"], "#1");
-        assert_eq!(s["holder"]["overdue"], true);
-        assert_eq!(s["holder"]["expiresAt"], "2026-11-06T04:00:00Z");
-        assert_eq!(s["line"][0]["label"], "wave 3");
-        assert_eq!(s["line"][1]["live"], false);
+        let s = status(&apps, t(46), 60, &shared, &lv(&["a"], &[]));
+        let slots = s["slots"].as_array().unwrap();
+        assert_eq!(slots.iter().map(|v| v["slot"].as_u64().unwrap()).collect::<Vec<_>>(), vec![2, 5], "only the test apps in use");
+        let two = &slots[0];
+        assert_eq!(two["label"], "Test 2");
+        assert_eq!(two["port"], 9335);
+        assert_eq!(two["card"]["number"], 1);
+        assert_eq!(two["holder"]["label"], "#1");
+        assert_eq!(two["holder"]["overdue"], true);
+        assert_eq!(two["holder"]["expiresAt"], "2026-11-06T04:00:00Z");
+        assert_eq!(two["line"][0]["label"], "wave 3");
+        assert_eq!(two["line"][1]["live"], false);
+        assert_eq!(two["install"]["phase"], "waiting");
+        assert_eq!(two["hughInputRecent"], false, "3 min before 03:00 is 49 min before 03:46");
+        assert_eq!(slots[1]["card"]["label"], "#9");
+        assert!(slots[1]["holder"].is_null());
+        assert_eq!(s["slotLine"][0]["label"], "#12");
+        assert_eq!(s["pending"]["slotLabel"], "Test 2");
         assert_eq!(s["pending"]["label"], "wave 3");
-        assert_eq!(s["install"]["phase"], "waiting");
         assert_eq!(s["hold"]["until"], "2026-11-06T03:20:00Z");
         assert_eq!(s["mkdir"]["stale"], true);
-        assert_eq!(s["hughInputRecent"], false, "3 min before 03:00 is 49 min before 03:46");
-        let quiet = status(&TestAppQueue::default(), t(0), 60, &Seen::default(), &Live::default());
-        assert!(quiet["holder"].is_null() && quiet["pending"].is_null());
+        assert_eq!(s["ceiling"], 10);
+        let quiet = status(&Apps::default(), t(0), 60, &Shared::default(), &Live::default());
+        assert!(quiet["slots"].as_array().unwrap().is_empty() && quiet["pending"].is_null());
     }
 
     #[test]
-    fn the_turn_file_names_the_holder_and_the_app() {
+    fn the_turn_file_names_test_s_holder_and_each_test_app_in_use() {
+        let mut apps = Apps::default();
         let mut queue = TestAppQueue::default();
         queue.take(Ask::tester("a", 115), t(0), false);
-        let f = turn_file(&queue, 60, (42, Some(t(-10))), t(1));
-        assert_eq!(f["holder"]["owner"], "115");
+        apps.queues.insert(1, queue.clone());
+        apps.queues.insert(3, queue);
+        apps.owners.insert(2, (140, "c".into(), String::new()));
+        let f = turn_file(&apps, 60, (42, Some(t(-10))), t(1));
+        assert_eq!(f["holder"]["owner"], "115", "holder stays Test's, for older scripts");
         assert_eq!(f["holder"]["kind"], "tester");
         assert_eq!(f["holder"]["expiresAt"], "2026-11-06T04:00:00Z");
         assert_eq!(f["appPid"], 42);
         assert_eq!(f["appStart"], "2026-11-06T02:50:00Z");
-        assert!(turn_file(&TestAppQueue::default(), 60, (42, None), t(1))["holder"].is_null());
+        assert_eq!(f["slots"]["test2"]["card"], 140);
+        assert!(f["slots"]["test2"]["holder"].is_null());
+        assert_eq!(f["slots"]["test3"]["holder"]["owner"], "115");
+        assert!(f["slots"]["test3"]["card"].is_null());
+        assert!(f["slots"].get("test4").is_none());
+        let empty = turn_file(&Apps::default(), 60, (42, None), t(1));
+        assert!(empty["holder"].is_null() && empty["slots"].as_object().unwrap().is_empty());
     }
 
     #[test]

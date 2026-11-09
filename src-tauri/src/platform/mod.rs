@@ -32,6 +32,8 @@
 //! - The test-app lock files (testapp.rs, wave 5 merge): `share_all(options)`, a file opened
 //!   with every kind of sharing; `process_start(pid)` and `PID_LOCKS`, whether a lock's writer
 //!   is checked by its pid and start time (Windows) or the file's presence is enough (macOS).
+//! - `install_command(channel)` (card #147): the command a card session runs to install its
+//!   build into a test app.
 
 #[cfg(windows)]
 mod windows;

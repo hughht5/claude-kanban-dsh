@@ -2,12 +2,12 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\test-install-lock.ps1
 #
-# Each case runs `install.ps1 -Channel test -LockOnly` as a child powershell, with -LockDir and
-# -DshLockDir in a new temp folder, so it never touches the real shared folder
-# (%USERPROFILE%\.claude-kanban-dsh-shared), the DSH lock folder or an app: no build, no install,
-# nothing is quit or started. The test writes the apps' files (turn-*.json, hold.json,
-# input-test.json) itself. It prints PASS or FAIL per check and exits 1 if any fails.
-# Written for Windows PowerShell 5.1.
+# Each case runs `install.ps1 -Channel test -LockOnly` (or -Channel test2, test3 for the slots of
+# card #147) as a child powershell, with -LockDir and -DshLockDir in a new temp folder, so it
+# never touches the real shared folder (%USERPROFILE%\.claude-kanban-dsh-shared), the DSH lock
+# folder or an app: no build, no install, nothing is quit or started. The test writes the apps'
+# files (turn-*.json, old and new shape, hold.json, input-<channel>.json) itself. It prints PASS
+# or FAIL per check and exits 1 if any fails. Written for Windows PowerShell 5.1.
 
 $ErrorActionPreference = 'Stop'
 
@@ -51,6 +51,19 @@ function New-Holder([string]$Owner, [string]$Label, [string]$Kind = 'tester', $C
     [ordered]@{ kind = $Kind; card = $Card; owner = $Owner; label = $Label; givenAt = (Utc -1); expiresAt = (Utc 10) }
 }
 
+# A turn file in card #147's shape: `holder` (slot 1's, for older scripts) and `slots`, an
+# ordered map of channel -> New-Slot.
+function New-SlotTurn([string]$Channel, $AppPid, [string]$AppStart, $Holder, $Slots) {
+    [ordered]@{ channel = $Channel; appPid = $AppPid; appStart = $AppStart; writtenAt = (Utc); holder = $Holder; slots = $Slots }
+}
+
+# One slot in `slots`: the card it is given to (or $null) and its turn's holder (or $null).
+function New-Slot([int]$Slot, $Card = $null, $Holder = $null) {
+    $label = $null
+    if ($null -ne $Card) { $label = "#$Card" }
+    [ordered]@{ slot = $Slot; card = $Card; label = $label; holder = $Holder }
+}
+
 function Read-Shared([string]$Path) {
     try {
         $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
@@ -74,12 +87,12 @@ function Open-HeldLock([string]$Path, $Object) {
     return $s
 }
 
-# Starts install.ps1 -Channel test -LockOnly as a child powershell (no new window).
-function Start-Run($Case, [string[]]$Extra = @(), [string]$Owner = 'tester') {
+# Starts install.ps1 -Channel <test> -LockOnly as a child powershell (no new window).
+function Start-Run($Case, [string[]]$Extra = @(), [string]$Owner = 'tester', [string]$Channel = 'test') {
     $script:RunNo++
     $out = Join-Path $Case.Dir "run$($script:RunNo).out.txt"
     $err = Join-Path $Case.Dir "run$($script:RunNo).err.txt"
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$Install`"", '-Channel', 'test', '-LockOnly',
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$Install`"", '-Channel', $Channel, '-LockOnly',
         '-LockDir', "`"$($Case.Shared)`"", '-DshLockDir', "`"$($Case.Dsh)`"", '-PollSeconds', '1') + $Extra
     $savedOwner = $env:KANBAN_LOCK_OWNER
     $savedCard  = $env:KANBAN_CARD
@@ -221,11 +234,12 @@ try {
     $heldWhileWaiting = Test-Path $c.Lock
     Write-Fixture $c 'turn-test.json' (New-Turn 'test' $PID $MyStart $null)
     $r = Wait-Run $run
-    Check '4 live turn: waits, says whose turn' ($still -and $r.Text -match "Waiting: the test app's turn: #105 \(tester\)") $r
+    Check '4 live turn: waits, says whose turn' ($still -and $r.Text -match "Waiting: the test app's turn on Test: #105 \(tester\)") $r
     Check '4 live turn: waits without install.lock' (-not $heldWhileWaiting) $r
     Check '4 live turn: no wait file left afterwards' (-not (Test-Path (Get-WaitFile $c $run))) $r
+    Check '4 live turn: install-wait-<pid>.json carries the channel (test)' ($lock -and $lock.channel -eq 'test') $r
     Check '4 live turn: install-wait-<pid>.json says waiting, why, and who' (
-        $lock -and $lock.phase -eq 'waiting' -and $lock.waitingFor -eq "the test app's turn: #105 (tester)" -and
+        $lock -and $lock.phase -eq 'waiting' -and $lock.waitingFor -eq "the test app's turn on Test: #105 (tester)" -and
         $lock.owner -eq 'tester' -and $lock.label -eq 'tester' -and $lock.pid -gt 0 -and $lock.pidStart -match 'Z$' -and
         $lock.pid -eq $run.Proc.Id -and $null -eq $lock.restartAt -and $lock.startedAt -match 'Z$' -and $null -eq $lock.card -and $lock.worktree) $r
     Check '4 live turn: LOCK OK once the holder is null' ($r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
@@ -325,10 +339,10 @@ try {
     $c = New-Case
     Write-Fixture $c 'input-test.json' ([ordered]@{ at = (Utc -1) })
     $run = Start-Run $c
-    $still = Wait-Waiting $run 'Waiting: Hugh used the test app'
+    $still = Wait-Waiting $run 'Waiting: Hugh used Test'
     Write-Fixture $c 'input-test.json' ([ordered]@{ at = (Utc -20) })
     $r = Wait-Run $run
-    Check '9 input 1 min ago: waits, says when' ($still -and $r.Text -match 'Waiting: Hugh used the test app at \d\d:\d\d') $r
+    Check '9 input 1 min ago: waits, says when' ($still -and $r.Text -match 'Waiting: Hugh used Test at \d\d:\d\d') $r
     Check '9 input 1 min ago: LOCK OK once it is 20 min ago' ($r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
 
     $c = New-Case
@@ -399,7 +413,7 @@ try {
     $c = New-Case
     Write-Fixture $c 'turn-test.json' (New-Turn 'test' $PID $MyStart (New-Holder 'router' 'wave 3' 'install'))
     $runA = Start-Run $c
-    $stillA = Wait-Waiting $runA "Waiting: the test app's turn: wave 3 (install)"
+    $stillA = Wait-Waiting $runA "Waiting: the test app's turn on Test: wave 3 (install)"
     $noLock = -not (Test-Path $c.Lock)
     $wait = Read-SharedJson (Get-WaitFile $c $runA)
     $rB = Wait-Run (Start-Run $c -Owner 'router')
@@ -408,7 +422,7 @@ try {
     $rA = Wait-Run $runA
     Check '13 F1: a run with no turn waits without install.lock, announced in install-wait-<pid>.json' (
         $stillA -and $noLock -and $wait -and $wait.phase -eq 'waiting' -and $wait.owner -eq 'tester' -and
-        $wait.waitingFor -eq "the test app's turn: wave 3 (install)") $rA
+        $wait.waitingFor -eq "the test app's turn on Test: wave 3 (install)") $rA
     Check "13 F1: meanwhile the turn holder's run (router) gets install.lock" ((Test-Clear $rB) -and $aStill) $rB
     Check '13 F1: the waiting run goes on once the turn ends, and leaves no wait file' (
         $rA.Exit -eq 0 -and $rA.Text -match 'LOCK OK' -and -not (Test-Path (Get-WaitFile $c $runA))) $rA
@@ -457,6 +471,150 @@ try {
     $r = Wait-Run $run
     Check '15 F3: a live pid in the folder: waits, not moved; LOCK OK once it goes' (
         $still -and $notMoved -and $r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
+
+    # --- 16. Card #147: each slot has its own turn (turn files with "slots") ---------------
+    $c = New-Case
+    $h105 = New-Holder '105' '#105' 'tester' 105
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $h105 ([ordered]@{ test = (New-Slot 1 $null $h105) }))
+    $runT = Start-Run $c
+    $stillT = Wait-Waiting $runT "Waiting: the live app's turn on Test: #105 (tester)"
+    $r2 = Wait-Run (Start-Run $c -Channel 'test2')
+    $tStill = -not $runT.Proc.HasExited
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{}))
+    $rT = Wait-Run $runT
+    Check '16 a turn on Test only (turn-live.json with slots): a -Channel test run waits for it' (
+        $stillT -and $rT.Text -match "Waiting: the live app's turn on Test: #105 \(tester\)" -and $rT.Exit -eq 0 -and $rT.Text -match 'LOCK OK') $rT
+    Check '16 a turn on Test only: meanwhile a -Channel test2 run goes ahead' ((Test-Clear $r2) -and $tStill) $r2
+
+    $c = New-Case
+    $wave = New-Holder 'router' 'wave 3' 'install'
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 $null $wave) }))
+    $run = Start-Run $c -Channel 'test2'
+    $still = Wait-Waiting $run "Waiting: the live app's turn on Test 2: wave 3 (install)"
+    $waitText = Read-Shared (Get-WaitFile $c $run)
+    $wait = Read-SharedJson (Get-WaitFile $c $run)
+    $rOwn = Wait-Run (Start-Run $c -Owner 'router' -Channel 'test2')
+    $aStill = -not $run.Proc.HasExited
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2) }))
+    $r = Wait-Run $run
+    Check "16 Test 2's turn held by someone else (router): a -Channel test2 run waits, says whose" (
+        $still -and $r.Text -match "Waiting: the live app's turn on Test 2: wave 3 \(install\)") $r
+    Check '16 the wait file of a -Channel test2 run carries "channel":"test2", and why it waits' (
+        $waitText -match '"channel":"test2"' -and $wait -and $wait.channel -eq 'test2' -and $wait.phase -eq 'waiting' -and
+        $wait.waitingFor -eq "the live app's turn on Test 2: wave 3 (install)") $r
+    Check "16 meanwhile the holder's own owner (router) goes ahead on test2" ((Test-Clear $rOwn) -and $aStill) $rOwn
+    Check '16 the waiting test2 run goes on once the turn is released' ($r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
+
+    # Every app's turn file counts, not just live's and this slot's own.
+    $c = New-Case
+    Write-Fixture $c 'turn-test3.json' (New-SlotTurn 'test3' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 $null (New-Holder '7' '#7' 'tester' 7)) }))
+    $run = Start-Run $c -Channel 'test2'
+    $still = Wait-Waiting $run "Waiting: the test3 app's turn on Test 2: #7 (tester)"
+    Write-Fixture $c 'turn-test3.json' (New-SlotTurn 'test3' $PID $MyStart $null ([ordered]@{}))
+    $r = Wait-Run $run
+    Check "16 turn-test3.json's turn on Test 2 also holds a -Channel test2 run, until it goes" (
+        $still -and $r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
+
+    # --- 17. Card #147: an old turn file (no "slots") ------------------------------------
+    $c = New-Case
+    Write-Fixture $c 'turn-live.json' (New-Turn 'live' $PID $MyStart (New-Holder '105' '#105' 'tester' 105))
+    $run = Start-Run $c
+    $still = Wait-Waiting $run "Waiting: the live app's turn on Test: #105 (tester)"
+    $r2 = Wait-Run (Start-Run $c -Channel 'test2')
+    $aStill = -not $run.Proc.HasExited
+    Write-Fixture $c 'turn-live.json' (New-Turn 'live' $PID $MyStart $null)
+    $r = Wait-Run $run
+    Check '17 an old turn-live.json (no slots) with a live holder: a -Channel test run waits for it' (
+        $still -and $r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
+    Check '17 the same old turn-live.json: a -Channel test2 run does not wait' ((Test-Clear $r2) -and $aStill) $r2
+
+    $c = New-Case
+    Write-Fixture $c 'turn-test2.json' (New-Turn 'test2' $PID $MyStart (New-Holder '105' '#105' 'tester' 105))
+    Write-Fixture $c 'turn-test.json' (New-Turn 'test' $PID $MyStart (New-Holder '106' '#106' 'tester' 106))
+    $run = Start-Run $c -Channel 'test2'
+    $still = Wait-Waiting $run "Waiting: the test2 app's turn on Test 2: #105 (tester)"
+    Write-Fixture $c 'turn-test2.json' (New-Turn 'test2' $PID $MyStart $null)
+    $r = Wait-Run $run
+    Check "17 an old turn-test2.json holds test2 itself; an old turn-test.json doesn't" (
+        $still -and $r.Exit -eq 0 -and $r.Text -match 'LOCK OK' -and $r.Text -notmatch '#106') $r
+
+    # --- 18. Card #147: the owner wait (a slot given to a card) ---------------------------
+    $c = New-Case
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 140) }))
+    $run = Start-Run $c -Owner '147' -Channel 'test2'
+    $still = Wait-Waiting $run "Waiting: Test 2 holds card #140's build"
+    $wait = Read-SharedJson (Get-WaitFile $c $run)
+    $r140 = Wait-Run (Start-Run $c -Owner '140' -Channel 'test2')
+    $rHugh = Wait-Run (Start-Run $c @('-IgnoreTurn') -Owner 'hugh' -Channel 'test2')
+    $aStill = -not $run.Proc.HasExited
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{}))
+    $r = Wait-Run $run
+    Check '18 owner wait: Test 2 given to card #140 makes a run for 147 wait, naming card #140' (
+        $still -and $r.Text -match "Waiting: Test 2 holds card #140's build \(the live board\)" -and
+        $wait -and $wait.waitingFor -eq "Test 2 holds card #140's build (the live board)" -and $wait.owner -eq '147') $r
+    Check '18 owner wait: meanwhile a run for card #140 itself goes ahead' ((Test-Clear $r140) -and $aStill) $r140
+    Check '18 owner wait: -IgnoreTurn (Hugh) does not wait for the card' ((Test-Clear $rHugh) -and $rHugh.Text -match 'WARNING: -IgnoreTurn') $rHugh
+    Check '18 owner wait: the run for 147 goes on once Test 2 is no longer given' ($r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
+
+    $c = New-Case
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 140 (New-Holder 'router' 'wave 3' 'install')) }))
+    $r = Wait-Run (Start-Run $c -Owner 'router' -Channel 'test2')
+    Check "18 owner wait: an owner who holds Test 2's turn (router) goes ahead though card #140 has it" (Test-Clear $r) $r
+
+    $dead = 4000000
+    while (Get-Process -Id $dead -ErrorAction SilentlyContinue) { $dead += 4 }
+    $c = New-Case
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $dead $MyStart $null ([ordered]@{ test2 = (New-Slot 2 140) }))
+    $r = Wait-Run (Start-Run $c -Owner '147' -Channel 'test2')
+    Check '18 owner wait: a card in the file of an app that is not running: no wait' (Test-Clear $r) $r
+
+    # --- 19. Card #147: the wrong-slot stop ----------------------------------------------
+    $c = New-Case
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 147) }))
+    $r = Wait-Run (Start-Run $c -Owner '147' -Channel 'test3')
+    Check '19 wrong slot: card #147 has Test 2, so a -Channel test3 run for 147 stops at once, naming -Channel test2' (
+        $r.Exit -ne 0 -and -not $r.TimedOut -and $r.Text -match "card #147's test app is Test 2: run this with -Channel test2" -and
+        $r.Text -notmatch 'Waiting:' -and $r.Text -notmatch 'LOCK OK') $r
+    Check '19 wrong slot: no install.lock, wait file or DSH lock folder left' (
+        -not (Test-Path $c.Lock) -and -not (Test-Path $c.Dsh) -and @(Get-ChildItem -LiteralPath $c.Shared -Filter 'install-wait-*').Count -eq 0) $r
+    $r2 = Wait-Run (Start-Run $c -Owner '147' -Channel 'test2')
+    Check '19 wrong slot: the same card on its own slot (test2) goes ahead' (Test-Clear $r2) $r2
+
+    # Given meanwhile: the run sees it at step 4, after install.lock, lets go and stops.
+    $c = New-Case
+    $held = Open-HeldLock $c.Lock ([ordered]@{ pid = $PID; owner = 'other'; label = 'held by the test'; phase = 'installing'; waitingFor = $null })
+    $run = Start-Run $c -Owner '147' -Channel 'test3'
+    $still = Wait-Waiting $run 'Waiting: install.lock'
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 147) }))
+    $held.Dispose()
+    $r = Wait-Run $run
+    Check '19 wrong slot after install.lock: Test 2 given to card #147 meanwhile stops its test3 run, which lets go' (
+        $still -and $r.Exit -ne 0 -and -not $r.TimedOut -and $r.Text -match "card #147's test app is Test 2: run this with -Channel test2" -and
+        $r.Text -notmatch 'LOCK OK' -and -not (Test-Path $c.Lock) -and -not (Test-Path $c.Dsh)) $r
+
+    # --- 20. Card #147: Hugh's input and the notice per slot (input-<channel>.json) -------
+    $c = New-Case
+    Write-Fixture $c 'input-test3.json' ([ordered]@{ at = (Utc -1) })
+    $run = Start-Run $c -Channel 'test3'
+    $still = Wait-Waiting $run 'Waiting: Hugh used Test 3 at'
+    $r2 = Wait-Run (Start-Run $c -Channel 'test2')
+    $aStill = -not $run.Proc.HasExited
+    Write-Fixture $c 'input-test3.json' ([ordered]@{ at = (Utc -20) })
+    $r = Wait-Run $run
+    Check '20 input-test3.json 1 min ago: a -Channel test3 run waits, says when, then LOCK OK' (
+        $still -and $r.Text -match 'Waiting: Hugh used Test 3 at \d\d:\d\d' -and $r.Exit -eq 0 -and $r.Text -match 'LOCK OK') $r
+    Check '20 input-test3.json 1 min ago: a -Channel test2 run does not wait for it' ((Test-Clear $r2) -and $aStill) $r2
+
+    $c = New-Case
+    Write-Fixture $c 'input-test.json' ([ordered]@{ at = (Utc -30) })
+    $r = Wait-Run (Start-Run $c @('-AssumeAppRunning', '-NoticeSeconds', '30') -Channel 'test2')
+    Check '20 notice: input-test.json 30 min ago gives a -Channel test2 run no notice' (Test-Clear $r) $r
+
+    $c = New-Case
+    Write-Fixture $c 'input-test2.json' ([ordered]@{ at = (Utc -30) })
+    $r = Wait-Run (Start-Run $c @('-AssumeAppRunning', '-NoticeSeconds', '3') -Channel 'test2')
+    Check '20 notice: input-test2.json 30 min ago gives a -Channel test2 run its notice' (
+        $r.Exit -eq 0 -and $r.Text -match 'Waiting: notice until \d\d:\d\d:\d\d' -and $r.Text -match 'LOCK OK') $r
 } finally {
     Remove-Item -LiteralPath $Base -Recurse -Force -ErrorAction SilentlyContinue
 }

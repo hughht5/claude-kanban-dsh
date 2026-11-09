@@ -319,6 +319,7 @@ function renderDetail(){
   <h3>Details</h3>
   <dl>
    <dt>Branch</dt><dd class="mono">${safe(c.branch||"—")}</dd>
+   ${c.testApp&&typeof c.testApp==="object"?(a=>`<dt>Test app</dt><dd>${[safe(a.name||"Claude Kanban DSH "+(a.label||(Number(a.slot)>1?"Test "+a.slot:"Test"))),a.channel?"channel "+safe(a.channel):"",a.port?"CDP port "+esc(a.port):"",(d=>a.since&&!isNaN(d)?"since "+esc(d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})):"")(new Date(a.since))].filter(Boolean).join(" · ")}</dd>`)(c.testApp):""}
    <dt>Account</dt><dd>${c.account==="account2"?"Account 2":c.account==="main"?"Main":"—"}</dd>
    <dt>Updated</dt><dd>${esc(c.updatedAt||"—")}${c.updatedBy?`<br><span class="meta">${safe(c.updatedBy)}</span>`:""}</dd>
    <dt>Repo</dt><dd>${safe(c.repo||"—")}</dd>

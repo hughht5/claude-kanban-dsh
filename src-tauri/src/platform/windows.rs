@@ -553,3 +553,8 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "the callback ran once the event was set");
     }
 }
+
+/// The command a card session runs to install its build into test app `channel` (card #147).
+pub fn install_command(channel: &str) -> String {
+    format!("powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel {channel}")
+}

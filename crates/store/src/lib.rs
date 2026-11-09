@@ -68,6 +68,8 @@ pub use templates::{Template, TemplateInput};
 // Time in each column (card #111).
 pub use times::{card_columns, column_since, median, medians, timeline, CardTimes, ColumnMedian, ColumnTime, LogIn, RevIn, Timeline, Visit, LOG_WINDOW_MS, MEDIAN_DAYS};
 pub use testapp::{take_refused, Ask, Ended, Take, TestAppQueue, Turn, Waiting, INSTALL as TESTAPP_INSTALL, TESTER as TESTAPP_TESTER, TESTER_COLUMNS};
+// A test app per card (card #147).
+pub use testapp::{card_slot, channel_slot, lowest_free, slot_channel, slot_label, slot_refused, LineStep, SlotClaim, SlotLine, SlotWait, MAX_SLOTS as MAX_TEST_SLOTS, TEST_APP_KEY};
 pub use waits::{clean_blocked_by, is_met, wait_path, Wait, WaitKind, WaitOutcome, BLOCKED_KEY, LEAD_NOTE, MAX_WAITS, MET_OTHER_REPO, MET_SAME_REPO, WAITED_KEY, WAIT_BY};
 
 pub const COLUMNS: [&str; 8] = [
@@ -329,6 +331,8 @@ pub fn copy_board(from: &Path, to: &Path, replace: bool) -> Result<CopyReport> {
     // So are the test app's turns (card #115): a test board never starts with the live
     // holder and line, and so never tells test-board sessions about turns they never took.
     copy.save_test_app_queue(&TestAppQueue::default())?;
+    // And its test apps (card #147): no card's testApp, no slot line, no turns on any slot.
+    copy.clear_test_apps()?;
     // And the Router (card #119): a copy never resumes the source's Router conversation, and
     // starts with it off.
     copy.detach_router()?;
