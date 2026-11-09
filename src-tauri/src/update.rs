@@ -134,15 +134,12 @@ impl Updates {
         Status { running: Running { version: VERSION, commit: COMMIT, built_at: BUILT_AT }, ready, failed: self.failed.lock().ok().and_then(|f| f.clone()), kb_notice: self.kb_notice.lock().ok().and_then(|k| k.clone()) }
     }
 
-    /// OK on the notice the page shows: the failure if there is one, else the kb.exe notice.
-    fn seen(&self) {
-        if let Ok(mut f) = self.failed.lock() {
-            if f.take().is_some() {
-                return;
-            }
-        }
-        if let Ok(mut k) = self.kb_notice.lock() {
-            *k = None;
+    /// OK on the notice the page showed: "kb" for the kb.exe notice, anything else for the
+    /// failure. Only that one goes, so a notice that came in meanwhile is still shown.
+    fn seen(&self, kind: &str) {
+        let slot = if kind == "kb" { &self.kb_notice } else { &self.failed };
+        if let Ok(mut f) = slot.lock() {
+            *f = None;
         }
     }
 
@@ -201,11 +198,11 @@ pub fn update_later(updates: State<Updates>, built_at: String) {
     }
 }
 
-/// OK on "The last update didn't install" or the kb.exe notice: it goes until another install
-/// fails. The page shows one at a time, so OK clears the one it showed: the failure first.
+/// OK on "The last update didn't install" or, with `kind` "kb", the kb.exe notice: it goes
+/// until another install says so again. An older page sends no kind: the failure.
 #[tauri::command]
-pub fn update_failure_seen(updates: State<Updates>) {
-    updates.seen();
+pub fn update_failure_seen(updates: State<Updates>, kind: Option<String>) {
+    updates.seen(kind.as_deref().unwrap_or("install"));
 }
 
 /// Restart now: starts the helper, then suspends every session and exits.
@@ -303,12 +300,12 @@ mod tests {
         assert!(!u.refresh(t.path()), "told once");
         assert_eq!(u.status().kb_notice.as_deref(), Some("kb.exe (pid 4)"));
         assert_eq!(u.status().failed, None, "the app did install");
-        // A failure and the notice together: OK clears the failure first, then the notice.
+        // A failure comes in while the notice shows: OK on the notice clears only the notice.
         *u.failed.lock().unwrap() = Some("x".into());
-        u.seen();
-        assert_eq!((u.status().failed, u.status().kb_notice.as_deref()), (None, Some("kb.exe (pid 4)")));
-        u.seen();
-        assert_eq!(u.status().kb_notice, None);
+        u.seen("kb");
+        assert_eq!((u.status().failed.as_deref(), u.status().kb_notice), (Some("x"), None));
+        u.seen("install");
+        assert_eq!(u.status().failed, None);
     }
 
     #[test]

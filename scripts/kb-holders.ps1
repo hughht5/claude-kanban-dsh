@@ -37,11 +37,17 @@ public static class KanbanRm {
         try {
             if (RmRegisterResources(h, 1, new[] { path }, 0, IntPtr.Zero, 0, null) != 0) return pids.ToArray();
             uint needed = 0, count = 0, reasons = 0;
-            int r = RmGetList(h, out needed, ref count, null, ref reasons);
-            if (r == 234 && needed > 0) {   // ERROR_MORE_DATA: now ask with room for them all
-                var info = new PROCESS_INFO[needed]; count = needed;
-                if (RmGetList(h, out needed, ref count, info, ref reasons) == 0)
+            PROCESS_INFO[] info = null;
+            // ERROR_MORE_DATA (234): ask again with room for them all; a few times, as a new
+            // holder may start between the two calls.
+            for (int tries = 0; tries < 5; tries++) {
+                int r = RmGetList(h, out needed, ref count, info, ref reasons);
+                if (r == 0) {
                     for (int i = 0; i < count; i++) pids.Add(info[i].Process.Pid);
+                    break;
+                }
+                if (r != 234) break;
+                info = new PROCESS_INFO[needed + 2]; count = (uint)info.Length;
             }
         } finally { RmEndSession(h); }
         return pids.ToArray();

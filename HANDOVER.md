@@ -2125,8 +2125,8 @@ or any session with `kanban_router`. The decisions below are the router's after 
     "install".
   - `update.rs` reads it once (`last_failure`): kind "install" sets `failed` ("The last update
     didn't install"), kind "kb" sets `kb_notice`, a bar of its own ("Updated, but kb.exe is still
-    the old version — held by ..."). OK (`update_failure_seen`) clears the one shown, the failure
-    first.
+    the old version — held by ..."). OK (`update_failure_seen`, with the page's `kind`) clears only the
+    one it showed; the failure shows first. A first install whose kb.exe didn't land exits 3 too.
 - **Test:** `scripts\test-kb-locked.ps1 [-Channel test]` (test channels only), in your test-app
   turn. It installs three times; see its header.
 

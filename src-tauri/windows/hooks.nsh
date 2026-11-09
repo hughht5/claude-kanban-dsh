@@ -49,7 +49,12 @@ Var KanbanKbOld
   Goto kanban_kb_done
   kanban_kb_write:
   File "${KANBAN_KB_EXE}"
-  StrCmp $KanbanKbOld "" kanban_kb_done 0
+  StrCmp $KanbanKbOld "" 0 kanban_kb_check
+    ; There was none before: if the write failed, kb.exe is missing, so exit 3 as well.
+    IfFileExists "$INSTDIR\kb.exe" kanban_kb_done 0
+    SetErrorLevel 3
+    Goto kanban_kb_done
+  kanban_kb_check:
   IfFileExists "$INSTDIR\kb.exe" kanban_kb_landed 0
     ; The new one didn't land: put the old one back, so kb still runs, and exit 3.
     Rename "$KanbanKbOld" "$INSTDIR\kb.exe"
