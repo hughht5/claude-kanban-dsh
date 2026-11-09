@@ -1287,7 +1287,8 @@ covered only cards that knew about it.
   session isn't running keeps its place but is passed over, by the pump (`next`) and by a take
   (`take_now`, card #149): with nobody holding the turn and nothing outside the queue blocking,
   a take from a card first in line, or behind only paused cards, gets the turn in its reply.
-  **A stopped card's turn (card #168):** when the turn is a card's (it holds it, or nobody does and
+  **A stopped card's turn (card #168):** when the turn is a card's (it holds it and hasn't heard
+  it yet, a "your turn" still queued, `Live::unheard`; or nobody holds it and
   it is the first in line `blocked` doesn't stop, past cards whose wake ran out) and its session
   isn't running, `step` marks it (`to_wake`, `woke_at` on its `Turn` or `Waiting`, once until its
   session is seen running again: a live holder, or the card's own take, `ran`) and the pump starts its

@@ -407,6 +407,9 @@ impl Seen {
 pub struct Live {
     pub live: HashSet<String>,
     pub busy: HashSet<String>,
+    /// Holders with a queued message still waiting for their session (card #168): a turn given
+    /// while the session was stopped, its "your turn" not heard yet. Filled in by `run`.
+    pub unheard: HashSet<String>,
 }
 
 fn live_of(app: &AppHandle) -> Live {
@@ -414,7 +417,7 @@ fn live_of(app: &AppHandle) -> Live {
     let states = s.states();
     let mut busy: HashSet<String> = states.iter().filter(|(_, st)| matches!(st.as_str(), "working" | "permission")).map(|(k, _)| k.clone()).collect();
     busy.extend(s.testing_cards());
-    Live { live: states.into_keys().collect(), busy }
+    Live { live: states.into_keys().collect(), busy, unheard: HashSet::new() }
 }
 
 /// What one pump decided, for the logs and messages it sends after.
@@ -480,8 +483,10 @@ pub fn step(
         ended(&mut out, &t, &why, &card);
     }
     // Its turn came while its session was stopped: the pump starts it (card #168). Before
-    // `next`, so the card behind it doesn't take the turn while its session starts.
-    out.wake = queue.to_wake(now, |id| live.live.contains(id), |owner| seen.blocks(owner));
+    // `next`, so the card behind it doesn't take the turn while its session starts. A holder
+    // that heard its turn and then stopped (paused when idle) isn't woken: it has nothing new.
+    let quiet = queue.holder.as_ref().and_then(|h| h.who.card_id.as_deref()).is_some_and(|id| !live.live.contains(id) && !live.unheard.contains(id));
+    out.wake = if quiet { None } else { queue.to_wake(now, |id| live.live.contains(id), |owner| seen.blocks(owner)) };
     if let Some(t) = queue.next(now, |id| live.live.contains(id), |owner| seen.blocks(owner)) {
         if let (Some(id), Some(n)) = (t.who.card_id.clone(), t.who.card) {
             out.logs.push((id.clone(), "Got its turn on the test app".into()));
@@ -684,6 +689,16 @@ fn card_state(store: &Store) -> impl Fn(&str) -> q::CardState + '_ {
 pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, live: &Live) -> (bool, Vec<(String, u32)>) {
     let mut wakes: Vec<(String, u32)> = vec![];
     let mut logs: Vec<(String, String)> = vec![];
+    // Which holders still have a message waiting for their session (card #168).
+    let mut live = live.clone();
+    for slot in 1..=q::MAX_SLOTS {
+        if let Some(id) = store.test_app_queue_for(slot).ok().and_then(|q| q.holder).and_then(|h| h.who.card_id) {
+            if store.waiting(&id, "message").ok().flatten().is_some() {
+                live.unheard.insert(id);
+            }
+        }
+    }
+    let live = &live;
     let mut messages: Vec<(String, String)> = vec![];
     let mut changed = false;
     for (c, slot, why) in store.stale_test_apps().unwrap_or_default() {
@@ -1223,7 +1238,7 @@ mod tests {
         parse("2026-11-06T03:00:00Z").unwrap() + Duration::minutes(min)
     }
     fn lv(live: &[&str], busy: &[&str]) -> Live {
-        Live { live: live.iter().map(|s| s.to_string()).collect(), busy: busy.iter().map(|s| s.to_string()).collect() }
+        Live { live: live.iter().map(|s| s.to_string()).collect(), busy: busy.iter().map(|s| s.to_string()).collect(), unheard: HashSet::new() }
     }
     fn cols(m: &[(&str, &str)]) -> impl Fn(&str) -> q::CardState {
         let m: HashMap<String, String> = m.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
@@ -1279,15 +1294,18 @@ mod tests {
         let s = step(&mut queue, t(4), 60, &Seen::default(), &lv(&["b", "c"], &[]), &card, 1);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#2");
         assert!(s.messages.iter().any(|(id, m)| id == "b" && m.contains("your turn")));
-        // A holder given the turn while stopped (the slot line's take) is woken too, once.
+        // A holder that heard its turn and then stopped (paused when idle) isn't woken.
         let mut queue = TestAppQueue::default();
         queue.take(Ask::tester("a", 1), t(0), false);
-        let s = step(&mut queue, t(1), 60, &Seen::default(), &Live::default(), &card, 1);
+        assert_eq!(step(&mut queue, t(1), 60, &Seen::default(), &Live::default(), &card, 1).wake, None);
+        // One given the turn while stopped (the slot line's take: its message waits) is woken, once.
+        let unheard = Live { unheard: ["a".to_string()].into_iter().collect(), ..Live::default() };
+        let s = step(&mut queue, t(1), 60, &Seen::default(), &unheard, &card, 1);
         assert_eq!(s.wake.as_deref(), Some("a"));
         assert_eq!(slot_status(&queue, t(1), 60, &Seen::default(), &Live::default())["holder"]["waking"], true);
-        assert_eq!(step(&mut queue, t(2), 60, &Seen::default(), &Live::default(), &card, 1).wake, None);
+        assert_eq!(step(&mut queue, t(2), 60, &Seen::default(), &unheard, &card, 1).wake, None);
         // Its session didn't come up within the grace: its turn ends, and it hears why.
-        let s = step(&mut queue, t(1 + q::WAKE_GRACE_MINUTES), 60, &Seen::default(), &Live::default(), &card, 1);
+        let s = step(&mut queue, t(1 + q::WAKE_GRACE_MINUTES), 60, &Seen::default(), &unheard, &card, 1);
         assert!(queue.holder.is_none());
         assert!(s.logs.iter().any(|(id, l)| id == "a" && l.contains("its session was stopped and didn't start within 5 min")), "{:?}", s.logs);
         assert!(s.messages.iter().any(|(id, m)| id == "a" && m.contains("Your turn on the test app ended")));
