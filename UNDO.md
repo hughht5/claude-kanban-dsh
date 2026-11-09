@@ -915,3 +915,13 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: Hugh's move into Human test from `kb` or his own session outside the app never skips it, as his drag doesn't (`dispatch::hughs_own`) | The same revert |
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
+
+## Card #143: the folder-trust question as Yes/No buttons in a card's chat (9 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `session_trust` and `session_trust_answer` (`src-tauri\src\session_cmds.rs`, registered in `main.rs`), `routersession::trust_ask` (the Router's answer uses it too), and their tests | `git -C ~\claude-kanban-dsh revert --no-edit <the card #143 commits>` |
+| The trust box in the card panel's chat (`ui\panel.js` `checkTrust`, `#p-trust`; `ui\panel.css`) | The same revert |
+| The docs (HANDOVER.md, docs\GUIDE.md, this section) | The same revert |
+
+Nothing in the board's data: an answer only adds a log line on the card.

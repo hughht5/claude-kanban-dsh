@@ -896,6 +896,12 @@ pub fn trust_answerable(starting: bool, screen: &str) -> bool {
     starting && trust_question_on(screen)
 }
 
+/// The trust menu to answer now, or None: `trust_menu` while the session is still starting.
+/// The Router and card sessions (card #143) both answer through this.
+pub fn trust_ask(starting: bool, screen: &str) -> Option<TrustMenu> {
+    trust_menu(screen).filter(|_| starting)
+}
+
 /// The trust question, if the Router's screen shows it now: its words, for the chat.
 #[tauri::command]
 pub fn router_trust(app: AppHandle) -> Option<String> {
@@ -911,7 +917,7 @@ pub fn router_trust_answer(app: AppHandle, yes: bool) -> Result<(), String> {
     let live = app.state::<Arc<Sessions>>();
     let w = live.watch_one(KEY).ok_or("the Router isn't running")?;
     let screen = live.screen_text(KEY).ok_or("the Router isn't running")?;
-    let menu = trust_menu(&screen).filter(|_| trust_answerable(w.state == "starting" || !w.ready, &screen)).ok_or("the trust question isn't on the Router's screen now")?;
+    let menu = trust_ask(w.state == "starting" || !w.ready, &screen).ok_or("the trust question isn't on the Router's screen now")?;
     live.input(KEY, &trust_keys(menu, yes))?;
     if let Ok(mut st) = app.state::<Board>().0.lock() {
         let _ = st.add_router_log("session", None, if yes { "Hugh trusted the Router's folder" } else { "Hugh refused the Router's folder: it exits" }, "Hugh (panel)");
