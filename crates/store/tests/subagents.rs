@@ -22,36 +22,69 @@ fn old_card() -> Card {
     Card { id: "c9".into(), number: 9, column: "In progress".into(), order: None, order_col: None, archived: false, fields: patch(json!({ "title": "Old" })), version: 1 }
 }
 
+/// Card #162: a new card keeps no stamped copy of the defaults, so a later change of a default
+/// in Settings reaches it.
 #[test]
-fn a_new_card_gets_the_boards_defaults() {
+fn a_new_card_follows_the_boards_defaults_as_they_change() {
     let (_d, mut s) = board();
     let c = s.create(None, patch(json!({ "title": "T" })), "test").unwrap();
-    assert_eq!(subs(&c), json!({ "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": true }));
-    // Hugh's critic off (as on the live board) is the critic's default for a new card.
+    assert_eq!(subs(&c), Value::Null, "no stamped values");
+    assert!(SUBAGENTS.iter().all(|a| s.subagent_on(&c, a.key)));
+    // Hugh's critic off (as on the live board) holds for it from then on.
     s.set_page_setting(CRITIC_RULE_KEY, "off").unwrap();
+    let c = s.get(&c.id).unwrap();
+    assert!(!s.subagent_on(&c, "critic") && s.subagent_on(&c, "tester"));
     let c2 = s.create(None, patch(json!({ "title": "T2" })), "test").unwrap();
-    assert_eq!(subs(&c2)["critic"], false);
-    assert_eq!(subs(&c2)["tester"], true);
-    // A default changed later doesn't change a card made before it.
-    assert_eq!(subs(&s.get(&c.id).unwrap())["critic"], true);
-    assert!(s.subagent_on(&c, "critic") && !s.subagent_on(&c2, "critic"));
+    assert_eq!(subs(&c2), Value::Null);
+    assert!(!s.subagent_on(&c2, "critic"));
+    s.set_page_setting(CRITIC_RULE_KEY, "on").unwrap();
+    assert!(s.subagent_on(&s.get(&c2.id).unwrap(), "critic"));
     // Through a stack too: a child is made by `create`.
     let lead = s.create(None, patch(json!({ "title": "L" })), "test").unwrap();
     let kid = s.create_in_stack(patch(json!({ "title": "K" })), lead.number, "test").unwrap();
-    assert_eq!(subs(&kid)["critic"], false);
+    assert_eq!(subs(&kid), Value::Null);
 }
 
 #[test]
-fn hughs_choice_on_add_card_wins_for_the_ones_it_names() {
+fn hughs_choice_on_add_card_keeps_only_his_overrides() {
     let (_d, mut s) = board();
     s.set_page_setting(CRITIC_RULE_KEY, "off").unwrap();
-    let c = s.create(None, patch(json!({ "title": "T", "subagents": { "tester": false, "critic": true } })), "Hugh (board)").unwrap();
-    assert_eq!(subs(&c), json!({ "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": false }));
+    // Only what he chose is kept; a null (Default) is no override.
+    let c = s.create(None, patch(json!({ "title": "T", "subagents": { "tester": false, "critic": true, "router": null } })), "Hugh (board)").unwrap();
+    assert_eq!(subs(&c), json!({ "tester": false, "critic": true }));
+    assert!(s.subagent_on(&c, "critic") && !s.subagent_on(&c, "tester") && s.subagent_on(&c, "router"));
+    let none = s.create(None, patch(json!({ "title": "N", "subagents": {} })), "Hugh (board)").unwrap();
+    assert_eq!(subs(&none), Value::Null, "nothing chosen: no field");
     // A bad choice is refused, and no card is made.
-    for bad in [json!({ "card-tester": false }), json!({ "tester": "off" }), json!("tester"), json!(null)] {
+    for bad in [json!({ "card-tester": false }), json!({ "tester": "off" }), json!("tester"), json!(true)] {
         assert!(s.create(None, patch(json!({ "title": "X", "subagents": bad })), "Hugh (board)").is_err(), "{bad}");
     }
-    assert_eq!(s.list(true).unwrap().len(), 1);
+    assert_eq!(s.list(true).unwrap().len(), 2);
+}
+
+/// Card #162: three-way. A key set to null goes back to the default; with no override left the
+/// field goes; null for the whole field clears them all. Each change is a revision.
+#[test]
+fn an_override_goes_back_to_the_default_with_null() {
+    let (_d, mut s) = board();
+    let c = s.create(None, patch(json!({ "title": "T", "subagents": { "critic": false, "tester": true } })), "Hugh (board)").unwrap();
+    let r0 = s.revision_count(&c.id).unwrap();
+    let c = s.update(&c.id, c.version, &patch(json!({ "subagents": { "critic": null } })), "Hugh (board)").unwrap();
+    assert_eq!(subs(&c), json!({ "tester": true }));
+    assert!(s.subagent_on(&c, "critic"), "back to the default (on)");
+    s.set_page_setting(TEST_RULE_KEY, "off").unwrap();
+    assert!(s.subagent_on(&c, "tester"), "an override on stays on whatever the default");
+    let c = s.update(&c.id, c.version, &patch(json!({ "subagents": { "tester": null } })), "Hugh (board)").unwrap();
+    assert_eq!(subs(&c), Value::Null, "no override left: no field");
+    assert!(!s.subagent_on(&c, "tester"), "follows the default (off) now");
+    // Null again changes nothing.
+    let v = c.version;
+    let c = s.update(&c.id, c.version, &patch(json!({ "subagents": { "tester": null } })), "Hugh (board)").unwrap();
+    assert_eq!(c.version, v);
+    let c = s.update(&c.id, c.version, &patch(json!({ "subagents": { "reviewer": false, "router": false } })), "Hugh (board)").unwrap();
+    let c = s.update(&c.id, c.version, &patch(json!({ "subagents": null })), "Hugh (board)").unwrap();
+    assert_eq!(subs(&c), Value::Null, "null for the field: all back to the defaults");
+    assert_eq!(s.revision_count(&c.id).unwrap(), r0 + 4);
 }
 
 #[test]
@@ -59,15 +92,14 @@ fn an_update_changes_the_named_ones_and_is_kept_in_the_revisions() {
     let (_d, mut s) = board();
     let c = s.create(None, patch(json!({ "title": "T" })), "test").unwrap();
     let c = s.update(&c.id, c.version, &patch(json!({ "subagents": { "reviewer": false } })), "Hugh (board)").unwrap();
-    assert_eq!(subs(&c)["reviewer"], false);
-    assert_eq!(subs(&c)["tester"], true);
+    assert_eq!(subs(&c), json!({ "reviewer": false }), "only the override is kept");
     assert!(!s.subagent_on(&c, "reviewer") && s.subagent_on(&c, "card-tester"));
     // The same value again is no change (no new version).
     let v = c.version;
     let c = s.update(&c.id, c.version, &patch(json!({ "subagents": { "reviewer": false } })), "Hugh (board)").unwrap();
     assert_eq!(c.version, v);
-    // Refused: an unknown one, a value that isn't true or false, or none at all.
-    for bad in [json!({ "planner": false }), json!({ "tester": 1 }), json!(null), json!([])] {
+    // Refused: an unknown one, a value that isn't true, false or null, or not an object.
+    for bad in [json!({ "planner": false }), json!({ "tester": 1 }), json!("off"), json!([])] {
         assert!(s.update(&c.id, c.version, &patch(json!({ "subagents": bad })), "Hugh (board)").is_err(), "{bad}");
     }
     assert!(s.revision_count(&c.id).unwrap() >= 2);
@@ -93,7 +125,7 @@ fn a_card_made_before_card_151_follows_the_defaults() {
 }
 
 #[test]
-fn the_six_defaults_are_page_settings_on_by_default() {
+fn the_five_defaults_are_page_settings_on_by_default() {
     let (_d, mut s) = board();
     for key in [ROUTER_RULE_KEY, CRITIC_RULE_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, TEST_RULE_KEY] {
         assert!(PAGE_SETTINGS.contains(&key) && RULE_KEYS.contains(&key), "{key}");

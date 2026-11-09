@@ -488,8 +488,9 @@ fn migration_12_adds_the_index_with_a_backup_and_changes_no_card() {
     let (dir, mut s) = board();
     assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
     // 12 is #109's index; 13 (card #114, {prompts}), 14 (card #119, the Router), 15 (card
-    // #153, the app's own messages) and 16 (card #160, the merge lanes) come after it.
-    assert_eq!(SCHEMA_VERSION, 16);
+    // #153, the app's own messages), 16 (card #160, the merge lanes) and 17 (card #162, the
+    // subagents unstamped, which changes no card that has none stamped) come after it.
+    assert_eq!(SCHEMA_VERSION, 17);
     let a = mk(&mut s, "Backlog");
     let c = mk(&mut s, "Backlog");
     waits(&mut s, &c, &[a.number]).unwrap();

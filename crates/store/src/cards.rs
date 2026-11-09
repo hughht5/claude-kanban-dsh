@@ -41,6 +41,9 @@ pub struct MoveOutcome {
     pub ship: bool,
     /// The move asked for a session to plan it (Hugh dropped it into Planning).
     pub plan: bool,
+    /// A move into Planning from Backlog or Blocked went to In progress instead, because the card
+    /// skips Planning (card #162).
+    pub skipped_planning: bool,
 }
 
 impl Card {
@@ -369,6 +372,12 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
                             }
                         }
                     }
+                    // A skipped Planning (card #162) is said once, on the move that skipped it:
+                    // the card's next move takes the record off, unless it skips again.
+                    if !patch.contains_key("plan") && card.planning_skipped() {
+                        card.fields.remove("plan");
+                        changed.push("plan".into());
+                    }
                     // Each ship gets its own merge (card #100).
                     if c == "Ship it" && !patch.contains_key(MERGE_KEY) && card.fields.remove(MERGE_KEY).is_some() {
                         changed.push(MERGE_KEY.into());
@@ -429,11 +438,27 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
                 }
                 card.archived = a;
             }
-            // Card #151: Hugh's choice of subagents; the keys the patch names change.
+            // Card #151: Hugh's choice of subagents; the keys the patch names change, a null one
+            // back to the default (card #162), and the field goes when no override is left.
             crate::SUBAGENTS_KEY => {
-                let new = crate::subagents::merged(card.fields.get(k), v)?;
-                if card.fields.get(k) != Some(&new) {
-                    card.fields.insert(k.clone(), new);
+                // A null for the whole field puts all six back to the defaults.
+                let new = if v.is_null() { None } else { crate::subagents::merged(card.fields.get(k), v)? };
+                if card.fields.get(k) != new.as_ref() {
+                    match new {
+                        Some(x) => card.fields.insert(k.clone(), x),
+                        None => card.fields.remove(k),
+                    };
+                    changed.push(k.clone());
+                }
+            }
+            // Card #162: skip Planning or Human test: true, false, or null for the default.
+            crate::SKIP_PLANNING_KEY | crate::SKIP_HUMAN_TEST_KEY => {
+                let new = crate::clean_skip(k, v)?;
+                if card.fields.get(k) != new.as_ref() {
+                    match new {
+                        Some(x) => card.fields.insert(k.clone(), x),
+                        None => card.fields.remove(k),
+                    };
                     changed.push(k.clone());
                 }
             }
@@ -790,10 +815,19 @@ impl Store {
                 fields.insert(AUTO_KEY.into(), t);
             }
         }
-        // Card #151: every new card gets its own choice of subagents, from the board's defaults
-        // and whatever Hugh's Add card chose.
-        let chosen = fields.remove(crate::SUBAGENTS_KEY);
-        fields.insert(crate::SUBAGENTS_KEY.into(), crate::subagents::for_new_card(self, chosen.as_ref())?);
+        // Card #151: Hugh's Add card may choose the card's subagents. Only his overrides are kept
+        // (card #162): the rest follow the board's defaults as they are at the time.
+        let chosen = fields.remove(crate::SUBAGENTS_KEY).filter(|v| !v.is_null());
+        if let Some(own) = crate::subagents::for_new_card(chosen.as_ref())? {
+            fields.insert(crate::SUBAGENTS_KEY.into(), own);
+        }
+        for key in [crate::SKIP_PLANNING_KEY, crate::SKIP_HUMAN_TEST_KEY] {
+            if let Some(v) = fields.remove(key) {
+                if let Some(x) = crate::clean_skip(key, &v)? {
+                    fields.insert(key.into(), x);
+                }
+            }
+        }
         if let Some(v) = fields.remove(OUTPUTS_KEY) {
             if let Some(o) = clean_changes_outputs(&v)? {
                 fields.insert(OUTPUTS_KEY.into(), o);
@@ -954,6 +988,7 @@ impl Store {
             How::Auto(_) => AUTO_BY,
             How::Waits(_) => WAIT_BY,
         };
+        let skip_default = self.skip_default(crate::SKIP_PLANNING_RULE_KEY);
         let tx = self.begin()?;
         let mut card = get_tx(&tx, id)?.ok_or_else(|| Error::NotFound(id.to_string()))?;
         if card.version != if_version {
@@ -963,6 +998,11 @@ impl Store {
             return Err(Error::Invalid("an archived card can't be moved; restore it first".into()));
         }
         let from = card.column.clone();
+        // Card #162: a card that skips Planning goes from Backlog or Blocked straight to In
+        // progress, whoever moved it there (Hugh, his Take it to, its waits). Not from a later
+        // column: Hugh's move back into Planning plans it. A stack's child never skips.
+        let skipped = planning_skip(&card, to, skip_default);
+        let to = if skipped.is_some() { "In progress" } else { to };
         if from == to {
             return Err(Error::Invalid(format!("card is already in {to}")));
         }
@@ -1003,6 +1043,17 @@ impl Store {
             patch.insert("plan".into(), plan);
             texts.push("Plan requested");
         }
+        // No plan request: the plan record says it was skipped, and why, for the messages.
+        if let Some(w) = skipped {
+            let mut plan = json!({ "state": crate::PLAN_SKIPPED, "at": at, "whose": w.word(), "from": from });
+            if auto.is_some() {
+                plan["auto"] = json!(true);
+            }
+            if let How::Waits(ns) = how {
+                plan[WAITED_KEY] = json!(ns);
+            }
+            patch.insert("plan".into(), plan);
+        }
         if from == "Planning" && card.state("plan") == Some("requested") {
             patch.insert("planRequestedAt".into(), Value::Null);
             patch.insert("plan".into(), json!({ "state": "cancelled", "cancelledAt": at }));
@@ -1028,11 +1079,14 @@ impl Store {
             How::Waits(ns) => format!("The app moved it from {from} to {to} for Hugh: the cards it waited on are ready ({})", waits::nums(ns)),
         };
         log_tx(&tx, id, &at, &line, Some(by))?;
+        if let Some(w) = skipped {
+            log_tx(&tx, id, &at, &skip_planning_line(w), Some(by))?;
+        }
         if !texts.is_empty() {
             log_tx(&tx, id, &at, &texts.join("; "), Some(by))?;
         }
         tx.commit()?;
-        Ok(MoveOutcome { card, ship: into_ship, plan: into_plan })
+        Ok(MoveOutcome { card, ship: into_ship, plan: into_plan, skipped_planning: skipped.is_some() })
     }
 
     /// Archives (`on`) or restores a card. The row and its log stay.
@@ -1081,6 +1135,25 @@ enum How<'a> {
     Hugh,
     Auto(&'a str),
     Waits(&'a [i64]),
+}
+
+/// Whether a move of `card` to `to` skips Planning (card #162), and whose choice that is: a move
+/// into Planning from Backlog or Blocked, on a card that skips it (its own `skipPlanning`, else
+/// the board's default, `default_on`). A stack's child never skips: its lead's flow plans it.
+pub fn planning_skip(card: &Card, to: &str, default_on: bool) -> Option<crate::Whose> {
+    if to != "Planning" || !matches!(card.column.as_str(), "Backlog" | "Blocked") || card.stack_of().is_some() {
+        return None;
+    }
+    match card.skip_choice(crate::SKIP_PLANNING_KEY) {
+        Some(true) => Some(crate::Whose::Card),
+        Some(false) => None,
+        None => default_on.then_some(crate::Whose::Default),
+    }
+}
+
+/// The log line for a move into Planning that went to In progress instead (card #162).
+pub fn skip_planning_line(w: crate::Whose) -> String {
+    format!("Skipped Planning: Hugh's choice ({}). It went to In progress instead, with no plan or plan critique", w.whose())
 }
 
 pub(crate) fn core_field(k: &str) -> bool {

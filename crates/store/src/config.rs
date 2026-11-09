@@ -97,6 +97,9 @@ pub const PAGE_SETTINGS: &[&str] = &[
     crate::router::ROUTER_MODEL_KEY,
     crate::router::ROUTER_EFFORT_KEY,
     crate::router::ROUTER_MAY_START_KEY,
+    // Card #162: a card's flow defaults, skip Planning and skip Human test (off unless turned on).
+    crate::SKIP_PLANNING_RULE_KEY,
+    crate::SKIP_HUMAN_TEST_RULE_KEY,
     // The highest test app the board gives a card (card #147).
     crate::testapp::SLOTS_KEY,
     // The private folder: the owner's own prompts and repo list.
@@ -604,6 +607,10 @@ impl Store {
                 v @ ("on" | "off") => v.to_string(),
                 _ => return Err(Error::Invalid("\"Router may start cards\" is \"on\" or \"off\"".into())),
             },
+            crate::SKIP_PLANNING_RULE_KEY | crate::SKIP_HUMAN_TEST_RULE_KEY => match value.trim() {
+                v @ ("on" | "off") => v.to_string(),
+                _ => return Err(Error::Invalid(format!("the setting {key} is \"on\" or \"off\""))),
+            },
             PRIVATE_DIR_KEY => check_private_dir(value)?,
             crate::testapp::SLOTS_KEY => {
                 let n: u32 = value
@@ -662,6 +669,7 @@ pub fn page_default(key: &str) -> Result<String> {
         crate::router::ROUTER_MODEL_KEY => crate::router::ROUTER_MODEL_DEFAULT.to_string(),
         crate::router::ROUTER_EFFORT_KEY => crate::router::ROUTER_EFFORT_DEFAULT.to_string(),
         crate::router::ROUTER_MAY_START_KEY => "off".to_string(),
+        crate::SKIP_PLANNING_RULE_KEY | crate::SKIP_HUMAN_TEST_RULE_KEY => "off".to_string(),
         PRIVATE_DIR_KEY => String::new(),
         _ => unreachable!(),
     })

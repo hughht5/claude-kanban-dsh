@@ -280,13 +280,15 @@ fn a_ready_stack_waits_for_the_leads_bug_to_be_proved() {
     pass(&mut s, lead2);
     let c = s.get_by_number(lead2).unwrap();
     s.update(&c.id, c.version, &patch(json!({ "repro": { "state": "needed" } })), "the app").unwrap();
-    // The board's default off doesn't change a lead made before it (card #151) ...
+    // The lead's own choice on beats the board's default off (card #162) ...
+    let c = s.get_by_number(lead2).unwrap();
+    s.update(&c.id, c.version, &patch(json!({ "subagents": { "reproducer": true } })), "Hugh (board)").unwrap();
     s.set_page_setting("sessions.repro_before_human_test", "off").unwrap();
     assert!(mv(&mut s, b, "Human test").is_empty());
     assert_eq!(col(&s, lead2), "In progress");
-    // ... the lead's own choice does.
+    // ... and back to the default (off), the stack goes on.
     let c = s.get_by_number(lead2).unwrap();
-    s.update(&c.id, c.version, &patch(json!({ "subagents": { "reproducer": false } })), "Hugh (board)").unwrap();
+    s.update(&c.id, c.version,&patch(json!({ "subagents": { "reproducer": null } })), "Hugh (board)").unwrap();
     assert_eq!(s.stack_recheck(lead2, "reproducer off", "t").unwrap().len(), 1);
     assert_eq!(col(&s, lead2), "Human test");
 }

@@ -29,6 +29,8 @@ mod stacks;
 mod start_queue;
 // Hugh's per-card choice of the app's subagents (card #151).
 mod subagents;
+// A card's flow options: skip Planning, skip Human test (card #162).
+mod flow;
 mod templates;
 pub mod testapp;
 // Time in each column (card #111).
@@ -46,6 +48,7 @@ pub use config::PRIVATE_DIR_KEY;
 pub use channel::{app_name, app_name_for, channel, data_dir_for, devtools_port_for, exe_name_for, home_var, identifier_for, is_test, kb_data_dir, DATA_DIR_ENV, label_for, live_board, product_name_for, quit_event, quit_event_for, slot, slot_of, LIVE_DEVTOOLS_PORT};
 pub use cards::{clean_auto_to, clean_labels, routed_small, Card, ONE_FAILED_KEY, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, CRITIQUE_KEY, MAX_LABELS, MAX_LABEL_LEN, MERGE_KEY, repro_open, REPRO_KEY, RESET_ON_IN_PROGRESS, REVIEW_KEY, ROUTE_KEY, SMALL_BY, SMALL_KEY, SMALL_OPT_OUT_KEY, SMALL_WAITING, SMALL_WENT_ON, TEST_KEY};
 pub use cards::{CHECK_SIZE_KEY, RESET_ON_HUMAN_TEST};
+pub use cards::{planning_skip, skip_planning_line};
 pub use cards::{clean_changes_outputs, output_path_problem, OUTPUTS_KEY, SAVED_KEY};
 pub use columns::{ColumnCfg, Pending};
 pub use config::{default_profiles, page_default, profile_for, Profile, CRITIC_RULE_KEY, EFFORTS, MAX_RUNNING_DEFAULT, MAX_RUNNING_KEY, IDLE_PAUSE_DEFAULT, IDLE_PAUSE_KEY, PAGE_SETTINGS, PROFILES_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, RULE_KEYS, SMALL_GO_ON_KEY, STUCK_CHECK_DEFAULT, STUCK_CHECK_KEY, TEST_RULE_KEY, check_small_repos, SettingChange, SmallRepo, SMALL_REPOS_KEY};
@@ -74,7 +77,8 @@ pub use pair::{failed_at as verdict_failed_at, hhmm, stale_passes, stamp_times, 
 pub use sessions::{SessionRow, MID_TURN, RESUME_OFFER_KEY};
 pub use ships::{ship_goes_first, ship_lane, ship_started, QUEUED as SHIP_QUEUED};
 pub use stacks::{children_reviewed as stack_children_reviewed, lead_missing, lead_missing_in_stack, merged as stack_merged, own_build as stack_own_build, OWN_BUILD_KEY as STACK_OWN_BUILD_KEY, stack_ready, stack_stage, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_HELD_KEY, STACK_RULE_KEY};
-pub use subagents::{clean_subagents, subagent, Subagent, ROUTER_RULE_KEY, SUBAGENTS, SUBAGENTS_KEY};
+pub use subagents::{clean_subagents, subagent, Subagent, MIGRATION_BY as UNSTAMP_BY, ROUTER_RULE_KEY, SUBAGENTS, SUBAGENTS_KEY};
+pub use flow::{clean_skip, Arrival, Whose, FLOW_FIELDS, PLAN_SKIPPED, SKIPS, SKIP_HUMAN_TEST_KEY, SKIP_HUMAN_TEST_RULE_KEY, SKIP_PLANNING_KEY, SKIP_PLANNING_RULE_KEY};
 pub use start_queue::{StartQueue, WaitingStart, DEFAULT_CAP as DEFAULT_SESSION_CAP, MAX_CAP as MAX_SESSION_CAP};
 pub use templates::{Template, TemplateInput};
 // Time in each column (card #111).
@@ -95,7 +99,7 @@ pub const COLUMNS: [&str; 8] = [
     "Done",
 ];
 
-const MIGRATIONS: [&str; 16] = [
+const MIGRATIONS: [&str; 17] = [
     include_str!("schema.sql"),
     include_str!("schema2.sql"),
     include_str!("schema3.sql"),
@@ -116,7 +120,14 @@ const MIGRATIONS: [&str; 16] = [
     include_str!("schema15.sql"),
     // Card #160: the merge lanes' own sessions.
     include_str!("schema16.sql"),
+    // Card #162: a card's subagents hold only Hugh's overrides (its work is in Rust: see
+    // `UNSTAMP_MIGRATION`).
+    include_str!("schema17.sql"),
 ];
+
+/// The migration whose work is done in Rust after its SQL, in the same transaction (card #162):
+/// stamped subagent values equal to the board's default come off the cards.
+const UNSTAMP_MIGRATION: usize = 17;
 
 /// The schema version this build brings a board up to: the number of migrations. A board at a
 /// higher version (from a newer build) is opened as it is.
@@ -188,6 +199,9 @@ impl Store {
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
             let tx = self.conn.transaction()?;
             tx.execute_batch(sql)?;
+            if i + 1 == UNSTAMP_MIGRATION {
+                subagents::unstamp_defaults(&tx)?;
+            }
             tx.pragma_update(None, "user_version", (i + 1) as i64)?;
             tx.commit()?;
         }
