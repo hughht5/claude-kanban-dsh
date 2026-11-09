@@ -157,3 +157,21 @@ test("two presses more than 400ms apart do not reset", () => {
   b.fireWindow("pointerup", pe("pointerup"));
   assert.ok(b.store.get("wb.colWeights"));
 });
+
+const pileCard = { id: "c110", number: 110, title: "Search sessions", column: "Deploy complete", version: 21, archiveAsk: { reason: "its work is live", at: "2026-11-08T10:00:00Z", by: "the router", column: "Deploy complete" } };
+const isPile = (c) => c.className.includes("c-DonePile");
+
+test("the Done pile column gets --w and an edge too, so Archive can be resized", () => {
+  const b = boot();
+  b.show([pileCard]);
+  const cs = cols(b);
+  assert.ok(cs.some(isPile), "the pile is drawn");
+  for (const c of cs) assert.notEqual(c.style.getPropertyValue("--w"), "", c.dataset.col);
+  assert.equal(grips(b).length, cs.length - 1);
+  assert.equal(cs[cs.length - 1].dataset.col, "Archived");
+  assert.equal(cs[cs.length - 1].querySelector(".colgrip"), null);
+  assert.ok(cs[cs.length - 2].querySelector(".colgrip"), "the pile has an edge");
+  b.store.set("wb.colWeights", JSON.stringify({ "Done pile": 2.5 }));
+  b.show([pileCard]);
+  close(wOf(cols(b).find(isPile)), 2.5);
+});
