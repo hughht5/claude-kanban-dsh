@@ -50,8 +50,10 @@ function termInput(L,d){
 function termOut(L,p){
   if(L.disposed)return;
   if(L.pending){L.pending.push(p);return}
-  if(L.attaching){L.again=true;return} // its run isn't known yet: look again once this attach ends
-  if(L.run==null||(p.run&&p.run!==L.run)){termAttach(L);return} // a new run: replay it
+  // Not this terminal's run (none yet, or a new one): replay it. If an attach is already under
+  // way it looks again when it ends; the chunk is in the snapshot that replay takes.
+  if(L.run==null||(p.run&&p.run!==L.run)){if(L.attaching)L.again=true;else termAttach(L);return}
+  // The same run: draw it, even while a refresh checks the run (the end count stops doubles).
   if(p.end!=null&&p.end<=L.end)return;
   if(p.end!=null)L.end=p.end;
   L.term.write(termB64(p.data));

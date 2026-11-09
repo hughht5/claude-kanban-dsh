@@ -66,6 +66,18 @@ test("live output the snapshot already holds is skipped; what came after is draw
   assert.equal(term.text, "abcd");
 });
 
+test("output during a refresh's run check on an attached terminal is drawn, not dropped", async () => {
+  const { ctx, term, L, pty, app } = boot({ ring: "abc", end: 3 });
+  await ctx.termAttach(L);
+  const p = ctx.termAttach(L); // refreshInfo on a hook, mid-stream
+  pty("d", 4);
+  app.ring = "abcd"; app.end = 4;
+  await p; await flush();
+  pty("e", 5);
+  assert.equal(term.text, "abcde");
+  assert.equal(term.resets, 1);
+});
+
 test("output that arrives while the snapshot loads waits, and nothing is lost or doubled", async () => {
   const { ctx, term, L, pty, app } = boot({ ring: "ab", end: 2 });
   const p = ctx.termAttach(L);
