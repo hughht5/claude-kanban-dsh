@@ -139,7 +139,8 @@ pub(crate) fn merged(old: Option<&Value>, patch: &Value) -> Result<Option<Value>
 /// from the defaults of the day, so a later change of a default never reached it. On each card
 /// not archived, a stamped value equal to the board's default now goes (it follows the default
 /// from here on); one that differs stays as Hugh's override. Each card changed is an ordinary
-/// write with its revision, by `MIGRATION_BY`. Running it again changes nothing.
+/// write of only `subagents` (`cards::write_fields_tx`, none of `write_tx`'s rules), with its
+/// revision, by `MIGRATION_BY`. Running it again changes nothing.
 pub(crate) fn unstamp_defaults(tx: &rusqlite::Transaction) -> Result<usize> {
     let rule_on = |key: &str| -> Result<bool> {
         let v: Option<String> = rusqlite::OptionalExtension::optional(tx.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)))?;
@@ -163,14 +164,17 @@ pub(crate) fn unstamp_defaults(tx: &rusqlite::Transaction) -> Result<usize> {
         if same.is_empty() {
             continue;
         }
-        let mut patch = crate::Patch::new();
-        patch.insert(SUBAGENTS_KEY.into(), Value::Object(same));
-        let keys = crate::cards::apply(&mut card, &patch)?;
-        if keys.is_empty() {
+        // Only the subagents change: no column rule, no archive of a card in Done (card #162).
+        let new = merged(card.fields.get(SUBAGENTS_KEY), &Value::Object(same))?;
+        if card.fields.get(SUBAGENTS_KEY) == new.as_ref() {
             continue;
         }
+        match new {
+            Some(x) => card.fields.insert(SUBAGENTS_KEY.into(), x),
+            None => card.fields.remove(SUBAGENTS_KEY),
+        };
         let version = card.version;
-        crate::cards::write_tx(tx, &mut card, version, &keys, MIGRATION_BY)?;
+        crate::cards::write_fields_tx(tx, &mut card, version, &[SUBAGENTS_KEY.to_string()], MIGRATION_BY)?;
         changed += 1;
     }
     Ok(changed)

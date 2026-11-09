@@ -715,6 +715,32 @@ pub(crate) fn write_tx(tx: &Transaction, card: &mut Card, expected: i64, changed
     Ok(())
 }
 
+/// Migration 17's write (card #162): `card`'s fields as they are, over the row at `expected`
+/// version, with `updatedAt`, `updatedBy` and its revision as `write_tx` records them, and none
+/// of `write_tx`'s rules (no archive of a card in Done, no waits check, no archive-ask or check
+/// marks touched). So a migration changes only what it set on the card.
+pub(crate) fn write_fields_tx(tx: &Transaction, card: &mut Card, expected: i64, changed: &[String], by: &str) -> Result<()> {
+    let at = now();
+    card.fields.insert("updatedAt".into(), json!(at));
+    card.fields.insert("updatedBy".into(), json!(by));
+    let n = tx.execute(
+        "UPDATE cards SET fields = ?1, updated_at = ?2, version = version + 1 WHERE id = ?3 AND version = ?4",
+        params![serde_json::to_string(&card.fields)?, at, card.id, expected],
+    )?;
+    if n != 1 {
+        let current = get_tx(tx, &card.id)?.map(|c| c.version).unwrap_or(0);
+        return Err(Error::Conflict { id: card.id.clone(), yours: expected, current });
+    }
+    card.version = expected + 1;
+    let doc = card.to_document(&[]);
+    let values: Map<String, Value> = changed.iter().map(|k| (k.clone(), doc.get(k).cloned().unwrap_or(Value::Null))).collect();
+    tx.execute(
+        "INSERT INTO card_revisions (card_id, version, at, by, changed) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![card.id, card.version, at, by, serde_json::to_string(&values)?],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn log_tx(tx: &rusqlite::Connection, id: &str, at: &str, text: &str, by: Option<&str>) -> Result<()> {
     tx.execute(
         "INSERT INTO card_log (card_id, at, text, by) VALUES (?1, ?2, ?3, ?4)",

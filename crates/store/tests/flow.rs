@@ -205,6 +205,37 @@ fn migration_17_unstamps_the_defaults_and_keeps_the_overrides() {
     assert_eq!(s.get(&b).unwrap().fields[SUBAGENTS_KEY], json!({ "tester": false }));
 }
 
+/// Migration 17 changes only `subagents` (card #162): a card left in Done unarchived (an older
+/// build's, or an import's) stays unarchived and in Done, and every other field is as it was.
+#[test]
+fn migration_17_changes_nothing_but_the_subagents() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("board.db");
+    let (a, _b, _z) = stamped_board(&path);
+    let c = Connection::open(&path).unwrap();
+    c.execute("UPDATE cards SET col = 'Done' WHERE id = ?1", [&a]).unwrap();
+    let before: Value = c.query_row("SELECT fields FROM cards WHERE id = ?1", [&a], |r| r.get::<_, String>(0)).map(|t| serde_json::from_str(&t).unwrap()).unwrap();
+    drop(c);
+    let s = Store::open(&path).unwrap();
+    let after = s.get(&a).unwrap();
+    assert_eq!(after.column, "Done");
+    assert!(!after.archived, "not archived by the migration");
+    assert!(after.fields.get(SUBAGENTS_KEY).is_none(), "the stamped defaults went");
+    let strip = |v: &serde_json::Map<String, Value>| {
+        let mut m = v.clone();
+        for k in [SUBAGENTS_KEY, "updatedAt", "updatedBy"] {
+            m.remove(k);
+        }
+        m
+    };
+    assert_eq!(strip(&after.fields), strip(before.as_object().unwrap()), "nothing else changed");
+    assert!(!log_has(&s, &after, "Archived"), "no archive line");
+    // Its revision names only the subagents.
+    let c = Connection::open(&path).unwrap();
+    let changed: String = c.query_row("SELECT changed FROM card_revisions WHERE card_id = ?1 ORDER BY seq DESC LIMIT 1", [&a], |r| r.get(0)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&changed).unwrap(), json!({ "subagents": null }));
+}
+
 /// An older build (one migration short) opens a board at version 17 as it is: a card with no
 /// subagents field reads them from Settings, as #151's cards made before it did.
 #[test]
