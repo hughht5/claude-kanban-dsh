@@ -87,6 +87,16 @@ function Runs-From([string]$Path) {
 function Run-Install([string]$Why) {
     Write-Host "--- install.ps1 -Channel $Channel ($Why)"
     & powershell -NoProfile -ExecutionPolicy Bypass -File $Install -Channel $Channel
+    if ($LASTEXITCODE -eq 0) { return }
+    # The test app can take longer to quit than install.ps1 allows (60 s for its quit event,
+    # then 15 s for a stop), and the install throws "still running" though the app is going.
+    # Once it has gone, one more try is the same install; anything else is a real failure.
+    $first = $LASTEXITCODE
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((App-Procs).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
+    if ((App-Procs).Count -gt 0) { throw "install.ps1 failed (exit $first) during: $Why, and the app is still running" }
+    Write-Host "--- install.ps1 exited $first, but the app has quit since: installing again ($Why)"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $Install -Channel $Channel
     if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed (exit $LASTEXITCODE) during: $Why" }
 }
 
