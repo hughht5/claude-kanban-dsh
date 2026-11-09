@@ -12,6 +12,7 @@ pub(crate) const UPDATABLE: &[&str] = &[
     "title", "summary", "nextStep", "blockedReason", "repo", "issue", "pr", "branch", "worktreePath",
     "devStack", "persona", "logins", "links", "dryRun", "choices", "labels",
     "changesOutputs",
+    "proof", // card #125: the screenshots and reports that prove it, shown in Human test
     "doneWhen", // card #105: one line, the card is done when ...
     "doneWhenChecks", // card #105: its acceptance checks
     "blockedBy",
@@ -59,7 +60,7 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card } } },
         { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, blockedBy and waitedOn, and for stacks: stack, stackOf, passed).",
           "inputSchema": { "type": "object", "properties": { "column": { "type": "string" }, "include_archived": { "type": "boolean" } } } },
-        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning and skipHumanTest (true, false, or null for the default in Settings) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
+        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} proof is a list of {{path, label}} by full Windows path: the screenshots and reports that prove the change, shown in Human test. blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning and skipHumanTest (true, false, or null for the default in Settings) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
         { "name": "kanban_add_log", "description": "Add a line to a card's log.",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },

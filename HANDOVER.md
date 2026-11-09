@@ -2335,3 +2335,26 @@ UI only. With both open, the Agents drawer floats to the left of the Router pane
 
 The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate job's step a) counts a test or review as met when that subagent is off for the card (`subagents.tester` / `subagents.reviewer` false in `kanban_get_card`), as the app's gates do. Before, a stack child with the reviewer off (the board's default since card #162) could never be merged. The lead's merge brief (`stackrun.rs`) says "(or has them switched off)".
 
+
+## Proof in Human test (9 Nov 2026, card #125, branch `dsh-125`)
+
+- **Store:** `proof` (`PROOF_KEY`, `clean_proof` in `crates/store/src/cards.rs`) shares
+  `clean_path_list` with `changesOutputs`; allowed in `tools.rs` UPDATABLE. Tests:
+  `crates/store/tests/proof_field.rs`.
+- **App:** `src-tauri/src/proof.rs`. `find_in_text` (prose lines only: fenced and indented code
+  blocks, code spans, and Markdown link and image targets are skipped; a bare sibling name takes
+  the nearest full path's folder on its line and must exist), `proof_items` (the `proof` field,
+  then the hand-over's; states ok, missing, refused, dup), `check_read` (resolved paths; home or
+  temp; no dot folder bar `.claude\worktrees`; `platform::in_settings_folder`), `decode_doc` (BOM,
+  whole-character cut, NUL check after decoding, cut at whitespace, then `search::mask`), and the
+  commands `proof_list`, `proof_read`, `proof_open` (each reads the card under the lock, then the
+  disk). A dup is an image whose path or bytes match a strip shot (latest evidence run, the
+  reproducer's before and after).
+- **UI:** `ui/proof.js` (+ `proof.css`), loaded after review.js. review.js calls
+  `proofStripFigs`, `proofSectionHtml`, `proofSteps` (via `htStepsHtml`) and `proofFill` from
+  `htBox`. Kept per card while the panel shows it: the items (asked again when the card's version
+  changes), picture data URLs and drawn reports. Proof pictures never go through `image_read`
+  (no `data-local`). `docHtml` sanitises with an allow-list and strips non-http hrefs. panel.js:
+  `shotName`, so tooltips, failures and the viewer's caption show file names.
+- **Tests:** proof.rs's own (11), `tools/ui-tests/proof.test.mjs` (chips, code, links, the kept
+  state). `docHtml` needs a real DOM, so it is checked in the test app over CDP.

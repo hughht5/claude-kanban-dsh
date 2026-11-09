@@ -35,7 +35,9 @@ const shotCache=new Map(); // key -> data URL, or a Promise while it loads
 const SHOT_BYTES=150*1024*1024;
 let shotBytes=0;
 const shotKey=(path,at)=>path+"|"+(at||"");
-function shotImg(path,at){return`<img class="shot" data-local="${esc(path)}" data-at="${esc(at||"")}" alt="${esc(path.split(/[\\/]/).pop())}" title="${esc(path)}">`}
+// A picture's name for its tooltip and the viewer's caption: the file name, never the full path (card #125).
+const shotName=p=>String(p||"").split(/[\\/]/).filter(Boolean).pop()||"";
+function shotImg(path,at){return`<img class="shot" data-local="${esc(path)}" data-at="${esc(at||"")}" alt="${esc(shotName(path))}" title="${esc(shotName(path))}">`}
 function loadShot(path,at){
   const k=shotKey(path,at);
   if(shotCache.has(k))return Promise.resolve(shotCache.get(k));
@@ -53,7 +55,7 @@ function showShots(box){
     if(img.closest("details:not([open])"))return;
     const path=img.dataset.local,got=shotCache.get(shotKey(path,img.dataset.at));
     if(typeof got==="string"){img.src=got;return}
-    loadShot(path,img.dataset.at).then(u=>{img.src=u},err=>{img.classList.add("gone");img.alt=`Can't show ${path}: ${errText(err)}`});
+    loadShot(path,img.dataset.at).then(u=>{img.src=u},err=>{img.classList.add("gone");img.alt=`Can't show ${shotName(path)}: ${errText(err)}`});
   });
 }
 // A user message's "[Attached: <path>]" / "[Image: <path>]" lines, when the path is an image.
@@ -65,7 +67,8 @@ function attachedImages(text){
 // Clicking a screenshot shows it full size over the panel; a click or Esc closes it.
 function openShot(img){
   const v=document.createElement("div");v.className="shotview";v.setAttribute("role","dialog");v.setAttribute("aria-label","Screenshot");v.tabIndex=-1;
-  v.innerHTML=`<img alt="${esc(img.alt||"")}"><div class="cap">${esc(img.dataset.local||"")}</div>`;v.querySelector("img").src=img.src;
+  // The caption is the picture's name (a proof label, else its file name), never its path (card #125).
+  v.innerHTML=`<img alt="${esc(img.alt||"")}"><div class="cap">${esc(img.dataset.cap||shotName(img.dataset.local)||img.alt||"")}</div>`;v.querySelector("img").src=img.src;
   const was=document.activeElement,close=()=>{v.remove();if(was&&was.isConnected&&was!==document.body)was.focus({preventScroll:true})};
   v.onclick=close;v.addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();e.stopPropagation();close()}});
   // In a modal dialog (the stack overlay, card #116) the view goes inside it, or it would be behind.

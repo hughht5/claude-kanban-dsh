@@ -351,11 +351,20 @@ function htBoxHtml(c){
     const who=ch.key==="test"?"Card-tester":ch.key==="review"?"Reviewer":ch.row;
     const v=t.state==="needed"?"Not run yet":Object.hasOwn(CHECK_LABEL,t.state)?CHECK_LABEL[t.state]:t.state;
     return`<dt>${esc(who)}</dt><dd><span class="ht-v test-${esc(t.state)}">${esc(v)}</span>${at?` · <span title="${esc(t.at)}">${esc(ago(at))}</span>`:""}${t.detail?`<br>${safe(t.detail)}`:""}</dd>`}).join("");
-  const steps=c.nextStep?`<div class="ht-steps">${stkMd(c.nextStep)}</div>`:`<p class="note">No hand-over steps on this card yet.</p>`;
+  const steps=htStepsHtml(c);
   // typeof on the names themselves, so a const or a function from #101 or #108 both count.
   const part=f=>{try{return f?f(c)||"":""}catch(e){return""}};
   const ev=part(typeof evidenceHtml==="function"?evidenceHtml:null),ch=part(typeof changesHtml==="function"?changesHtml:null);
-  return`<div class="shipbox htbox"><h3>Human test</h3>${rows?`<dl>${rows}</dl>`:""}<h4>To try</h4>${steps}${ev}${ch}</div>`;
+  const pf=part(typeof proofSectionHtml==="function"?x=>proofSectionHtml(x,true):null);
+  return`<div class="shipbox htbox"><h3>Human test</h3>${rows?`<dl>${rows}</dl>`:""}<h4>To try</h4>${steps}${ev}${pf}${ch}</div>`;
+}
+// The hand-over steps (card #125): through proof.js, so each path shows as its file name (a chip
+// that shows the picture or report); stkMd alone when proof.js isn't loaded.
+function htStepsHtml(c){
+  if(!c.nextStep)return`<p class="note">No hand-over steps on this card yet.</p>`;
+  let html="";
+  try{html=typeof proofSteps==="function"?proofSteps(c):stkMd(c.nextStep)}catch(e){html=stkMd(c.nextStep)}
+  return`<div class="ht-steps">${html}</div>`;
 }
 // The review view's box (card #120): before and after shots side by side, one verdict table,
 // then (review-mode.css orders them) done-when.js's checks and the hand-over steps. Its parts sit
@@ -379,9 +388,12 @@ function rvFigures(c){
   return figs;
 }
 function rvShotsHtml(c){
-  const figs=rvFigures(c);
-  if(!figs.length||typeof shotImg!=="function")return`<p class="rv-noshots">No shots</p>`;
-  return`<div class="rv-ev${figs.length===1?" one":""}">${figs.map(f=>`<figure><figcaption>${esc(f.cap)}</figcaption><div class="rv-shot">${shotImg(f.path,f.at)}</div>${f.note?`<p class="rv-note">${safe(f.note)}</p>`:""}</figure>`).join("")}</div>`;
+  const figs=typeof shotImg==="function"?rvFigures(c):[];
+  // The card's proof pictures (card #125) follow the agents' shots; proof.js loads them itself.
+  let pf=[];try{pf=typeof proofStripFigs==="function"?proofStripFigs(c):[]}catch(e){pf=[]}
+  if(!figs.length&&!pf.length)return`<p class="rv-noshots">No shots</p>`;
+  const n=figs.length+pf.length;
+  return`<div class="rv-ev${n===1?" one":""}">${figs.map(f=>`<figure><figcaption>${esc(f.cap)}</figcaption><div class="rv-shot">${shotImg(f.path,f.at)}</div>${f.note?`<p class="rv-note">${safe(f.note)}</p>`:""}</figure>`).join("")}${pf.join("")}</div>`;
 }
 function rvVerdictsHtml(c){
   const rows=RV_ROWS.map(([k,who])=>{const t=checkOf(c,k);if(!t)return"";const at=Date.parse(t.at||"");
@@ -390,8 +402,9 @@ function rvVerdictsHtml(c){
   return rows?`<table class="rv-verdict"><caption class="rv-sr">What the agents found</caption><tbody>${rows}</tbody></table>`:"";
 }
 function rvBoxHtml(c){
-  const steps=c.nextStep?`<div class="ht-steps">${stkMd(c.nextStep)}</div>`:`<p class="note">No hand-over steps on this card yet.</p>`;
-  return`<div class="htbox rv-box"><div class="rv-shots">${rvShotsHtml(c)}</div>${rvVerdictsHtml(c)}<details class="rv-try"${rvTryOpen?" open":""}><summary>To try</summary>${steps}</details></div>`;
+  const steps=htStepsHtml(c);
+  let pf="";try{pf=typeof proofSectionHtml==="function"?proofSectionHtml(c,false):""}catch(e){pf=""}
+  return`<div class="htbox rv-box"><div class="rv-shots">${rvShotsHtml(c)}</div>${pf}${rvVerdictsHtml(c)}<details class="rv-try"${rvTryOpen?" open":""}><summary>To try</summary>${steps}</details></div>`;
 }
 document.addEventListener("click",e=>{const s=e.target.closest(".rv-ev img.shot[src]");if(s&&!document.querySelector(".shotview")){e.preventDefault();openShot(s)}});
 function htBox(){
@@ -404,6 +417,7 @@ function htBox(){
   else{const at=d.querySelector(":scope > .shipbox, :scope > label.f");at?at.before(box):d.append(box)}
   showShots(box);
   if(typeof showEvidence==="function")try{showEvidence(box)}catch(e){}
+  if(typeof proofFill==="function")try{proofFill(box)}catch(e){}
 }
 document.addEventListener("click",e=>{const s=e.target.closest(".htbox .ht-steps img.shot[src]");if(s){e.preventDefault();openShot(s)}});
 

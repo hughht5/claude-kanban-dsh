@@ -34,6 +34,9 @@
 //!   is checked by its pid and start time (Windows) or the file's presence is enough (macOS).
 //! - `install_command(channel)` (card #147): the command a card session runs to install its
 //!   build into a test app.
+//! - `in_settings_folder(home, path)` (card #125): the system's settings folders a card's proof
+//!   never reads (AppData outside its Temp on Windows, ~/Library on macOS), and `plain_path(p)`, a
+//!   resolved path without Windows' `\\?\` prefix.
 
 #[cfg(windows)]
 mod windows;

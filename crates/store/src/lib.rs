@@ -49,7 +49,7 @@ pub use channel::{app_name, app_name_for, channel, data_dir_for, devtools_port_f
 pub use cards::{clean_auto_to, clean_labels, routed_small, Card, ONE_FAILED_KEY, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, CRITIQUE_KEY, MAX_LABELS, MAX_LABEL_LEN, MERGE_KEY, repro_open, REPRO_KEY, RESET_ON_IN_PROGRESS, REVIEW_KEY, ROUTE_KEY, SMALL_BY, SMALL_KEY, SMALL_OPT_OUT_KEY, SMALL_WAITING, SMALL_WENT_ON, TEST_KEY};
 pub use cards::{CHECK_SIZE_KEY, RESET_ON_HUMAN_TEST};
 pub use cards::{planning_skip, skip_planning_line};
-pub use cards::{clean_changes_outputs, output_path_problem, OUTPUTS_KEY, SAVED_KEY};
+pub use cards::{clean_changes_outputs, clean_proof, output_path_problem, OUTPUTS_KEY, PROOF_KEY, SAVED_KEY};
 pub use columns::{ColumnCfg, Pending};
 pub use config::{default_profiles, page_default, profile_for, Profile, CRITIC_RULE_KEY, EFFORTS, MAX_RUNNING_DEFAULT, MAX_RUNNING_KEY, IDLE_PAUSE_DEFAULT, IDLE_PAUSE_KEY, PAGE_SETTINGS, PROFILES_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, RULE_KEYS, SMALL_GO_ON_KEY, STUCK_CHECK_DEFAULT, STUCK_CHECK_KEY, TEST_RULE_KEY, check_small_repos, SettingChange, SmallRepo, SMALL_REPOS_KEY};
 pub use evidence::{add_run, has_tested_evidence, EVIDENCE_KEY};

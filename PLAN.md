@@ -81,6 +81,8 @@ Settled by the manager's review on 3 Nov 2026; 11 to 13 by Hugh on 5 Nov 2026 (c
 | 32 | Who sets a card's flow (card #162) | Only Hugh: the page, Add card, and his own sessions outside the app and `kb` (calls with no card session). A card's session and the Router are refused. A default changed in Settings is told to the following cards' sessions where it matters. |
 | 33 | The Router out of Backlog (card #174; Hugh: "clear every DSH card", then "ur meant to work this out not me") | With "Router may start cards" on, the Router may move a card from Backlog to Planning or In progress; the move starts its session as Hugh's drag does (skip Planning applies). Off, both are refused. Backlog to any other column, and everything into Ship it, Deploy complete or Done, stays refused. `kanban_start_card` still starts only a card in Planning or In progress, and tells a Backlog card to move first. |
 
+| 34 | Proof in Human test (card #125; Hugh: "show docs or images but not paths", the router: Windows paths only, keep it small) | A new card field `proof` (`{path, label}` like `changesOutputs`, which stays for deliverables). Old cards work unchanged: pictures, md/txt reports and PDFs their hand-over names count as proof. The app reads only files the card names, inside home or temp, never a dot folder (bar a repo's card worktrees) or AppData outside Temp, and masks tokens with the search mask before a report reaches the page. Reports show as plain Markdown with a short tag list; only http and https links work. Out: the stack overlay, the verdict details, Mac paths, globs. |
+
 ## Stack
 
 **Tauri 2** with a Rust backend and a web UI in the system WebView (WebView2 on Windows 11, which is Chromium).

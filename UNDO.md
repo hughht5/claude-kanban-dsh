@@ -1013,3 +1013,12 @@ PowerShell 5.1 commands. No data changes: no migration, no new setting.
 | `routersession::move_refused` lets the Router move Backlog to In progress, as well as to Planning, while "Router may start cards" is on; `routertools::start_column_refused` tells a start of a Backlog card to move it first | `git -C ~\claude-kanban-dsh revert --no-edit <the card #174 commit>`. A card the Router already moved stays where it is: drag it back to Backlog if you want |
 | The bundled `prompts\router.md` job 2, and the docs (docs\GUIDE.md, HANDOVER.md, PLAN.md decision 33, this section) | The same revert |
 | The owner's private `prompts\router.md` job 2 | Revert the card #174 commit in the private repo |
+
+## Card #125: proof in Human test (9 Nov 2026, branch `dsh-125`)
+
+| Change | Undo |
+|---|---|
+| The `proof` card field (`crates\store\src\cards.rs`, `lib.rs`, `tools.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #125 commits>`. Cards keep any `proof` field; an older build ignores it |
+| `src-tauri\src\proof.rs`, its commands in `main.rs`, `in_settings_folder` in `src-tauri\src\platform\windows.rs` and `macos.rs` | Same revert |
+| `ui\proof.js`, `ui\proof.css`, their tags in `ui\index.html`, the hooks in `ui\review.js`, file-name captions in `ui\panel.js` | Same revert. The steps then show paths again |
+| The `proof` lines in `prompts\kanban-app.md` and `prompts\in-progress.md` (and the private copies) | Same revert here; in the private repo, `git revert --no-edit` its card #125 commit |
