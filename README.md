@@ -88,6 +88,8 @@ Each column's instructions are plain Markdown files you can read and change.
 
 Every agent is a Claude Code subagent running on your own plan, and the app records each one's verdict on the card. None of them can move a card into Ship it.
 
+Each card has its own choice of which of the six card agents run on it (all but the Monitor). Settings > Sessions sets the defaults for a new card; tick or untick them on Add card or in a card's details. Only you change them: a card's session and the Router can't. An agent that is off holds nothing, and the card's session is told to skip its step.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">

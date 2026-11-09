@@ -200,6 +200,10 @@ fn start_child(app: &AppHandle, store: &mut Store, child: &Card, lead: &Card, in
     if let Some(p) = column_prompt(store, child) {
         parts.push(p);
     }
+    // Card #151: the subagents Hugh has off on the child, for its column.
+    if let Some(n) = crate::dispatch::subagents_note(store, child, &child.column) {
+        parts.push(n);
+    }
     parts.push(child_note(child, lead));
     wake(app, store, child, &parts.join("\n\n"));
 }
@@ -446,6 +450,10 @@ pub fn child_moved(app: &AppHandle, store: &mut Store, card: &Card, from: &str, 
     let mut text = format!("{by} moved this card from {from} to {}{why}.", card.column);
     if let Some(p) = column_prompt(store, card) {
         text = format!("{text}\n\n{p}");
+    }
+    // Card #151: the subagents Hugh has off on the child, for its column.
+    if let Some(n) = crate::dispatch::subagents_note(store, card, &card.column) {
+        text = format!("{text}\n\n{n}");
     }
     text = format!("{text}\n\n{}", child_note(card, &lead));
     if ["Planning", "In progress"].contains(&card.column.as_str()) && stack_started(&lead) {

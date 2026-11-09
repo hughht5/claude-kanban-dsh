@@ -654,8 +654,9 @@ Every card is tested by an independent subagent before it reaches you in Human t
 - **On the card:** a **Tested**, **Test failed** or **Test unclear** chip in In progress and Human
   test (hover a failed one for what failed), and a **Subagent test** row in the panel's details:
   the state, when, and what failed.
-- **Switch it off:** Settings › Sessions, untick "Test every card with a subagent before Human
-  test" (on by default). Sessions still have the tester; they just aren't held to it.
+- **Switch it off:** for one card, untick card-tester in its details (or on Add card); for new
+  cards, untick it under Settings › Sessions › "Subagents on a new card" (on by default). Sessions
+  still have the tester; a card with it off just isn't held to it, and its session skips it.
 
 ## Subagent review before Human test
 
@@ -683,8 +684,9 @@ card #96, 6 Nov 2026), as well as tested.
 - **On the card:** a **Reviewed**, **Review failed** or **Review unclear** chip beside the test
   chip, and a **Subagent review** row in the panel's details (the state, when, how many FAILs,
   and what failed).
-- **Switch it off:** Settings › Sessions, untick "Review every card's diff with a subagent before
-  Human test" (on by default). It is separate from the tester's switch.
+- **Switch it off:** for one card, untick card-reviewer in its details (or on Add card); for new
+  cards, under Settings › Sessions › "Subagents on a new card" (on by default). It is separate
+  from the tester's switch.
 - **Guard rail:** the app's subagents may not use the card-changing board tools (under either of
   the two names a kanban-app session sees them by). In their shells the app refuses `kb`,
   `claude config` and `claude mcp` (card #100's guard, a hook on every shell call; a deny rule
@@ -764,9 +766,9 @@ Every card's plan is checked by an independent critic before it is built (card #
   blocked reason (not a card routed small: it has one critique). Fixing the plan doesn't reset that count; a move back into Planning does.
 - **On the card:** a **Plan critiqued**, **Critique failed** or **Critique unclear** chip on
   Planning and Blocked cards, and a **Plan critique** row in the panel's details.
-- **Switch it off:** Settings › Sessions, untick "Critique every plan with a subagent before
-  building" (on by default). Then nothing is held, and a card coming into Planning tells its
-  session to skip the step.
+- **Switch it off:** for one card, untick card-critic in its details (or on Add card); for new
+  cards, under Settings › Sessions › "Subagents on a new card" (on by default). Then nothing is
+  held, and a card coming into Planning tells its session to skip the step.
 
 ## The card-router sizes each card in Planning
 
@@ -897,8 +899,9 @@ A bug reported on a card comes back to you with proof, not another round of test
   screenshot for full size), and the test's name. The screenshots are copied into the data folder
   (`repro\<card>\`), so they outlast the temp folder. The hand-over in Human test leads with the
   same proof.
-- **Switch it off:** Settings › Sessions, untick "Prove reported bugs with the reproducer" (on by
-  default). Bug reports are then only logged, and nothing is held.
+- **Switch it off:** for one card, untick card-reproducer in its details (or on Add card); for
+  new cards, under Settings › Sessions › "Subagents on a new card" (on by default). Bug reports
+  on such a card are then only logged, and nothing is held.
 - Like the other subagents, the reproducer can't edit files or use the card-changing board tools,
   `kb` or `claude config`. It keeps Bash, so its "changes no code" rests on its prompt.
 

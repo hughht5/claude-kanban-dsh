@@ -175,8 +175,8 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
     if from == "Human test" && to == "In progress" {
         text = format!("{text}\n\n{}", back_from_test());
     }
-    if to == "Planning" && !store.critique_required() {
-        text = format!("{text}\n\n{CRITIQUE_OFF}");
+    if let Some(note) = subagents_note(store, card, to) {
+        text = format!("{text}\n\n{note}");
     }
     if let Some(note) = auto_note(card) {
         text = format!("{text}\n\n{note}");
@@ -197,8 +197,23 @@ pub fn build_notes_for(card: &Card, from: &str) -> Option<String> {
     (card.column == "In progress" && matches!(from, "Planning" | "Backlog")).then(|| crate::critic::build_notes(card)).flatten()
 }
 
-/// What a card coming into Planning is told while Hugh has the plan critique off (card #97).
-pub const CRITIQUE_OFF: &str = "Hugh turned the plan critique off (Settings > Sessions): skip the card-critic step of the planning prompt. Your move to In progress isn't held for it.";
+/// What a card's session in `column` is told about the subagents run there that Hugh has off on
+/// the card (card #151; card #97's plan critique note before it): one line each, saying whether it
+/// is the card's own choice or the board's default it follows. None when they are all on.
+pub fn subagents_note(store: &Store, card: &Card, column: &str) -> Option<String> {
+    let off = store.subagents_off_in(card, column);
+    if off.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = off
+        .iter()
+        .map(|s| {
+            let whose = if card.subagent_choice(s.key).is_some() { "off for this card" } else { "off by the board's default in Settings > Sessions" };
+            format!("- {} ({whose}): {}", s.name, s.skip)
+        })
+        .collect();
+    Some(format!("Hugh has these subagents off on this card. Don't run them; only he turns them back on (the card's details).\n{}", lines.join("\n")))
+}
 
 /// The message for the app's own move of `card` (already moved) from `from`, when it moved the
 /// card by a rule of Hugh's (card #98: a card routed small, its plan critique passed): `lead`
@@ -209,6 +224,9 @@ pub fn app_move_message(store: &Store, card: &Card, from: &str, lead: &str) -> S
     let cfg = store.column(to).ok().flatten();
     if let Some(p) = cfg.as_ref().filter(|c| c.mode != "none").and_then(|c| c.prompt_text.clone()) {
         text = format!("{text}\n\n{}", fill(&p, card, from, ""));
+    }
+    if let Some(note) = subagents_note(store, card, to) {
+        text = format!("{text}\n\n{note}");
     }
     if let Some(note) = auto_note(card) {
         text = format!("{text}\n\n{note}");
@@ -228,7 +246,7 @@ fn back_from_test() -> String {
     app_prompts(BACK_FROM_TEST)
 }
 
-const BACK_FROM_TEST: &str = "It came back from Human test, so something Hugh tested needs more work: his latest messages and the card's latest log lines say what. Fix that through the build-and-verify loop ({prompts}\\in-progress.md), run a fresh card-reviewer and card-tester if your session has them (the move to Human test needs a new pass from each), write a new hand-over into nextStep, and move the card back to Human test. If his message needs no change (a question, say), answer it, then still run them and move it back. If your session has the card-reproducer subagent: when his message reports a bug he saw, run it before the fix and again after it (the app records both runs on the card); else log \"Not a bug report: <why>\" on the card.";
+const BACK_FROM_TEST: &str = "It came back from Human test, so something Hugh tested needs more work: his latest messages and the card's latest log lines say what. Fix that through the build-and-verify loop ({prompts}\\in-progress.md), run a fresh card-reviewer and card-tester if your session has them and Hugh hasn't turned them off for this card (the move to Human test needs a new pass from each one that is on), write a new hand-over into nextStep, and move the card back to Human test. If his message needs no change (a question, say), answer it, then still run them and move it back. If your session has the card-reproducer subagent: when his message reports a bug he saw, run it before the fix and again after it (the app records both runs on the card); else log \"Not a bug report: <why>\" on the card.";
 
 /// The column prompts' folder in the checkout this build was made from (`build.rs`, card #96):
 /// a test build from a worktree reads that worktree's prompts, a live build from main reads main's.
@@ -243,9 +261,16 @@ pub fn message_moves_back(card: &Card) -> bool {
 
 /// Hugh's message `text` to a card his message just moved from Human test to In progress, with
 /// a note that tells its session why the card moved and what to do.
-pub fn moved_back_message(card: &Card, text: &str) -> String {
+pub fn moved_back_message(store: &Store, card: &Card, text: &str) -> String {
     let note = format!("Hugh's message below moved this card from Human test back to In progress (the app does that when he writes to a card in Human test). {}", back_from_test());
-    dry(card, format!("{note}\n\nHugh's message:\n\n{text}"))
+    let off = off_in_progress(store, card);
+    dry(card, format!("{note}{off}\n\nHugh's message:\n\n{text}"))
+}
+
+/// The subagents Hugh has off on `card` for In progress (card #151), as a paragraph to add to a
+/// message that sends it back there; "" when they are all on.
+fn off_in_progress(store: &Store, card: &Card) -> String {
+    subagents_note(store, card, "In progress").map(|n| format!("\n\n{n}")).unwrap_or_default()
 }
 
 /// What Hugh's Fail in Human test does to a card (card #102): an ordinary card goes back to In
@@ -282,21 +307,22 @@ pub fn failed_log(note: &str) -> String {
 
 /// Hugh's Fail note, as the message to an ordinary card his Fail moved back to In progress:
 /// what happened and what to do (card #93's text), then his note.
-pub fn failed_message(card: &Card, note: &str) -> String {
-    dry(card, format!("Hugh failed this card in Human test, which moved it back to In progress. {}\n\nHugh's note:\n\n{}", back_from_test(), note.trim()))
+pub fn failed_message(store: &Store, card: &Card, note: &str) -> String {
+    dry(card, format!("Hugh failed this card in Human test, which moved it back to In progress. {}{}\n\nHugh's note:\n\n{}", back_from_test(), off_in_progress(store, card), note.trim()))
 }
 
 /// Hugh's Fail note on a stack's lead, as the message to the lead's session: the lead is back in
 /// In progress, as "Found a problem" does for a child.
-pub fn lead_failed_message(card: &Card, note: &str) -> String {
+pub fn lead_failed_message(store: &Store, card: &Card, note: &str) -> String {
     dry(
         card,
         format!(
-            "Hugh tested stack #{n} \"{t}\" in Human test and failed it: {note}\n#{n} is back in In progress. Fix it through the build-and-verify loop ({ip}), run a fresh card-reviewer and card-tester if your session has them, write a new hand-over into nextStep, and move it back to Human test.",
+            "Hugh tested stack #{n} \"{t}\" in Human test and failed it: {note}\n#{n} is back in In progress. Fix it through the build-and-verify loop ({ip}), run a fresh card-reviewer and card-tester if your session has them and they are on for this card, write a new hand-over into nextStep, and move it back to Human test.{off}",
             n = card.number,
             t = card.title(),
             note = note.trim(),
-            ip = prompt_file("in-progress.md")
+            ip = prompt_file("in-progress.md"),
+            off = off_in_progress(store, card)
         ),
     )
 }
@@ -336,6 +362,9 @@ pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<Strin
     let mut text = format!("Your move of this card to {} is done.
 
 {prompt}", card.column);
+    if let Some(note) = subagents_note(store, card, &card.column) {
+        text = format!("{text}\n\n{note}");
+    }
     if let Some(note) = auto_note(card) {
         text = format!("{text}\n\n{note}");
     }
@@ -605,10 +634,39 @@ pub fn after_edit(app: &AppHandle, card_id: &str, changed: &[&str]) {
     if let (true, Some(text)) = (has_session, edit_message(&card, changed)) {
         let _ = store.queue(card_id, "message", &text);
     }
+    // Card #151: Hugh changed the card's subagents (update_card logs it). Its session hears it,
+    // so it runs or skips them from here on; a lead held for its own test, review or proof may
+    // be free now, so its stack's rules run again.
+    if changed.contains(&kanban_store::SUBAGENTS_KEY) {
+        let (_, note) = subagents_changed(&store, &card);
+        if has_session {
+            let _ = store.queue(card_id, "message", &dry(&card, note));
+        }
+        if card.is_lead() {
+            after_lead_verdict(app, &mut store, card_id, "Hugh (board)", &format!("Hugh changed #{}'s subagents", card.number));
+            drop(store);
+            let _ = app.emit("cards-changed", ());
+            return;
+        }
+    }
     if auto {
         drop(store);
         let _ = app.emit("cards-changed", ());
     }
+}
+
+/// The log line and the session's note for Hugh's change of `card`'s subagents (card #151).
+pub fn subagents_changed(store: &Store, card: &Card) -> (String, String) {
+    let names = |on: bool| -> String {
+        let l: Vec<&str> = kanban_store::SUBAGENTS.iter().filter(|s| store.subagent_on(card, s.key) == on).map(|s| s.name).collect();
+        if l.is_empty() { "none".into() } else { l.join(", ") }
+    };
+    let (on, off) = (names(true), names(false));
+    let line = format!("Hugh set its subagents. On: {on}. Off: {off}.");
+    let note = format!(
+        "Hugh changed this card's subagents. On: {on}. Off: {off}. From now on, run only the ones that are on, where the column prompt says; skip a step for one that is off. The app's holds follow the same choice: a move isn't held for a subagent that is off. Only Hugh changes this."
+    );
+    (line, note)
 }
 
 /// Why a session may not move `card` to `to`, if it may not: a stack's lead goes to Human test
@@ -1505,6 +1563,38 @@ mod tests {
     }
 
     #[test]
+    fn a_session_is_told_which_subagents_are_off_in_its_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        // All on: nothing to say, in any column.
+        let all = card(json!({ "title": "T", "subagents": { "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": true, "merger": true } }), "Planning");
+        for col in ["Planning", "In progress", "Ship it", "Human test"] {
+            assert!(subagents_note(&s, &all, col).is_none(), "{col}");
+        }
+        let some = card(json!({ "title": "T", "subagents": { "router": true, "critic": false, "reproducer": true, "reviewer": false, "tester": true, "merger": false } }), "Planning");
+        let n = subagents_note(&s, &some, "Planning").unwrap();
+        assert!(n.contains("- card-critic (off for this card): skip the planning prompt's card-critic step. Your move to In progress isn't held for it."), "{n}");
+        assert!(!n.contains("card-router") && !n.contains("card-reviewer"), "{n}");
+        let n = subagents_note(&s, &some, "In progress").unwrap();
+        assert!(n.contains("- card-reviewer (off for this card)") && !n.contains("card-tester") && !n.contains("card-critic"), "{n}");
+        assert!(subagents_note(&s, &some, "Ship it").unwrap().contains("- card-merger (off for this card): skip the Ship it prompt's card-merger step"));
+        assert!(subagents_note(&s, &some, "Human test").is_none());
+        // A card made before #151 follows the board: card #97's critic-off note, from the default.
+        s.set_page_setting(kanban_store::CRITIC_RULE_KEY, "off").unwrap();
+        let old = card(json!({ "title": "T", "plan": { "state": "requested" } }), "Planning");
+        let n = subagents_note(&s, &old, "Planning").unwrap();
+        assert!(n.contains("- card-critic (off by the board's default in Settings > Sessions)"), "{n}");
+        // In the message for Hugh's move into Planning, and not for a card with the critic on.
+        assert!(move_message(&s, &old, "Backlog", false).contains("card-critic (off by the board's default"));
+        assert!(!move_message(&s, &card(json!({ "title": "T", "subagents": { "critic": true } }), "Planning"), "Backlog", false).contains("card-critic (off"));
+        // Hugh's change: the log line and the session's note name all six.
+        let (line, note) = subagents_changed(&s, &some);
+        assert_eq!(line, "Hugh set its subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer, card-merger.");
+        assert!(note.starts_with("Hugh changed this card's subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer, card-merger.") && note.contains("Only Hugh changes this."), "{note}");
+        assert!(!kanban_store::looks_secret(&line) && !kanban_store::looks_secret(&note));
+    }
+
+    #[test]
     fn t3_13_dry_run_prefix_and_fill() {
         let c = card(json!({ "title": "T", "dryRun": true, "repo": "acme/web", "issue": { "number": 12 } }), "Planning");
         assert!(dry(&c, "x".into()).starts_with("Dry run: say what you would do and change nothing."));
@@ -1652,17 +1742,24 @@ mod tests {
         let lead = card(json!({ "title": "Stack", "stack": [8, 9] }), "Human test");
         assert_eq!(fail_plan(&lead, "grey button"), Ok(FailPlan::LeadBack));
         assert_eq!(failed_log("  grey button \n"), "Failed in Human test: grey button");
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("b.db")).unwrap();
         let moved = card(json!({ "title": "T" }), "In progress");
-        let m = failed_message(&moved, " grey button ");
+        let m = failed_message(&s, &moved, " grey button ");
         assert!(m.starts_with("Hugh failed this card in Human test, which moved it back to In progress."), "{m}");
         assert!(!m.contains("Hugh's message below"), "{m}");
         assert!(m.contains("card-tester") && m.contains("in-progress.md") && m.ends_with("Hugh's note:\n\ngrey button"), "{m}");
-        let l = lead_failed_message(&Card { column: "In progress".into(), ..lead.clone() }, "grey button");
+        // Card #151: a card with its tester off is told to skip it, before Hugh's note.
+        let off = card(json!({ "title": "T", "subagents": { "tester": false } }), "In progress");
+        let m = failed_message(&s, &off, "grey button");
+        assert!(m.contains("- card-tester (off for this card)") && m.ends_with("Hugh's note:\n\ngrey button"), "{m}");
+        let l = lead_failed_message(&s, &Card { column: "In progress".into(), ..lead.clone() }, "grey button");
         assert!(l.starts_with("Hugh tested stack #7 \"Stack\" in Human test and failed it: grey button"), "{l}");
         assert!(l.contains("back in In progress") && l.contains("in-progress.md") && l.contains("card-tester"), "{l}");
         let dl = card(json!({ "title": "S", "stack": [8], "dryRun": true }), "In progress");
-        assert!(lead_failed_message(&dl, "x").starts_with("Dry run:"));
-        assert!(failed_message(&card(json!({ "title": "T", "dryRun": true }), "In progress"), "x").starts_with("Dry run:"));
+        assert!(lead_failed_message(&s, &dl, "x").starts_with("Dry run:"));
+        assert!(lead_failed_message(&s, &card(json!({ "title": "S", "stack": [8], "subagents": { "reviewer": false } }), "In progress"), "x").contains("- card-reviewer (off for this card)"));
+        assert!(failed_message(&s, &card(json!({ "title": "T", "dryRun": true }), "In progress"), "x").starts_with("Dry run:"));
     }
 
     // Card #93: a card back from Human test is told why, by Hugh's message or his move.
@@ -1680,13 +1777,19 @@ mod tests {
             assert!(!message_moves_back(&c), "{} {:?}", c.column, c.fields);
         }
         let moved = card(json!({ "title": "T" }), "In progress");
-        let m = moved_back_message(&moved, "The button is still grey");
+        let sd = tempfile::tempdir().unwrap();
+        let ss = Store::open(sd.path().join("b.db")).unwrap();
+        let m = moved_back_message(&ss, &moved, "The button is still grey");
+        assert!(!m.contains("subagents off"), "{m}");
+        let off = card(json!({ "title": "T", "subagents": { "reviewer": false } }), "In progress");
+        let mo = moved_back_message(&ss, &off, "x");
+        assert!(mo.contains("- card-reviewer (off for this card)") && mo.ends_with("Hugh's message:\n\nx"), "{mo}");
         assert!(m.starts_with("Hugh's message below moved this card from Human test back to In progress"), "{m}");
         assert!(m.contains("card-tester") && m.contains("in-progress.md") && m.ends_with("Hugh's message:\n\nThe button is still grey"), "{m}");
         // A message he didn't mark as a bug may still be proved; else the session says why not (card #112).
         assert!(m.contains("card-reproducer") && m.contains("Not a bug report: <why>"), "{m}");
         let dry_card = card(json!({ "title": "T", "dryRun": true }), "In progress");
-        assert!(moved_back_message(&dry_card, "x").starts_with("Dry run:"));
+        assert!(moved_back_message(&ss, &dry_card, "x").starts_with("Dry run:"));
         // Hugh's own move back from Human test says the same; a move from elsewhere doesn't.
         let dir = tempfile::tempdir().unwrap();
         let s = Store::open(dir.path().join("b.db")).unwrap();

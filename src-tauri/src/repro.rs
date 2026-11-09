@@ -17,7 +17,7 @@
 //! installed app.
 
 use crate::agents::{target_card, tool_calls, Agent, OnStop};
-use kanban_store::{mask_secrets, repro_open, Card, Patch, Store, REPRO_KEY, REPRO_RULE_KEY};
+use kanban_store::{mask_secrets, repro_open, Card, Patch, Store, REPRO_KEY};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
@@ -274,8 +274,8 @@ pub fn source_label(source: &str) -> (String, &'static str) {
 /// signature: card #102 calls it.
 pub fn mark_needed(store: &mut Store, card: &Card, source: &str, note: &str) -> Result<(Card, bool), String> {
     let (label, by) = source_label(source);
-    if !store.rule_on(REPRO_RULE_KEY) {
-        store.add_log(&card.id, &format!("Bug report ({label}): Hugh's reproducer rule is off, so the card-reproducer isn't asked for and nothing is held."), by).map_err(|e| e.to_string())?;
+    if !store.subagent_on(card, "reproducer") {
+        store.add_log(&card.id, &format!("Bug report ({label}): Hugh has the card-reproducer off for this card, so it isn't asked for and nothing is held."), by).map_err(|e| e.to_string())?;
         return Ok((card.clone(), false));
     }
     // A stack's card doesn't install the test app, so it can't be held for a proof: the lead's
@@ -493,7 +493,7 @@ pub fn on_stop(app: &AppHandle, row_id: &str, body: &Value) {
 /// column before it, while a bug report on it isn't yet proved fixed or not reproduced, and
 /// Hugh's rule is on.
 pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
-    if !crate::tester::BEFORE_TEST.contains(&card.column.as_str()) || !crate::tester::INTO_TEST.contains(&to) || !store.rule_on(REPRO_RULE_KEY) {
+    if !crate::tester::BEFORE_TEST.contains(&card.column.as_str()) || !crate::tester::INTO_TEST.contains(&to) || !store.subagent_on(card, "reproducer") {
         return None;
     }
     // A stack's card is never held for it: the lead proves it on the stack's install (S8).
@@ -520,6 +520,7 @@ pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kanban_store::REPRO_RULE_KEY;
 
     /// `record_of` where the run is recorded.
     fn rec_of(prior: Option<&Value>, r: &Report, tools: Option<usize>, agent_id: &str, at: &str, shot: Option<&str>) -> (Value, String) {
@@ -768,11 +769,20 @@ mod tests {
         // A second report joins the open cycle.
         let (c, _) = mark_needed(&mut s, &c, "card-tester", "Esc doesn't close it").unwrap();
         assert_eq!(c.fields[REPRO_KEY]["reports"].as_array().unwrap().len(), 2);
+        // Card #151: the board's default off is for new cards; this one keeps its reproducer.
         s.set_page_setting(REPRO_RULE_KEY, "off").unwrap();
-        let (c2, on) = mark_needed(&mut s, &c, "found-a-problem", "again").unwrap();
+        assert!(mark_needed(&mut s, &c, "found-a-problem", "again").unwrap().1);
+        // Its own choice off: the report is only logged.
+        let c = s.get(&c.id).unwrap();
+        let c = s.update(&c.id, c.version, &json!({ "subagents": { "reproducer": false } }).as_object().cloned().unwrap(), "Hugh (board)").unwrap();
+        let (c2, on) = mark_needed(&mut s, &c, "found-a-problem", "once more").unwrap();
         assert!(!on);
-        assert_eq!(c2.fields[REPRO_KEY]["reports"].as_array().unwrap().len(), 2, "the rule off changes nothing");
+        assert_eq!(c2.fields[REPRO_KEY]["reports"].as_array().unwrap().len(), 3, "off changes nothing");
         assert_eq!(s.get(&c.id).unwrap().fields[REPRO_KEY], c.fields[REPRO_KEY]);
+        assert!(s.log(&c.id).unwrap().iter().any(|l| l.text.contains("Hugh has the card-reproducer off for this card")));
+        // A card made now has it off from the start, and its gate holds nothing.
+        let n = s.create(None, json!({ "title": "N", "column": "In progress" }).as_object().cloned().unwrap(), "test").unwrap();
+        assert!(!mark_needed(&mut s, &n, "report-a-bug", "x").unwrap().1);
     }
 
     #[test]

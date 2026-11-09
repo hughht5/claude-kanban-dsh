@@ -1370,6 +1370,60 @@ proof so far is CI on GitHub's Mac runners. ACCEPTANCE.md has the list for a rea
 - **Test slots (card #118):** `KANBAN_CHANNEL` also takes `test2` to `test10` (ports up to 9343). `crates/store/src/channel.rs` derives every name from the slot number (live 0, test 1, testN N): `app_name_for`, `quit_event_for`, `product_name_for`, `exe_name_for`, `identifier_for`, `devtools_port_for` (9333 + N), `data_dir_for`. Any other value stops the build (a `const` assert), so a typo can't make a build that opens the live board. `install.ps1 -Channel testN` derives the same names, writes `target\testN\tauri.testN.conf.json` (tauri.test.conf.json with the slot's productName, binary, identifier and title) and `target\testN\hooks.nsh` (kb.exe from `target\testN\release`), and builds with them; nothing is generated in the checkout. `-NamesOnly` prints the names as JSON; `crates/store/tests/channels.rs` holds the script and `tauri.test.conf.json` to `channel.rs`. The UI takes its name from the `app_name` command ("Claude Kanban DSH (test 2)") for the bar and titles; toasts say "(test 2)". `test` itself is unchanged. **Sessions reach only their own board (final-test finding F1):** a test build's `build_env` passes `build_env_for` its data folder and install folder, so each card session gets `KANBAN_DATA_DIR` and the test app's folder first on PATH; `kb` and `kb mcp` take the board folder from `KANBAN_DATA_DIR` first (`kanban_store::kb_data_dir`). That covers the repo's `.mcp.json` `kb mcp` (the live kb on PATH, once it has this change; until then the PATH entry makes it the test kb) and `kb` in Bash. The live build passes no board and drops an inherited `KANBAN_DATA_DIR`.
 - **Copied sessions:** `copy_board` records each session still running on the source as suspended ("copied", not mid-turn) in the copy and moves `app.run_started_seq` past them, so the test app never resumes a live conversation.
 
+## Each card's choice of subagents (9 Nov 2026, card #151)
+
+Hugh sets, once, which of the six card subagents a new card starts with, and turns each on or off
+per card. The gates follow the card's own choice.
+
+- **The field:** `subagents` on the card, `{router, critic, reproducer, reviewer, tester,
+  merger}`, each true or false (`crates/store/src/subagents.rs`, `SUBAGENTS_KEY`, the table
+  `SUBAGENTS`). `Store::create` stamps it on every new card from the board's defaults, with
+  whatever Hugh's Add card sent on top (`for_new_card`); an update merges the keys it names
+  (`merged`, in `cards.rs` `apply`). A bad key or a value that isn't true or false is refused.
+  A card made before #151 has no field: `Store::subagent_on` falls back to the board's default
+  for any key it lacks, so it behaves as every card did before.
+- **The defaults:** one page setting each, all in `RULE_KEYS` ("on" unless "off"): the four
+  board-wide rules they replace keep their keys (`sessions.critic_before_build`,
+  `sessions.review_before_human_test`, `sessions.test_before_human_test`,
+  `sessions.repro_before_human_test`), so Hugh's critic-off stays off; two are new,
+  `sessions.router_in_planning` (`ROUTER_RULE_KEY`) and `sessions.merger_at_ship`
+  (`MERGER_RULE_KEY`), on by default. No migration: the field is JSON and an older build ignores it.
+- **Only Hugh:** `subagents` isn't in `tools.rs` `UPDATABLE`, and `kanban_create_card` doesn't copy
+  it, so card sessions, the Router and `kb` can't set it (a test checks). The app's own `create_card`
+  and `update_card` commands (the page) are the only writers. `tools.rs` `doc` shows the card's
+  subagents as they hold now; the Router's `compact_list` has `subagentsOff`.
+- **The gates:** `critic::gate`, `reviewer::gate` (and its `capped_hold`), `tester::gate`,
+  `repro::gate`, `repro::mark_needed`, Found a problem's lead note (`main.rs`), and a stack lead's
+  own test, review and repro hold (`stacks.rs` `stack_recheck`) read `Store::subagent_on(card, ..)`
+  instead of the board rule (the lead's for its stack's reproducer). The router and the merger
+  hold nothing. The merger's choice is for the card's own ship: a stack's lead still merges each
+  child with the card-merger (card #113), since the stack is ready only once they are merged.
+  Hugh's change of a lead's subagents runs its stack's rules again (`after_lead_verdict`).
+- **The sessions:** `dispatch::subagents_note(store, card, column)` lists the subagents run in that
+  column that are off on the card (Planning: router, critic; In progress: reproducer, reviewer,
+  tester; Ship it: merger), each with what to skip, and whether it is the card's own choice or the
+  board's default. It replaces card #97's `CRITIQUE_OFF` in `move_message`, and goes in
+  `app_move_message`, `held_move_message`, a stack child's start and moves
+  (`stackrun::start_child`, `child_moved`), Found a problem on a child (`stack_problem`) and the
+  messages back from Human test (`moved_back_message`, `failed_message`, `lead_failed_message`).
+  Hugh's change in the details logs "Hugh set its subagents. On: ... Off: ..." once, only when it
+  changed (`main.rs` `update_card`), and sends the session a note (`dispatch::after_edit`,
+  `subagents_changed`). Every session still has all six
+  in `--agents`, so turning one back on needs no restart.
+- **UI:** `ui/subagents.js` (one list, `NEW_CARD_SUBAGENTS`, for all three places; a store test,
+  `the_pages_table_is_this_one`, checks it against `SUBAGENTS`) and
+  `ui/subagents.css`: Settings > Sessions' "Subagents on a new card" group (six switches, in place
+  of the four rule switches), the Add card ticks (`subagentTicks`, set from the switches;
+  `subagentChoice` goes in `fields.subagents`), and the details' Subagents box (`subagentsBox`,
+  saved as soon as one changes, with a pending state so a redraw doesn't undo it). The verdict rows
+  and the Route row say "off for this card", or "off by the default in Settings" for a card made
+  before #151.
+- **Prompts:** `prompts/router.md` jobs 1 and 3 skip a subagent the card has off. The private
+  folder's prompts are unchanged: the app's note tells each session what to skip.
+- **Left as it was:** the small-card go-on (#98) still needs the critique's pass, and small-change
+  auto-ship (#104) still needs both the reviewer's and tester's passes, so a card with one of them
+  off waits for Hugh there.
+
 ## Router panel: images (7 Nov 2026, card #127)
 
 UI only. The Router panel's message box takes pasted images and dropped files like a card chat's:

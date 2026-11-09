@@ -28,13 +28,15 @@ integrate. You never write code.
    card. For a split, make the children with kanban_create_card (stack: the lead) and set
    blockedBy for their order. Do not log the route yourself: the app records it on the card and
    in the feed. If the card already has a route (its Planning session ran the
-   card-router first), do nothing: the first route stays.
+   card-router first), do nothing: the first route stays. If the card has the card-router off
+   (its subagentsOff in kanban_list_cards), do not route it.
 2. **Start cards.** Move a card from Backlog to Planning, or use kanban_start_card, only if the tool
    lets you (the owner's "Router may start cards" setting). If the tool refuses, tell the owner in
    one line which cards are ready to start.
 3. **Check a card in Human test.** For "MOVED #n ... -> Human test": read the card. Compare each
    doneWhenChecks item with the tester, reviewer and reproducer verdicts (test, review, repro).
-   If a check is failed or open under a PASS, or a verdict is missing while its rule is on, move the
+   If a check is failed or open under a PASS, or a verdict is missing while that subagent is on for
+   the card (the owner sets each card's subagents; only the owner changes them), move the
    card back to In progress with the reason. Else log "Checked: the checks match" on the card.
 4. **Watch.** A MONITOR line is the Monitor's finding (stuck, looping, quiet, failed, circular
    wait). Decide one: send the card's session a message (kanban_session_send), start it again

@@ -235,14 +235,22 @@ fn a_ready_stack_waits_for_the_leads_own_test_and_review() {
     let moves = s.stack_recheck(lead, "review passed", "t").unwrap();
     assert_eq!((moves.len(), col(&s, lead).as_str()), (1, "Human test"));
     assert!(s.get_by_number(lead).unwrap().fields.get("stackHeld").map_or(true, Value::is_null));
-    // Hugh's rules off: a lead with neither isn't held.
+    // Card #151: a lead whose own choice has the tester and reviewer off isn't held.
     let lead2 = card(&mut s, "lead2", "In progress");
     let b = card(&mut s, "b", "In progress");
     s.stack_add(lead2, b, "t").unwrap();
-    s.set_page_setting("sessions.test_before_human_test", "off").unwrap();
-    s.set_page_setting("sessions.review_before_human_test", "off").unwrap();
+    let c = s.get_by_number(lead2).unwrap();
+    s.update(&c.id, c.version, &patch(json!({ "subagents": { "tester": false, "reviewer": false } })), "Hugh (board)").unwrap();
     assert_eq!(mv(&mut s, b, "Human test").len(), 1);
     assert_eq!(col(&s, lead2), "Human test");
+    // Hugh's defaults off: a lead made after that has neither, so it isn't held either.
+    s.set_page_setting("sessions.test_before_human_test", "off").unwrap();
+    s.set_page_setting("sessions.review_before_human_test", "off").unwrap();
+    let lead3 = card(&mut s, "lead3", "In progress");
+    let d = card(&mut s, "d", "In progress");
+    s.stack_add(lead3, d, "t").unwrap();
+    assert_eq!(mv(&mut s, d, "Human test").len(), 1);
+    assert_eq!(col(&s, lead3), "Human test");
 }
 
 // Card #112: a bug reported on the lead itself holds the stack too, until the card-reproducer
@@ -272,8 +280,14 @@ fn a_ready_stack_waits_for_the_leads_bug_to_be_proved() {
     pass(&mut s, lead2);
     let c = s.get_by_number(lead2).unwrap();
     s.update(&c.id, c.version, &patch(json!({ "repro": { "state": "needed" } })), "the app").unwrap();
+    // The board's default off doesn't change a lead made before it (card #151) ...
     s.set_page_setting("sessions.repro_before_human_test", "off").unwrap();
-    assert_eq!(mv(&mut s, b, "Human test").len(), 1);
+    assert!(mv(&mut s, b, "Human test").is_empty());
+    assert_eq!(col(&s, lead2), "In progress");
+    // ... the lead's own choice does.
+    let c = s.get_by_number(lead2).unwrap();
+    s.update(&c.id, c.version, &patch(json!({ "subagents": { "reproducer": false } })), "Hugh (board)").unwrap();
+    assert_eq!(s.stack_recheck(lead2, "reproducer off", "t").unwrap().len(), 1);
     assert_eq!(col(&s, lead2), "Human test");
 }
 

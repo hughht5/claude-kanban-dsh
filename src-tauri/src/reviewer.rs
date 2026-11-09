@@ -69,7 +69,7 @@ pub const AGENT: Agent = Agent {
 /// unless Hugh turned the rule off. Every move into In progress makes it needed again. After the
 /// third FAIL (the cap) the card may only go to Blocked, whatever a later review says.
 pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
-    if let Some(why) = crate::agents::capped_hold(&CHECK, card, to, store.review_required()) {
+    if let Some(why) = crate::agents::capped_hold(&CHECK, card, to, store.subagent_on(card, "reviewer")) {
         return Some(why);
     }
     // A lead whose children all build themselves (card #113) has only merges of its own: their
@@ -77,7 +77,7 @@ pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
     if card.is_lead() && kanban_store::stack_children_reviewed(&store.stack_children(card).unwrap_or_default()) {
         return None;
     }
-    let latest = not_passed(&CHECK, card, to, &crate::tester::BEFORE_TEST, &crate::tester::INTO_TEST, store.review_required())?;
+    let latest = not_passed(&CHECK, card, to, &crate::tester::BEFORE_TEST, &crate::tester::INTO_TEST, store.subagent_on(card, "reviewer"))?;
     Some(format!(
         "Card #{n} has no subagent review that passed since it last came into In progress (Hugh's rule: a subagent reviews the diff of every card before Human test).{latest} Do these steps:
 1. Run the card-reviewer subagent before the card-tester. Use the Agent tool with subagent_type \"{REVIEWER}\". If it runs in the background, wait for its notification before you move the card.
@@ -115,8 +115,12 @@ mod tests {
             assert!(gate(&s, &card(json!({ "title": "T" }), "In progress"), to).is_none(), "{to}");
         }
         assert!(gate(&s, &card(json!({ "title": "T" }), "Human test"), "Deploy complete").is_none());
+        // Card #151: the card's own choice, else the board's default.
+        assert!(gate(&s, &card(json!({ "title": "T", "subagents": { "reviewer": false } }), "In progress"), "Human test").is_none());
+        assert!(gate(&s, &card(json!({ "title": "T", "subagents": { "tester": false } }), "In progress"), "Human test").is_some(), "the tester's choice isn't the reviewer's");
         s.set_page_setting(kanban_store::REVIEW_RULE_KEY, "off").unwrap();
         assert!(gate(&s, &card(json!({ "title": "T" }), "In progress"), "Human test").is_none());
+        assert!(gate(&s, &card(json!({ "title": "T", "subagents": { "reviewer": true } }), "In progress"), "Human test").is_some());
     }
 
     // The independent review's finding on card #96: a later PASS, or the session's own next move,

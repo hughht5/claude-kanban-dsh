@@ -198,11 +198,18 @@ fn create_card(app: AppHandle, board: State<Board>, id: String, mut fields: Patc
 fn update_card(app: AppHandle, board: State<Board>, id: String, version: i64, patch: Patch, by: Option<String>) -> CmdResult<Value> {
     let mut store = board.0.lock().map_err(CmdError::other)?;
     let by = by.unwrap_or_else(|| "Hugh (board)".into());
+    let subs_before = store.get(&id).ok().and_then(|c| c.fields.get(kanban_store::SUBAGENTS_KEY).cloned());
     let card = store.update(&id, version, &patch, &by).map_err(|e| refused(&store, e))?;
+    // Card #151: Hugh's change of the card's subagents is logged, once, only when it changed.
+    let subs_changed = card.fields.get(kanban_store::SUBAGENTS_KEY).cloned() != subs_before;
+    if subs_changed {
+        let (line, _) = dispatch::subagents_changed(&store, &card);
+        let _ = store.add_log(&id, &line, &by);
+    }
     let out = doc(&store, &card);
     drop(store);
     changed(&app);
-    let keys: Vec<String> = patch.keys().cloned().collect();
+    let keys: Vec<String> = patch.keys().filter(|k| k.as_str() != kanban_store::SUBAGENTS_KEY || subs_changed).cloned().collect();
     let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
     dispatch::after_edit(&app, &id, &refs);
     Ok(out)
@@ -570,7 +577,10 @@ fn stack_problem(app: AppHandle, board: State<Board>, id: String, note: String) 
         let _ = store.add_log(&id, &format!("Couldn't log the bug report for the card-reproducer: {e}"), "the app");
     }
     let own_build = kanban_store::stack_own_build(&card);
-    if own_build && store.rule_on(kanban_store::REPRO_RULE_KEY) {
+    // The lead's session runs the reproducer for its stack's bugs, so the lead's choice says
+    // whether it is asked for (card #151).
+    let lead_repro = store.stack_lead(&card).ok().flatten().is_some_and(|l| store.subagent_on(&l, "reproducer"));
+    if own_build && lead_repro {
         if let Some(l) = store.stack_lead(&card).ok().flatten() {
             let _ = store.add_log(&l.id, &format!("Hugh's bug on #{n} is for your card-reproducer: after you install the stack with #{n}'s fix, run it with CARD: #{n} (if your session has it).", n = card.number), "the app");
         }
@@ -580,7 +590,7 @@ fn stack_problem(app: AppHandle, board: State<Board>, id: String, note: String) 
     let mut text = if own_build {
         note_lead(&mut store, &card, "found a problem on");
         format!(
-            "Hugh tested this card (#{n} \"{t}\") in its stack and found a problem: {note}\nIt is back in In progress. Fix it forward: in your worktree, rebase your branch onto {sb} (anything already merged drops out), add the fix as new commits, run your card-reviewer and card-tester again, and move it back to Human test. The stack's lead merges it again then.",
+            "Hugh tested this card (#{n} \"{t}\") in its stack and found a problem: {note}\nIt is back in In progress. Fix it forward: in your worktree, rebase your branch onto {sb} (anything already merged drops out), add the fix as new commits, run your card-reviewer and card-tester again (those that are on for this card), and move it back to Human test. The stack's lead merges it again then.",
             n = card.number,
             t = card.title()
         )
@@ -591,8 +601,12 @@ fn stack_problem(app: AppHandle, board: State<Board>, id: String, note: String) 
             t = card.title()
         )
     };
-    if store.rule_on(kanban_store::REPRO_RULE_KEY) {
+    if lead_repro {
         text = format!("{text}\n\n{}", repro::child_note(card.number, own_build));
+    }
+    // Card #151: the subagents Hugh has off on the card whose session this goes to.
+    if let Some(n) = store.get(&to).ok().and_then(|t| dispatch::subagents_note(&store, &t, "In progress")) {
+        text = format!("{text}\n\n{n}");
     }
     // A dry-run stack (the test board's copies) only says what it would do.
     let text = match store.get(&to) { Ok(l) => dispatch::dry(&l, text), Err(_) => text };

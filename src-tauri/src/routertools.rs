@@ -361,7 +361,9 @@ pub fn compact_list(store: &Store, column: Option<&str>) -> Value {
                         "repo": c.fields.get("repo"), "branch": c.fields.get("branch"), "dryRun": c.fields.get("dryRun"),
                         "nextStep": next, "blockedBy": c.fields.get(kanban_store::BLOCKED_KEY), "stack": c.fields.get("stack"), "stackOf": c.fields.get("stackOf"),
                         "route": c.fields.get("route").and_then(|r| r.get("size")).cloned(), "test": state("test"), "review": state("review"),
-                        "stuck": c.fields.get("stuck").and_then(|s| s.get("kind")).cloned() })
+                        "stuck": c.fields.get("stuck").and_then(|s| s.get("kind")).cloned(),
+                        // Card #151: the subagents Hugh has off on it (none: all on).
+                        "subagentsOff": kanban_store::SUBAGENTS.iter().filter(|s| !store.subagent_on(c, s.key)).map(|s| s.name).collect::<Vec<_>>() })
             })
             .collect(),
     )

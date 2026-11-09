@@ -70,9 +70,11 @@ const checkChip=(c,ch)=>{const t=checkOf(c,ch.key);if(!t||!Object.hasOwn(ch.chip
   return`<span class="tag chip test-${esc(t.state)}" data-check="${esc(ch.key)}"${det&&!SECRET.test(det)?` title="${esc(det)}"`:""}>${esc(ch.chip[t.state])}</span>`};
 const testChip=c=>CHECKS.map(ch=>checkChip(c,ch)).join("");
 // The panel's rows: the state, when, how many FAILs since the reset, and what failed.
-const checkRows=c=>CHECKS.map(ch=>{const t=checkOf(c,ch.key),at=t?Date.parse(t.at||""):0,r=t&&Number.isInteger(t.round)?t.round:0;
+// Card #151: a subagent Hugh has off on the card says so in its row, and why.
+const subOff=(c,k)=>typeof subagentOffText==="function"&&window.SUBAGENT_OF_CHECK?subagentOffText(c,window.SUBAGENT_OF_CHECK[k]):"";
+const checkRows=c=>CHECKS.map(ch=>{const t=checkOf(c,ch.key),at=t?Date.parse(t.at||""):0,r=t&&Number.isInteger(t.round)?t.round:0,off=subOff(c,ch.key);
   const v=t?`${esc(Object.hasOwn(ch.labels||CHECK_LABEL,t.state)?(ch.labels||CHECK_LABEL)[t.state]:t.state)}${at?` · <span title="${esc(t.at)}">${esc(ago(at))}</span>`:""}${r?` · ${r} FAIL${r===1?"":"s"}`:""}${t.detail?`<br>${safe(t.detail)}`:""}`:"—";
-  return`<dt>${esc(ch.row)}</dt><dd>${v}</dd>`}).join("");
+  return`<dt>${esc(ch.row)}</dt><dd>${v}${off?` <span class="meta sub-off">· ${esc(off)}</span>`:""}</dd>`}).join("");
 // The card-router subagent's route (card #98): a size chip on Planning and In progress cards,
 // and the panel's Route row, with Route again while the card is in Planning.
 const ROUTE_CHIP={small:"Small",normal:"Normal",split:"Split"};
@@ -83,7 +85,8 @@ const routeRow=c=>{const r=routeOf(c),at=r?Date.parse(r.at||""):0;
   const again=colOf(c)==="Planning"&&!c.stackOf?`<button class="ibtn" id="route-again" type="button" title="Clear the route and ask the card's session to run the card-router again">Route again</button>`:"";
   const kids=r&&Array.isArray(r.children)?r.children.filter(x=>typeof x==="string"):[];
   const v=r?`${esc(ROUTE_CHIP[r.size])}${r.model||r.effort?` · ${esc([r.model,r.effort].filter(Boolean).join(" "))}`:""}${r.check?` · check ~${esc(r.check)}`:""}${at?` · <span title="${esc(r.at)}">${esc(ago(at))}</span>`:""}${r.reason?`<br>${safe(r.reason)}`:""}${kids.map(x=>`<br>- ${safe(x)}`).join("")}${r.wentOnAt?`<br><span class="meta">Went on to In progress by itself</span>`:""}`:"—";
-  return`<dt>Route</dt><dd>${v}${again?` ${again}`:""}</dd>`};
+  const ro=typeof subagentOffText==="function"?subagentOffText(c,"router"):"",off=ro?` <span class="meta sub-off">· card-router ${esc(ro)}</span>`:"";
+  return`<dt>Route</dt><dd>${v}${off}${again?` ${again}`:""}</dd>`};
 // The stuck-session monitor (card #99): its `stuck` field puts "May be stuck" on the card, with
 // the reason as its title, and a panel row saying since when and what the app did.
 const STUCK_KIND={repeating:"Repeating",quiet:"Quiet",question:"At a question",permission:"At a permission prompt",failed:"Failed","dead wait":"Dead wait",idle:"Idle, nothing running"};
@@ -304,6 +307,7 @@ function renderDetail(){
   ${typeof stackDetail==="function"?stackDetail(c):""}
   ${loginBox}
   ${reproBox(c)}
+  ${typeof subagentsBox==="function"?subagentsBox(c):""}
   <h3>Links</h3>
   <dl>
    <dt>Issue</dt><dd>${n?(httpOk(issueUrl(c))?`<a href="${esc(issueUrl(c))}" target="_blank" rel="noopener">#${esc(n)}</a>`:"#"+esc(n)):"—"}</dd>
@@ -502,6 +506,7 @@ async function openAdd(){
    <label class="f">Repo<select class="colsel" id="a-repo">${repoOptions()}</select></label>
    <label class="f">Take it to<select class="colsel" id="a-to" aria-describedby="a-hint">${Object.keys(TAKE_TO).map(k=>`<option>${esc(k)}</option>`).join("")}</select></label>
    <p class="hint" id="a-hint"></p>
+   <div id="a-subs"></div>
    <label class="f">GitHub issue (optional)<input class="tx" id="a-issue" placeholder="https://github.com/owner/repo/issues/1234"></label>
    <label class="f">Links (optional, one per line: a label, then the address)<textarea id="a-links" rows="2" placeholder="Vault doc https://..."></textarea></label>
    <div class="row"><button class="btn" id="a-save" type="submit">Add to Backlog</button><span class="msg" id="a-msg"></span></div>
@@ -528,6 +533,7 @@ async function openAdd(){
       const fields={title,summary};
       if(repo)fields.repo=repo;if(issue)fields.issue=issue;if(links.length)fields.links=links;
       if($("#a-tpl").value)fields.templateId=$("#a-tpl").value; // its starting prompt opens the card's first session
+      if(typeof subagentChoice==="function"&&$("#a-subs").querySelector("input"))fields.subagents=subagentChoice($("#a-subs")); // card #151
       const to=Object.hasOwn(TAKE_TO,$("#a-to").value)?$("#a-to").value:"Backlog";
       const args={id,fields};if(to!=="Backlog")args.to=to; // the store moves it on and sets autoTo
       const c=await invoke("create_card",args);
@@ -539,6 +545,7 @@ async function openAdd(){
    to.addEventListener("change",sync);sync()}
   try{d.showModal()}catch(e){d.setAttribute("open","")}
   if(typeof templatePicker==="function")templatePicker($("#a-tpl"),$("#a-title"),$("#a-desc"));else $("#a-tpl").closest("label").hidden=true;
+  if(typeof subagentTicks==="function")subagentTicks($("#a-subs")); // card #151: set from Settings' defaults
   // A change to this app: its repo and the "Kanban app" template go together (the template's
   // starting prompt sends the card's session to this repo's AGENTS.md and prompts/kanban-app.md).
   {const rp=$("#a-repo"),tp=$("#a-tpl"),APP=APP_REPO,TPL="kanban-app";

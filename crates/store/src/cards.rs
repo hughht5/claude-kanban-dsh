@@ -427,6 +427,14 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
                 }
                 card.archived = a;
             }
+            // Card #151: Hugh's choice of subagents; the keys the patch names change.
+            crate::SUBAGENTS_KEY => {
+                let new = crate::subagents::merged(card.fields.get(k), v)?;
+                if card.fields.get(k) != Some(&new) {
+                    card.fields.insert(k.clone(), new);
+                    changed.push(k.clone());
+                }
+            }
             AUTO_KEY => {
                 let new = clean_auto_to(v)?;
                 if card.fields.get(k) != new.as_ref() {
@@ -780,6 +788,10 @@ impl Store {
                 fields.insert(AUTO_KEY.into(), t);
             }
         }
+        // Card #151: every new card gets its own choice of subagents, from the board's defaults
+        // and whatever Hugh's Add card chose.
+        let chosen = fields.remove(crate::SUBAGENTS_KEY);
+        fields.insert(crate::SUBAGENTS_KEY.into(), crate::subagents::for_new_card(self, chosen.as_ref())?);
         if let Some(v) = fields.remove(OUTPUTS_KEY) {
             if let Some(o) = clean_changes_outputs(&v)? {
                 fields.insert(OUTPUTS_KEY.into(), o);

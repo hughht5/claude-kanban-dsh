@@ -716,6 +716,18 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 | The Router prompt's job 6 and rule 1's sentence (`prompts\router.md`; the private copy in the private repo) | Same revert here; in your private repo, `git revert --no-edit` its card #131 commit |
 | A card archived from the Done pile | Open it in the Archive and press **Restore** |
 
+## Card #151: each card's choice of subagents (9 Nov 2026, branch `card-151`)
+
+| Change | Undo |
+|---|---|
+| The card field `subagents`, stamped on every new card (`crates\store\src\subagents.rs`, `cards.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #151 commits>`. Cards keep the field; an older build ignores it |
+| The gates read the card's choice (`critic.rs`, `reviewer.rs`, `tester.rs`, `repro.rs`, `main.rs`, `stacks.rs`) | Same revert: the four board-wide rules hold every card again |
+| Two new settings, `sessions.router_in_planning` and `sessions.merger_at_ship` | Same revert; the saved rows are only read by this build |
+| The session notes (`dispatch.rs` `subagents_note`, `subagents_changed`; `stackrun.rs`) | Same revert: card #97's `CRITIQUE_OFF` note comes back |
+| `ui\subagents.js`, `ui\subagents.css`, their tags in `ui\index.html`, the Add card ticks and details box in `ui\board.js`, the Settings group in `ui\settings.js` | Same revert |
+| The Router prompt's jobs 1 and 3 (`prompts\router.md`) | Same revert |
+| One card's choice | Change it back in that card's details (the change is logged on the card) |
+
 ## Card #95: the terminal takes typing (9 Nov 2026)
 
 | Change | Undo |

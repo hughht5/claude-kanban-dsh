@@ -73,7 +73,7 @@ pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
     }
     // Card #144's holds, where today's applies (the rule on, from before the build into it):
     // a question for Hugh, and a card routed small whose one critique failed.
-    let required = store.critique_required();
+    let required = store.subagent_on(card, "critic");
     if required && BEFORE_BUILD.contains(&card.column.as_str()) && INTO_BUILD.contains(&to) {
         if rec.and_then(|r| r.get("hugh")).and_then(Value::as_bool) == Some(true) {
             return Some(format!(
@@ -164,9 +164,15 @@ mod tests {
         let stale = card(json!({ "title": "T", "test": { "state": "passed" }, "review": { "state": "passed" }, "critique": { "state": "needed", "round": 0 } }), "Planning");
         assert!(gate(&s, &stale, "Human test").is_some() && gate(&s, &stale, "Deploy complete").is_some());
         assert!(crate::agents::move_refused(&s, &stale, "Human test").is_some());
-        // Hugh can turn it off.
+        // Hugh can turn it off: for one card (card #151) ...
+        let own_off = card(json!({ "title": "T", "subagents": { "critic": false }, "critique": { "state": "failed", "round": 1 } }), "Planning");
+        assert!(gate(&s, &own_off, "In progress").is_none());
+        // ... or as the board's default, which a card made before #151 follows.
         s.set_page_setting(kanban_store::CRITIC_RULE_KEY, "off").unwrap();
         assert!(gate(&s, &failed, "In progress").is_none());
+        // A card with the critic on is still held, whatever the default.
+        let own_on = card(json!({ "title": "T", "subagents": { "critic": true } }), "Planning");
+        assert!(gate(&s, &own_on, "In progress").is_some());
     }
 
     #[test]

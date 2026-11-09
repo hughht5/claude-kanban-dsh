@@ -419,7 +419,7 @@ fn back_to_work(store: &mut Store, card_id: &str, text: &str) -> CmdResult<(Stri
     }
     let m = store.move_by_hugh(card_id, card.version, "In progress", Patch::new()).map_err(|e| refused(store, e))?;
     let _ = store.add_log(card_id, "Hugh's message took it back to In progress", HUGH);
-    Ok((dispatch::moved_back_message(&m.card, text), true))
+    Ok((dispatch::moved_back_message(store, &m.card, text), true))
 }
 
 /// Hugh's Fail in Human test, with his note (card #102): the review bar's Fail. Logged as
@@ -443,11 +443,11 @@ fn human_test_fail(app: AppHandle, board: State<Board>, card_id: String, note: S
             // The move first: a refused move leaves no "Failed" line on the append-only log.
             let m = store.move_by_hugh(&card_id, card.version, "In progress", Patch::new()).map_err(|e| refused(&store, e))?;
             store.add_log(&card_id, &dispatch::failed_log(&note), HUGH).map_err(|e| refused(&store, e))?;
-            dispatch::failed_message(&m.card, &note)
+            dispatch::failed_message(&store, &m.card, &note)
         }
         dispatch::FailPlan::LeadBack => {
             let c = problem_back(&app, &mut store, &card_id, &dispatch::failed_log(&note))?;
-            dispatch::lead_failed_message(&c, &note)
+            dispatch::lead_failed_message(&store, &c, &note)
         }
     };
     // Hugh's Fail note is a bug report for the card-reproducer (card #112, wired at the wave 2 merge).

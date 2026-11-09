@@ -61,7 +61,7 @@ pub const INTO_TEST: [&str; 2] = ["Human test", "Deploy complete"];
 /// it, to Deploy complete) from any column before it, only once the card's latest subagent test
 /// passed, unless Hugh turned the rule off. Every move into In progress makes it needed again.
 pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
-    let latest = not_passed(&CHECK, card, to, &BEFORE_TEST, &INTO_TEST, store.test_required())?;
+    let latest = not_passed(&CHECK, card, to, &BEFORE_TEST, &INTO_TEST, store.subagent_on(card, "tester"))?;
     Some(format!(
         "card #{n} hasn't passed a subagent test since it last came into In progress (Hugh's rule: every card is tested by a subagent before Human test).{latest} Run the card-tester subagent (the Agent tool, subagent_type \"{TESTER}\") and wait for its result: if it runs in the background, wait for its notification before you move the card. Brief it like a stranger: the card number (#{n}), the deliverables, where the change is and how to try it (the test app, the dev stack and its logins), not your conclusions. It ends with CARD and VERDICT lines, and the app records its verdict on the card. Fix what it finds and run it again; move the card once its latest verdict is PASS.",
         n = card.number
@@ -101,9 +101,17 @@ mod tests {
         assert!(gate(&s, &card(json!({ "title": "T" }), "Planning", 7), "Human test").is_some());
         // A pass still counts after a stop in Blocked (only a move into In progress resets it).
         assert!(gate(&s, &card(json!({ "title": "T", "test": { "state": "passed" } }), "Blocked", 7), "Human test").is_none());
-        // Hugh can turn the rule off.
+        // Card #151: off for this card, it isn't held; the reviewer's choice is its own.
+        assert!(gate(&s, &card(json!({ "title": "T", "subagents": { "tester": false } }), "In progress", 7), "Human test").is_none());
+        assert!(gate(&s, &card(json!({ "title": "T", "subagents": { "reviewer": false } }), "In progress", 7), "Human test").is_some());
+        // Hugh can turn the default off: a card made before #151 follows it ...
         s.set_page_setting(kanban_store::TEST_RULE_KEY, "off").unwrap();
         assert!(gate(&s, &needed, "Human test").is_none());
+        // ... and one whose own choice has it on is still held, through every gate.
+        let on = card(json!({ "title": "T", "subagents": { "tester": true, "reviewer": false, "critic": false } }), "In progress", 7);
+        assert!(gate(&s, &on, "Human test").is_some());
+        let why = crate::agents::move_refused(&s, &on, "Human test").unwrap();
+        assert!(why.contains("subagent test") && !why.contains("subagent review"), "{why}");
     }
 
     #[test]

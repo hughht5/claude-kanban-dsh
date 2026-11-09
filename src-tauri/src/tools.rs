@@ -17,6 +17,10 @@ pub(crate) const UPDATABLE: &[&str] = &[
     "blockedBy",
 ];
 
+/// Fields kanban_create_card copies from its arguments. Not `subagents` (card #151): a card made
+/// by a session or the Router gets the board's defaults; only Hugh's Add card chooses.
+pub(crate) const CREATE_FIELDS: &[&str] = &["column", "repo", "summary", "issue", "labels", "dryRun"];
+
 /// How to write the card #105 fields, for kanban_update_card's description.
 const DONE_WHEN_HINT: &str = "doneWhen is one plain line (the card is done when ...); doneWhenChecks is a list of up to 10 acceptance checks, each a string or {text, state: open|met|failed, note}, and the app records who changed each state and when.";
 
@@ -127,6 +131,9 @@ fn doc(store: &Store, c: &Card) -> Value {
     let mut d = c.to_document(&log);
     d["id"] = json!(c.id);
     d["version"] = json!(c.version);
+    // Card #151: the subagents on the card as they hold now: its own choice, else the board's
+    // default (a card made before it). Hugh's only: kanban_update_card refuses the field.
+    d[kanban_store::SUBAGENTS_KEY] = Value::Object(store.subagents_of(c));
     d
 }
 
@@ -323,7 +330,7 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             let title = args.get("title").and_then(Value::as_str).ok_or("pass a title")?;
             let mut fields = Patch::new();
             fields.insert("title".into(), json!(title));
-            for k in ["column", "repo", "summary", "issue", "labels", "dryRun"] {
+            for &k in CREATE_FIELDS {
                 if let Some(v) = args.get(k) {
                     fields.insert(k.into(), v.clone());
                 }
@@ -520,6 +527,9 @@ mod tests {
         for k in ["test", "review", "repro", "smallChange", "smallOptOut", "autoTo", "ship", "column"] {
             assert!(!UPDATABLE.contains(&k), "{k}");
         }
+        // Card #151: a card's subagents are Hugh's alone, not a session's or the Router's.
+        assert!(!UPDATABLE.contains(&kanban_store::SUBAGENTS_KEY) && !CREATE_FIELDS.contains(&kanban_store::SUBAGENTS_KEY));
+        assert_eq!(not_updatable(&json!({ "title": "T", "subagents": { "tester": false } }).as_object().cloned().unwrap()).map(String::as_str), Some(kanban_store::SUBAGENTS_KEY));
         assert!(UPDATABLE.contains(&"blockedBy"));
         assert!(!UPDATABLE.contains(&"waitedOn"), "the app writes waitedOn");
         let create = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_create_card").cloned().unwrap();

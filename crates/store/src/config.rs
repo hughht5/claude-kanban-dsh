@@ -53,6 +53,9 @@ pub const RULE_KEYS: &[&str] = &[
     SMALL_GO_ON_KEY,
     REPRO_RULE_KEY,
     TODO_TOOLS_KEY,
+    // Card #151: the card-router's and card-merger's defaults for a new card.
+    crate::ROUTER_RULE_KEY,
+    crate::MERGER_RULE_KEY,
 ];
 
 /// The settings key for the private folder: a folder outside this repo with the owner's own
@@ -73,6 +76,9 @@ pub const PAGE_SETTINGS: &[&str] = &[
     REPRO_RULE_KEY,
     SMALL_REPOS_KEY,
     TODO_TOOLS_KEY,
+    // Card #151: the card-router's and card-merger's defaults for a new card.
+    crate::ROUTER_RULE_KEY,
+    crate::MERGER_RULE_KEY,
     // The Router (card #119): its model, effort and whether it may start cards.
     crate::router::ROUTER_MODEL_KEY,
     crate::router::ROUTER_EFFORT_KEY,
@@ -353,19 +359,21 @@ impl Store {
             .unwrap_or(STUCK_CHECK_DEFAULT))
     }
 
-    /// Must a card pass its subagent test before its session moves it to Human test? (Hugh's
-    /// setting; on unless he turned it off.)
+    /// The card-tester's default for a new card (card #151; card #76's board-wide rule before
+    /// it): on unless Hugh turned it off. The holds read the card's own choice with
+    /// `Store::subagent_on`, never this.
     pub fn test_required(&self) -> bool {
         self.rule_on(TEST_RULE_KEY)
     }
 
-    /// Must a card pass its subagent review before its session moves it to Human test (card #96)?
+    /// The card-reviewer's default for a new card (card #151; card #96's rule before it). The
+    /// holds use `Store::subagent_on`.
     pub fn review_required(&self) -> bool {
         self.rule_on(REVIEW_RULE_KEY)
     }
 
-    /// Must a card's plan pass a subagent critique before its session moves it into In progress
-    /// (card #97)?
+    /// The card-critic's default for a new card (card #151; card #97's rule before it). The
+    /// holds use `Store::subagent_on`.
     pub fn critique_required(&self) -> bool {
         self.rule_on(CRITIC_RULE_KEY)
     }

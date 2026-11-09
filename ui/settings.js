@@ -189,8 +189,14 @@ async function sessions(m){
     if(!/^\d+$/.test(v)||+v>1440){note(km,"Give a whole number from 0 to 1440.","err");return}
     try{const x=await invoke("set_setting",{key:"sessions.stuck_check_minutes",value:v});kb.querySelector("#st-stuck").value=x;note(km,"Saved","ok")}
     catch(e){note(km,"Not saved: "+errText(e),"err")}};
-  // The app's subagent rules (cards #76, #96): each an on/off setting, saved at once. One entry each.
-  for(const r of SUBAGENT_RULES)await ruleBox(m,r);
+  // Card #151: the subagents a new card starts with. Each card keeps its own choice (Add card, its
+  // details); these are the defaults, each an on/off setting saved at once. One entry each.
+  const sh=document.createElement("div");sh.className="st-box st-subagents";
+  sh.innerHTML=`<h4>Subagents on a new card</h4>
+  <p class="meta">Each new card starts with these on or off. Change them for one card on Add card or in its details: only you can, not its session or the Router. A subagent that is off holds nothing, and the card's session is told to skip it. Cards made before this setting follow these switches as they are now.</p>`;
+  m.appendChild(sh);
+  for(const r of window.NEW_CARD_SUBAGENTS||[])await ruleBox(sh,r); // subagents.js
+  await ruleBox(m,SMALL_GO_ON_RULE); // card #98
   await ruleBox(m,TODO_TOOLS_RULE); // card #106
   await smallReposBox(m);
 }
@@ -230,18 +236,8 @@ async function smallReposBox(m){
 const TODO_TOOLS_RULE={key:"sessions.todo_tools",label:"Card sessions keep a to-do list",
   help:"Gives card sessions Claude Code's to-do tools (TaskCreate, TaskUpdate), which it no longer offers newer models by itself, so each card shows its progress: \"Step 4 of 7: Writing the tests\" with a bar. It applies to sessions started after the change. Default on."};
 
-const SUBAGENT_RULES=[
-  {key:"sessions.test_before_human_test",label:"Test every card with a subagent before Human test",
-   help:"A card's session can move it from In progress to Human test only after its card-tester subagent has passed it. The app records each verdict on the card. Default on."},
-  {key:"sessions.review_before_human_test",label:"Review every card's diff with a subagent before Human test",
-   help:"A card's session can move it from In progress to Human test only after its card-reviewer subagent has passed its diff: mistakes, risky changes, work the card didn't ask for, the repo's hard rules. Its third FAIL sends the card to Blocked. Default on."},
-  {key:"sessions.critic_before_build",label:"Critique every plan with a subagent before building",
-   help:"At the end of Planning, a card's session has its card-critic subagent check the plan against the card and the code. It fails a plan only for a real problem (a dropped deliverable, a plan that would come out wrong, anything unsafe); smaller points come as notes after a pass, and go to the build with the In progress prompt. The session can move the card into In progress only after a pass, and not while the critic's question for you (a HUGH: line) is open; your own moves are never held. A card routed small gets one critique: after its FAIL it waits in Planning for you. On any other card, its third FAIL sends the card to Blocked. Off: sessions skip the step. Default on."},
-  {key:"sessions.small_go_on",label:"Let a card routed small start building once its plan critique passes",
-   help:"When the card-router subagent sizes a card small and its card-critic passes the plan in its one critique, the app moves it from Planning to In progress by itself at the end of the session's turn, and says so in its log. Not after a FAIL, or when the critic asked you something: then it waits for you. Not a stack's cards. Off: small cards wait for you, like the rest. Default on."},
-  {key:"sessions.repro_before_human_test",label:"Prove reported bugs with the reproducer",
-   help:"A bug report on a card (Found a problem, Fail in Human test, Report a bug, or a subagent's FAIL that names a bug) has its card-reproducer subagent reproduce the bug before the fix and rerun the same steps after it. The card's session can move it to Human test only once the latest run says Fixed (or Not reproduced). The steps and screenshots are kept on the card. Off: reports are only logged. Default on."},
-];
+const SMALL_GO_ON_RULE={key:"sessions.small_go_on",label:"Let a card routed small start building once its plan critique passes",
+   help:"When the card-router sizes a card small and its card-critic passes the plan in its one critique, the app moves it from Planning to In progress by itself at the end of the session's turn, and says so in its log. Not after a FAIL, or when the critic asked you something: then it waits for you. Not a stack's cards, and not a card with either of them off. Off: small cards wait for you, like the rest. Default on."};
 
 // One on/off rule's checkbox, saved as soon as it changes.
 async function ruleBox(m,r){

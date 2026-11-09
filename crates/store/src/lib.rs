@@ -22,6 +22,8 @@ mod sessions;
 mod ships;
 mod stacks;
 mod start_queue;
+// Hugh's per-card choice of the app's subagents (card #151).
+mod subagents;
 mod templates;
 pub mod testapp;
 // Time in each column (card #111).
@@ -60,6 +62,7 @@ pub use marks::{CardMarks, LatestSession};
 pub use sessions::{SessionRow, MID_TURN, RESUME_OFFER_KEY};
 pub use ships::{ship_goes_first, ship_lane, ship_started, QUEUED as SHIP_QUEUED};
 pub use stacks::{children_reviewed as stack_children_reviewed, lead_missing, lead_missing_in_stack, merged as stack_merged, own_build as stack_own_build, OWN_BUILD_KEY as STACK_OWN_BUILD_KEY, stack_ready, stack_stage, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_HELD_KEY, STACK_RULE_KEY};
+pub use subagents::{clean_subagents, subagent, Subagent, MERGER_RULE_KEY, ROUTER_RULE_KEY, SUBAGENTS, SUBAGENTS_KEY};
 pub use start_queue::{StartQueue, WaitingStart, DEFAULT_CAP as DEFAULT_SESSION_CAP, MAX_CAP as MAX_SESSION_CAP};
 pub use templates::{Template, TemplateInput};
 // Time in each column (card #111).

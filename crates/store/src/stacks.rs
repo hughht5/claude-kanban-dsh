@@ -621,8 +621,10 @@ impl Store {
     pub fn stack_recheck(&mut self, lead_n: i64, cause: &str, by: &str) -> Result<Vec<StackMove>> {
         let mut moves = Vec::new();
         let rule = self.stack_rule();
-        let lead_rules = [(crate::TEST_KEY, "subagent test", self.test_required()), (crate::REVIEW_KEY, "subagent review", self.review_required())];
-        let repro_on = self.rule_on(crate::REPRO_RULE_KEY);
+        // The lead's subagents (card #151): its own choice, else the board's default, read before
+        // the transaction with the one rule every gate uses.
+        let on = self.get_by_number(lead_n).ok().map(|l| (self.subagent_on(&l, "tester"), self.subagent_on(&l, "reviewer"), self.subagent_on(&l, "reproducer")));
+        let (test_on, review_on, repro_on) = on.unwrap_or((true, true, true));
         let tx = self.begin()?;
         let Ok(mut lead) = by_number_tx(&tx, lead_n) else { return Ok(moves) };
         if lead.archived {
@@ -636,6 +638,7 @@ impl Store {
         }
         let ready = stack_ready(&lead, &kids, &rule);
         let from = lead.column.clone();
+        let lead_rules = [(crate::TEST_KEY, "subagent test", test_on), (crate::REVIEW_KEY, "subagent review", review_on)];
         // The lead's own work is held to its test and review too (card #96): the stack waits,
         // and says why once. Its children's reviews stand for its own (card #113).
         let mut missing = if ready && BUILDING.contains(&from.as_str()) { lead_missing_in_stack(&lead, &kids, &lead_rules) } else { vec![] };

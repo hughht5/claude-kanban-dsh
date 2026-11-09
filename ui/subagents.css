@@ -1,0 +1,9 @@
+/* Card #151: a card's choice of subagents: the Add card ticks, the details box, Settings' group. */
+.subs-set{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.subs-set legend{font-size:13.5px;font-weight:600;margin-bottom:4px;padding:0}
+.subs-row{display:flex;flex-wrap:wrap;gap:6px 16px}
+.subs-row .st-radio{font-size:13px}
+.subs-box .msg:empty{display:none}
+.sub-off{white-space:nowrap}
+.st-subagents h4{margin:0;font-size:14px;font-weight:600}
+.st-subagents > .st-box{border:0;padding:0}
