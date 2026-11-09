@@ -24,9 +24,10 @@ THE SHIP JOB. The MERGE JOB message names the card, its branch, the base SHA (th
    - onto: git rev-parse origin/main.
    - originBefore: git rev-parse origin/<the card's branch>, or "none" if origin doesn't have it.
    - The base SHA from the job. Check it is a commit (git cat-file -e <base>^{commit}). If it isn't, run git fetch origin <the card's branch> and look again; if it still isn't, report FAIL.
-5. Rebase, detached. Do not make merge commits.
+5. Rebase, detached. Do not make merge commits (one exception: an integration branch, below).
    - git checkout --detach <base>, then git rebase <onto>.
    - Then for each other branch of the ship, in the job's order: git rebase --onto HEAD <the merge-base of that branch and onto> <that branch's SHA>, so its own commits go on top. Use SHAs (git rev-parse <branch>) and stay detached: never check the branch out.
+   - AN INTEGRATION BRANCH: if the card's branch has merge commits (git rev-list --merges <onto>..<base> prints any: an integration branch from the Router's integrate job, or a stack's branch built from --no-ff "Integrate ..." merges), never rebase it. Instead: git checkout --detach <base>, then git merge --no-ff <onto> -m "Merge origin/main (card #<n>)", one time (one merge commit). Resolve conflicts as in step 6 (git merge --abort if you can't). Then do steps 7 to 11, and say in a lines entry "integration branch: merged origin/main in once, not rebased".
 6. Resolve each conflict. Keep the work of both sides. Use the repo's own merge rules: the rules in the job, else the rules in the repo's CLAUDE.md or AGENTS.md (for example a version that is origin/main's version plus one, or a changelog where you keep both sides, newest first), and what you learnt merging this repo's earlier cards. Apply a version rule also when there is no conflict.
    - If you cannot resolve a conflict safely, run git rebase --abort and report FAIL. Name the file.
    - Commit every change that you make. A change that is not part of a rebase (for example the version) is its own commit, with "(card #<n>)" in its message.

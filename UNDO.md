@@ -889,6 +889,7 @@ PowerShell 5.1 commands. No migration and no new stored field beyond `merge.chec
 | Review fix: a lane's repo is read from the origin URL's real host (`scheme://[user@]host[:port]/...` or scp's `host:...`), github.com only (`lane::github_repo`) | `git -C ~/claude-kanban-dsh revert --no-edit <the card #162 github_repo commit>` |
 | The card-merger off the card's subagents: no `merger` row, no `sessions.merger_at_ship` default (`crates\store\src\subagents.rs`, `ui\subagents.js`); its prompt refuses a ship and its report on a Ship it card isn't recorded (`src-tauri\src\merger.rs`) | The same revert. A saved `sessions.merger_at_ship` value and each card's stored `merger` choice were never touched, so they hold again after it |
 | The Ship it step in the bundled `prompts\ship-it.md` and `prompts\kanban-app.md` (the lane path only), `prompts\router.md` job 5 | The same revert |
+| Review fix: the lane's prompt (`prompts/merge-lane.md` step 5) merges origin/main once into a branch with merge commits (an integration branch) instead of rebasing it, the card-merger's old rule | `git -C ~/claude-kanban-dsh revert --no-edit <the card #162 integration-branch commit>` |
 | The owner's private copies of `ship-it.md` and `kanban-app.md` | Revert the card #162 commit in the private repo |
 | A lane worktree made in a checkout no list named before (`<checkout>\.claude\worktrees\merge-lane`, `<channel>-merge-lane` from a test app) | Once no lane runs: `git -C <checkout> worktree remove --force <checkout>\.claude\worktrees\merge-lane` |
 

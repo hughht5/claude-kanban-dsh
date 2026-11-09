@@ -1283,6 +1283,17 @@ mod tests {
         assert!(PROMPT.len() < 9000, "the system prompt is {} characters", PROMPT.len());
     }
 
+    /// Card #162: the card-merger's rule for an integration branch came to the lane with the
+    /// ship: one merge of origin/main into a branch with merge commits, never a rebase of it.
+    #[test]
+    fn the_lane_merges_main_into_an_integration_branch_once() {
+        for must in ["AN INTEGRATION BRANCH", "git rev-list --merges <onto>..<base>", "never rebase it", "git merge --no-ff <onto>", "one time (one merge commit)", "integration branch: merged origin/main in once, not rebased", "\"Integrate ...\""] {
+            assert!(PROMPT.contains(must), "merge-lane.md doesn't say {must}");
+        }
+        let rule = &PROMPT[PROMPT.find("AN INTEGRATION BRANCH").unwrap()..];
+        assert!(rule.find("never rebase it").unwrap() < rule.find("6.").unwrap(), "the rule is in step 5, before step 6");
+    }
+
     /// Card #162: every Ship it card with a branch, on any repo, listed anywhere or not, is told
     /// to use its lane; a card with no branch has nothing to merge. An old card's `merger: false`
     /// and card #160's saved list change nothing.
