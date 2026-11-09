@@ -93,43 +93,56 @@ function Run-Install([string]$Why) {
 # --- Restart now over the test app's DevTools port (card #136) ------------------------------
 
 # Runs JavaScript in the test app's page and returns its value, or $null when the page doesn't
-# answer (the app is down or still starting). Single quotes only in $Js: Windows PowerShell 5.1
-# mangles double quotes in a native command's arguments.
+# answer within 15 s (the app is down or still starting). cdp.mjs eval waits for ever, so it
+# runs as a child that is killed at the time limit. Single quotes only in $Js: it goes on a
+# command line in double quotes.
 function Cdp([string]$Js) {
-    $env:CDP_PORT = [string]$Names.devtools_port
-    $out = $null
-    try { $out = & node $Cdp eval $Js 2>$null } catch { return $null }
-    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-    try { ($out -join "`n") | ConvertFrom-Json } catch { $null }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'node'
+    $psi.Arguments = "`"$Cdp`" eval `"$Js`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.EnvironmentVariables['CDP_PORT'] = [string]$Names.devtools_port
+    try { $p = [Diagnostics.Process]::Start($psi) } catch { return $null }
+    $out = $p.StandardOutput.ReadToEndAsync()
+    [void]$p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit(15000)) { try { $p.Kill() } catch {}; return $null }
+    if ($p.ExitCode -ne 0 -or -not $out.Result) { return $null }
+    try { $out.Result | ConvertFrom-Json } catch { $null }
 }
-# The update bar as the page shows it: hidden or not, its text, and which button it has.
+# The update bar as the page shows it (hidden or not, its text, which button it has), with the
+# app's own update status (failed, kb), read first so the bar has rendered from it.
 function Bar {
-    $b = Cdp "(function(){var b=document.getElementById('updateBar');if(!b)return {missing:true};return {hidden:b.hidden,text:b.innerText,now:!!document.getElementById('updNow'),ok:!!document.getElementById('updOk')}})()"
+    $b = Cdp "(async function(){var s=await window.__TAURI__.core.invoke('update_status');await new Promise(function(r){setTimeout(r,500)});var b=document.getElementById('updateBar');if(!b)return {missing:true};return {hidden:b.hidden,text:b.innerText,now:!!document.getElementById('updNow'),ok:!!document.getElementById('updOk'),failed:s.failed||null,kb:s.kb_notice||null}})()"
     if ($b -and -not $b.missing) { $b } else { $null }
 }
+# Polls Bar every 2 s for up to $Seconds until $Until (given the bar) is true; returns the last bar.
+function Wait-Bar([scriptblock]$Until, [int]$Seconds) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    do {
+        $bar = Bar
+        if ($bar -and (& $Until $bar)) { return $bar }
+        Start-Sleep -Seconds 2
+    } while ((Get-Date) -lt $deadline)
+    $bar
+}
+function Wait-Notice([bool]$Want, [int]$Seconds) { Wait-Bar { param($b) [bool]$b.ok -eq $Want } $Seconds }
 function App-Procs {
     @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -ieq $Names.app_exe })
 }
 # The newest of restart-result.json and restart-result.seen.json (the app renames the first to the
-# second as it reads it; the time stays), if it was written after $Since (UTC).
+# second as it reads it; the time stays), if it was written after $Since (UTC). A read that loses
+# the race with that rename gives $null; the next poll finds the .seen copy.
 function Restart-Result([datetime]$Since) {
     $f = Get-ChildItem -LiteralPath $UpdateDir -Filter 'restart-result*.json' -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTimeUtc -gt $Since } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     if (-not $f) { return $null }
-    $bytes = [IO.File]::ReadAllBytes($f.FullName)
+    try { $bytes = [IO.File]::ReadAllBytes($f.FullName) } catch { return $null }
     $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
     Check 'the result file has no byte-order mark' (-not $bom)
     [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
-}
-# Waits up to $Seconds for the bar to have (or not have) its OK button; returns the bar.
-function Wait-Notice([bool]$Want, [int]$Seconds) {
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    do {
-        $bar = Bar
-        if ($bar -and [bool]$bar.ok -eq $Want) { return $bar }
-        Start-Sleep -Seconds 2
-    } while ((Get-Date) -lt $deadline)
-    $bar
 }
 # Stages this build, clicks Restart now in the test app, and waits until it is back. Returns the
 # helper's result (ok, kind, error, at).
@@ -141,14 +154,20 @@ function Restart-Now {
     Check 'update.json asks for a background restart' ($staged.background -eq $true)
 
     Write-Host '--- waiting for Update ready in the test app (it looks every 30 s)'
-    $deadline = (Get-Date).AddSeconds(90)
-    do {
-        $bar = Bar
-        if ($bar -and $bar.now) { break }
-        Start-Sleep -Seconds 3
-    } while ((Get-Date) -lt $deadline)
+    # A notice left by an earlier run shows in place of Update ready until its OK: clear it.
+    $bar = Wait-Bar {
+        param($b)
+        if ($b.ok) { [void](Cdp "(function(){var b=document.getElementById('updOk');if(b)b.click();return 'ok'})()") }
+        $b.now
+    } 90
     if (-not ($bar -and $bar.now)) { throw "the test app showed no Restart now within 90 s (is it running, with port $($Names.devtools_port)?)" }
     $old = @(App-Procs | ForEach-Object { [int]$_.ProcessId })
+    if ($old.Count -eq 0) { throw "no process runs $($Names.app_exe), though its page answers: the checks below would mean nothing" }
+    # The waits an install of this test app would make (other installs, another tester's turn,
+    # Hugh's Hold and his recent use), just before the click that quits it.
+    Write-Host "--- install.ps1 -Channel $Channel -LockOnly (the install waits, before Restart now)"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $Install -Channel $Channel -LockOnly -AssumeAppRunning
+    if ($LASTEXITCODE -ne 0) { throw "install.ps1 -LockOnly failed (exit $LASTEXITCODE)" }
     $since = (Get-Date).ToUniversalTime().AddSeconds(-2)
     $clicked = Cdp "(function(){document.getElementById('updNow').click();return 'clicked'})()"
     if ($clicked -ne 'clicked') { throw 'clicking Restart now over CDP failed' }
@@ -172,12 +191,8 @@ function Restart-Now {
         Where-Object { $_ -match ' Starting ' } | Select-Object -Last 1
     Check 'restart.log says it started it with --background' ([string]$start -match '--background') "line: $start"
 
-    # The page is up once it answers; its update bar reads the result as it loads.
-    $deadline = (Get-Date).AddSeconds(60)
-    do {
-        Start-Sleep -Seconds 2
-        $bar = Bar
-    } while (-not $bar -and (Get-Date) -lt $deadline)
+    # The page is up once it answers; Bar reads the app's status before the bar.
+    $bar = Wait-Bar { param($b) $true } 60
     if (-not $bar) { throw "the restarted app's page didn't answer on port $($Names.devtools_port) within 60 s" }
     $result
 }
@@ -250,7 +265,9 @@ try {
         if ($Restart) {
             $r = Restart-Now
             Check 'the result says the update installed (ok true)' ($r.ok -eq $true) "result: $($r | ConvertTo-Json -Compress)"
-            $bar = Wait-Notice $false 10
+            # A notice would be up by now: the app read the result before Bar's status call.
+            $bar = Bar
+            Check 'the app reports no failure and no kb.exe notice' ($bar -and -not $bar.failed -and -not $bar.kb) "bar: $($bar | ConvertTo-Json -Compress)"
             Check 'the board shows no notice' ($bar -and -not $bar.ok) "bar: $($bar | ConvertTo-Json -Compress)"
         } else {
             Run-Install 'replace the held kb.exe'
