@@ -113,18 +113,72 @@ fn auto_moved(card: &Card) -> bool {
     let req = |k: &str| {
         card.fields.get(k).map_or(false, |o| o.get("auto") == Some(&json!(true)) && matches!(o.get("state").and_then(Value::as_str), Some("requested" | "started" | "queued")))
     };
-    (card.column == "Planning" && req("plan")) || (card.column == "Ship it" && req("ship"))
+    (card.column == "Planning" && req("plan"))
+        || (card.column == "Ship it" && req("ship"))
+        // Card #162: the app's move for Hugh into Planning went to In progress (it skips Planning).
+        || (card.column == "In progress" && card.planning_skipped() && card.fields.get("plan").and_then(|p| p.get("auto")) == Some(&json!(true)))
 }
 
 /// Did the app move the card into Planning for Hugh because the cards it waited on are ready
 /// (card #109): he had put it in Blocked to start then.
 fn waits_moved(card: &Card) -> bool {
-    card.column == "Planning"
-        && card.fields.get("plan").map_or(false, |p| {
-            p.get(kanban_store::WAITED_KEY).and_then(Value::as_array).map_or(false, |a| !a.is_empty())
-                && matches!(p.get("state").and_then(Value::as_str), Some("requested" | "started"))
-        })
+    let into = |col: &str, states: &[&str]| {
+        card.column == col
+            && card.fields.get("plan").map_or(false, |p| {
+                p.get(kanban_store::WAITED_KEY).and_then(Value::as_array).map_or(false, |a| !a.is_empty())
+                    && p.get("state").and_then(Value::as_str).is_some_and(|s| states.contains(&s))
+            })
+    };
+    // Card #162: into In progress instead, for a card that skips Planning.
+    into("Planning", &["requested", "started"]) || into("In progress", &[kanban_store::PLAN_SKIPPED])
 }
+
+/// Did `card` (now in In progress) just come from `from` (Backlog or Blocked) by a move into
+/// Planning that skipped it (card #162)? Whose choice it was: "card" or "default".
+pub fn planning_skipped_from(card: &Card, from: &str) -> Option<kanban_store::Whose> {
+    if card.column != "In progress" || !card.planning_skipped() || !matches!(from, "Backlog" | "Blocked") {
+        return None;
+    }
+    Some(match card.fields.get("plan").and_then(|p| p.get("whose")).and_then(Value::as_str) {
+        Some("card") => kanban_store::Whose::Card,
+        _ => kanban_store::Whose::Default,
+    })
+}
+
+/// "his choice for this card" or "his default in Settings", for a session's note (card #162).
+fn whose_choice(w: kanban_store::Whose) -> &'static str {
+    match w {
+        kanban_store::Whose::Card => "his choice for this card",
+        kanban_store::Whose::Default => "his default in Settings > Sessions",
+    }
+}
+
+/// What a card's session is told about Hugh's flow options for the card (card #162): a Planning
+/// he skipped (the card has just come into In progress from Backlog or Blocked), and a Human test
+/// he skips (in In progress: the app ships it from Human test; in Ship it: this is his approval).
+/// None when neither applies. `autoTo` wins over the skip, so a card with one is told that instead.
+pub fn flow_note(store: &Store, card: &Card, from: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(w) = planning_skipped_from(card, from) {
+        parts.push(format!("{} (Planning skipped by {}).", SKIPPED_PLANNING, whose_choice(w)));
+    }
+    let (skip, w) = store.skip_of(card, kanban_store::SKIP_HUMAN_TEST_KEY);
+    if skip && !card.archived && card.auto_to().is_none() {
+        match card.column.as_str() {
+            "In progress" => parts.push(format!("{} (Human test skipped by {}).", SKIPS_HUMAN_TEST, whose_choice(w))),
+            "Ship it" if auto_moved(card) && !crate::goes_on::went_on(card) => parts.push(format!("{} (Human test skipped by {}).", SHIP_NO_HUMAN_TEST, whose_choice(w))),
+            _ => {}
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
+/// The In progress message's note for a card whose Planning Hugh skipped (card #162).
+pub const SKIPPED_PLANNING: &str = "Hugh skipped Planning for this card, so it came straight to In progress: there is no plan and no plan critique. Read the card first (kanban_get_card). If this message doesn't name a worktree the app made for this card, make the card's own worktree and branch first, as the repo's Planning step does. Then write a short approach into the card's summary (kanban_update_card), and build it";
+/// The In progress message's note for a card that skips Human test (card #162).
+pub const SKIPS_HUMAN_TEST: &str = "Hugh set this card to skip Human test. Once you move it to Human test (after its subagent checks pass, with the hand-over as usual), the app moves it into Ship it for him and sends you the Ship it prompt. That is his approval to ship it with no human test, so make your own testing count";
+/// The Ship it message's note for a card the app moved on because it skips Human test (card #162).
+pub const SHIP_NO_HUMAN_TEST: &str = "This is Hugh's approval to ship it with no human test: he set the card to skip Human test. Ship it as the Ship it prompt says, then move it to Deploy complete";
 
 /// What a card that goes on by itself (`autoTo`, Hugh's "Take it to") tells its session in the
 /// column it is in. None for any other card, a stack's child, or a column with nothing to say.
@@ -153,6 +207,9 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
         let why = match card.auto_to() {
             Some(t) => format!("he set it to go on by itself to {t}"),
             None if crate::goes_on::went_on(card) => "the change was small and fully checked, and his small-change auto-ship is on for this repo".to_string(),
+            // Card #162: the app moves a card into Ship it for Hugh with no autoTo when it skips Human test.
+            None if to == "Ship it" => "he set it to skip Human test, which is his approval to ship it with no human test".to_string(),
+            None if card.planning_skipped() => "he asked for it to start when he added it".to_string(),
             None => format!("he asked for it to start in {to} when he added it"),
         };
         format!("The app moved this card from {from} to {to} for Hugh: {why}.")
@@ -183,6 +240,10 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
         text = format!("{text}\n\n{note}");
     }
     if let Some(note) = auto_note(card) {
+        text = format!("{text}\n\n{note}");
+    }
+    // Card #162: Hugh's flow options (a Planning he skipped, a Human test he skips).
+    if let Some(note) = flow_note(store, card, from) {
         text = format!("{text}\n\n{note}");
     }
     if let Some(note) = waits_moved(card).then(|| store.wait_note(card)).flatten() {
@@ -243,6 +304,10 @@ pub fn app_move_message(store: &Store, card: &Card, from: &str, lead: &str) -> S
         text = format!("{text}\n\n{note}");
     }
     if let Some(note) = auto_note(card) {
+        text = format!("{text}\n\n{note}");
+    }
+    // Card #162: Hugh's flow options (a Planning he skipped, a Human test he skips).
+    if let Some(note) = flow_note(store, card, from) {
         text = format!("{text}\n\n{note}");
     }
     // A stack's child builds itself, in parallel with its siblings (card #113).
@@ -391,7 +456,7 @@ pub fn opening(store: &Store, card: &Card) -> String {
 /// (card #76: its session moved it there from Planning). None for any other column.
 pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<String> {
     let cfg = store.column(&card.column).ok().flatten()?;
-    let auto = card.column == "In progress" && auto_note(card).is_some() && cfg.mode != "none";
+    let auto = card.column == "In progress" && (auto_note(card).is_some() || flow_note(store, card, from).is_some()) && cfg.mode != "none";
     if cfg.mode != "immediate" && !auto {
         return None;
     }
@@ -409,6 +474,10 @@ pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<Strin
     if let Some(note) = auto_note(card) {
         text = format!("{text}\n\n{note}");
     }
+    // Card #162: Hugh's flow options (a Planning he skipped, a Human test he skips).
+    if let Some(note) = flow_note(store, card, from) {
+        text = format!("{text}\n\n{note}");
+    }
     if let Some(notes) = build_notes_for(card, from) {
         text = format!("{text}\n\n{notes}");
     }
@@ -419,15 +488,16 @@ pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<Strin
 /// #76): a card that reached the column Hugh set it to go on to stops going on; one that goes
 /// to Deploy complete and is now in Human test is moved into Ship it for him, and its session
 /// is sent the Ship it prompt (or it waits its turn behind another ship of its repo). A stack's
-/// child never goes on by itself; its stack does.
+/// child never goes on by itself; its stack does. Card #162: one that skips Human test goes on
+/// the same way, unless Hugh moved it there himself or "Take it to: Human test" stopped it there.
 pub fn auto_progress(app: &AppHandle, store: &mut Store, card_id: &str) {
     let Ok(card) = store.get(card_id) else { return };
-    let Some(t) = card.auto_to().map(str::to_string) else { return };
     if card.archived || card.stack_of().is_some() {
         return;
     }
     let by = kanban_store::AUTO_BY;
-    if card.column == t {
+    let t = card.auto_to().map(str::to_string);
+    if let Some(t) = t.as_deref().filter(|t| *t == card.column) {
         let mut patch = Patch::new();
         patch.insert(kanban_store::AUTO_KEY.into(), Value::Null);
         if store.update(&card.id, card.version, &patch, by).is_ok() {
@@ -435,9 +505,18 @@ pub fn auto_progress(app: &AppHandle, store: &mut Store, card_id: &str) {
         }
         return;
     }
-    if t != "Deploy complete" || card.column != "Human test" {
+    if card.column != "Human test" {
         return;
     }
+    let why = match t.as_deref() {
+        Some("Deploy complete") => "he set it to go on by itself to Deploy complete, which is his approval to ship it with no human test".to_string(),
+        // Take it to wins over the skip: it stops in Human test for him.
+        Some(_) => return,
+        None => match skip_human_test_why(store, &card) {
+            Some(w) => w,
+            None => return,
+        },
+    };
     // A stack ships whole: only once every card in it is ready (in Human test or later, each
     // through its own subagent test), whatever the board's rule for moving the stack.
     if card.is_lead() {
@@ -446,8 +525,7 @@ pub fn auto_progress(app: &AppHandle, store: &mut Store, card_id: &str) {
             return;
         }
     }
-    let why = "he set it to go on by itself to Deploy complete, which is his approval to ship it with no human test";
-    match store.move_for_hugh(&card.id, card.version, "Ship it", why) {
+    match store.move_for_hugh(&card.id, card.version, "Ship it", &why) {
         Ok(_) => {
             after_stack_move(app, store, &card.id, by);
             let (a, id) = (app.clone(), card.id.clone());
@@ -457,6 +535,22 @@ pub fn auto_progress(app: &AppHandle, store: &mut Store, card_id: &str) {
             let _ = store.add_log(&card.id, &format!("Couldn't move it on into Ship it for Hugh: {e}"), by);
         }
     }
+}
+
+/// Why `card`, in Human test with no `autoTo`, goes on into Ship it because it skips Human test
+/// (card #162), if it does: its own skipHumanTest, else the default. Not when Hugh moved it into
+/// Human test himself (his drag never skips), when its autoTo was cleared since it arrived (Take
+/// it to: Human test stopped it there for him), or when no move put it there (an import).
+pub fn skip_human_test_why(store: &Store, card: &Card) -> Option<String> {
+    let (on, whose) = store.skip_of(card, kanban_store::SKIP_HUMAN_TEST_KEY);
+    if !on || card.column != "Human test" || card.auto_to().is_some() {
+        return None;
+    }
+    let a = store.arrival(&card.id, "Human test").ok().flatten()?;
+    if a.by == "Hugh (board)" || a.auto_cleared {
+        return None;
+    }
+    Some(format!("he set it to skip Human test ({}), which is his approval to ship it with no human test", whose.whose()))
 }
 
 /// A card made into Planning or In progress by Hugh (the Add card form's "Take it to", or his
@@ -666,7 +760,8 @@ pub fn after_edit(app: &AppHandle, card_id: &str, changed: &[&str]) {
     let Ok(mut store) = board.0.lock() else { return };
     // Hugh set where it goes: a card already there stops going on, and one waiting in Human
     // test to ship moves on. First, so the session is told how it stands after that.
-    let auto = changed.contains(&kanban_store::AUTO_KEY);
+    // Card #162: so does a card a session put in Human test that he now set to skip it.
+    let auto = changed.contains(&kanban_store::AUTO_KEY) || changed.contains(&kanban_store::SKIP_HUMAN_TEST_KEY);
     if auto {
         auto_progress(app, &mut store, card_id);
     }
@@ -674,6 +769,10 @@ pub fn after_edit(app: &AppHandle, card_id: &str, changed: &[&str]) {
     let has_session = app.state::<Arc<Sessions>>().is_live(card_id).is_some() || store.latest_session(card_id).ok().flatten().is_some();
     if let (true, Some(text)) = (has_session, edit_message(&card, changed)) {
         let _ = store.queue(card_id, "message", &text);
+    }
+    // Card #162: Hugh changed whether it skips Planning or Human test (update_card logs it).
+    if let (true, Some(text)) = (has_session, skips_changed_note(&store, &card, changed)) {
+        let _ = store.queue(card_id, "message", &dry(&card, text));
     }
     // Card #151: Hugh changed the card's subagents (update_card logs it). Its session hears it,
     // so it runs or skips them from here on; a lead held for its own test, review or proof may
@@ -703,11 +802,135 @@ pub fn subagents_changed(store: &Store, card: &Card) -> (String, String) {
         if l.is_empty() { "none".into() } else { l.join(", ") }
     };
     let (on, off) = (names(true), names(false));
-    let line = format!("Hugh set its subagents. On: {on}. Off: {off}.");
+    // Card #162: which are the card's own, and which follow Settings.
+    let own: Vec<&str> = kanban_store::SUBAGENTS.iter().filter(|s| card.subagent_choice(s.key).is_some()).map(|s| s.name).collect();
+    let whose = match own.len() {
+        0 => " All follow the defaults in Settings > Sessions.".to_string(),
+        n if n == kanban_store::SUBAGENTS.len() => String::new(),
+        _ => format!(" This card's own: {}; the rest follow the defaults in Settings > Sessions.", own.join(", ")),
+    };
+    let line = format!("Hugh set its subagents. On: {on}. Off: {off}.{whose}");
     let note = format!(
-        "Hugh changed this card's subagents. On: {on}. Off: {off}. From now on, run only the ones that are on, where the column prompt says; skip a step for one that is off. The app's holds follow the same choice: a move isn't held for a subagent that is off. Only Hugh changes this."
+        "Hugh changed this card's subagents. On: {on}. Off: {off}.{whose} From now on, run only the ones that are on, where the column prompt says; skip a step for one that is off. The app's holds follow the same choice: a move isn't held for a subagent that is off. Only Hugh changes this."
     );
     (line, note)
+}
+
+/// Which of the card's flow options (card #162: skipPlanning, skipHumanTest, subagents) differ
+/// between `before` and `after`, in that order.
+pub fn flow_changed(before: Option<&Card>, after: &Card) -> Vec<&'static str> {
+    kanban_store::FLOW_FIELDS.iter().copied().filter(|k| before.and_then(|b| b.fields.get(*k)) != after.fields.get(*k)).collect()
+}
+
+/// The log line for Hugh's change of a skip option (card #162), as the card now holds it.
+pub fn skip_line(store: &Store, card: &Card, key: &str) -> String {
+    let name = skip_name(key);
+    let rule = if key == kanban_store::SKIP_PLANNING_KEY { kanban_store::SKIP_PLANNING_RULE_KEY } else { kanban_store::SKIP_HUMAN_TEST_RULE_KEY };
+    match card.skip_choice(key) {
+        Some(b) => format!("Hugh set {name}: {} for this card.", on_off(b)),
+        None => format!("Hugh set {name} back to the default in Settings ({}).", on_off(store.skip_default(rule))),
+    }
+}
+
+fn skip_name(key: &str) -> &'static str {
+    if key == kanban_store::SKIP_PLANNING_KEY { "Skip Planning" } else { "Skip Human test" }
+}
+
+fn on_off(b: bool) -> &'static str {
+    if b { "on" } else { "off" }
+}
+
+/// Every log line for Hugh's change of the card's flow (card #162): one for the subagents, one
+/// for each skip option that changed.
+pub fn flow_log_lines(store: &Store, card: &Card, changed: &[&str]) -> Vec<String> {
+    changed
+        .iter()
+        .map(|k| if *k == kanban_store::SUBAGENTS_KEY { subagents_changed(store, card).0 } else { skip_line(store, card, k) })
+        .collect()
+}
+
+/// What the card's session is told when Hugh changed whether it skips Planning or Human test
+/// (card #162). None when neither changed.
+pub fn skips_changed_note(store: &Store, card: &Card, changed: &[&str]) -> Option<String> {
+    let mut lines = Vec::new();
+    for key in [kanban_store::SKIP_PLANNING_KEY, kanban_store::SKIP_HUMAN_TEST_KEY] {
+        if !changed.contains(&key) {
+            continue;
+        }
+        let (on, whose) = store.skip_of(card, key);
+        let state = format!("{} ({})", on_off(on), whose_choice(whose));
+        let what = match (key == kanban_store::SKIP_PLANNING_KEY, on) {
+            (true, true) => "A move into Planning from Backlog or Blocked goes straight to In progress, with no plan or plan critique. A move back into Planning from a later column still plans it.",
+            (true, false) => "It is planned in Planning as usual.",
+            (false, true) => "When you move it to Human test (after its subagent checks pass, with the hand-over as usual), the app moves it into Ship it for him and sends you the Ship it prompt: that is his approval to ship it with no human test, so make your own testing count. Take it to: Human test still stops it there for him.",
+            (false, false) => "It stops in Human test for him as usual.",
+        };
+        lines.push(format!("- {}: {state}. {what}", skip_name(key)));
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let child = if card.stack_of().is_some() { "\nThis card is in a stack, so it never skips either: its lead's flow plans and ships it.\n" } else { "\n" };
+    Some(format!("Hugh changed this card's flow:\n{}{child}Only Hugh changes this.", lines.join("\n")))
+}
+
+/// After Hugh changed a flow default in Settings > Sessions (card #162): each card that follows
+/// that default (no choice of its own) and is in the column where it matters is told, if it has a
+/// session: a subagent in the column that runs it (as `subagents_note` words it), skip Human test
+/// in In progress. A stack lead that follows a subagent's default may be free of a hold now, so
+/// its stack's rules run again. Each card told gets a log line.
+pub fn after_default_change(app: &AppHandle, key: &str) {
+    let sub = kanban_store::SUBAGENTS.iter().find(|s| s.setting == key);
+    let skip_ht = key == kanban_store::SKIP_HUMAN_TEST_RULE_KEY;
+    if sub.is_none() && !skip_ht {
+        return;
+    }
+    let board = app.state::<Board>();
+    let Ok(mut store) = board.0.lock() else { return };
+    let cards = store.list(false).unwrap_or_default();
+    let mut leads = Vec::new();
+    for c in &cards {
+        let (note, line) = match sub {
+            Some(s) => {
+                if c.subagent_choice(s.key).is_some() {
+                    continue;
+                }
+                if c.is_lead() {
+                    leads.push(c.id.clone());
+                }
+                if c.column != s.column {
+                    continue;
+                }
+                let on = store.rule_on(s.setting);
+                let what = if on { "run it where the column prompt says; the app's holds wait for it again.".to_string() } else { s.skip.to_string() };
+                (
+                    format!("Hugh changed the default for {} in Settings > Sessions: it is {} now, and this card follows the default. {}", s.name, on_off(on), what),
+                    format!("Told its session: Hugh turned {} {} by default in Settings", s.name, on_off(on)),
+                )
+            }
+            None => {
+                if c.skip_choice(kanban_store::SKIP_HUMAN_TEST_KEY).is_some() || c.stack_of().is_some() || c.auto_to().is_some() || c.column != "In progress" {
+                    continue;
+                }
+                let on = store.skip_default(kanban_store::SKIP_HUMAN_TEST_RULE_KEY);
+                let what = if on { SKIPS_HUMAN_TEST } else { "It stops in Human test for him as usual" };
+                (
+                    format!("Hugh changed the default for Skip Human test in Settings > Sessions: it is {} now, and this card follows the default. {what}.", on_off(on)),
+                    format!("Told its session: Hugh turned Skip Human test {} by default in Settings", on_off(on)),
+                )
+            }
+        };
+        if has_session(app, &store, &c.id) {
+            let _ = store.queue(&c.id, "message", &dry(c, note));
+            let _ = store.add_log(&c.id, &line, "the app");
+        }
+    }
+    let cause = format!("Hugh changed a default in Settings ({key})");
+    for id in leads {
+        after_lead_verdict(app, &mut store, &id, "Hugh (Settings)", &cause);
+    }
+    drop(store);
+    let _ = app.emit("cards-changed", ());
 }
 
 /// Why a session may not move `card` to `to`, if it may not: a stack's lead goes to Human test
@@ -765,15 +988,30 @@ pub fn wait_move_refused(store: &Store, card: &Card, to: &str) -> Option<String>
 /// A move made by a session: of another card (at once), or its own (held, applied here). The
 /// stack rules follow it.
 pub fn session_move(app: &AppHandle, store: &mut Store, card: &Card, to: &str, reason: &str, by: &str) -> Result<(), String> {
+    session_move_to(app, store, card, to, reason, by).map(|_| ())
+}
+
+/// `session_move`, returning the column the card went to: In progress instead of Planning for a
+/// card that skips Planning (card #162), as the store's own moves do.
+pub fn session_move_to(app: &AppHandle, store: &mut Store, card: &Card, to: &str, reason: &str, by: &str) -> Result<String, String> {
+    let skipped = kanban_store::planning_skip(card, to, store.skip_default(kanban_store::SKIP_PLANNING_RULE_KEY));
+    let to = if skipped.is_some() { "In progress" } else { to };
     if let Some(why) = stack_move_refused(store, card, to) {
         let _ = store.add_log(&card.id, &format!("Refused a move to {to} by {by}: {why}"), "the app");
         return Err(why);
     }
     let mut patch = Patch::new();
     patch.insert("column".into(), json!(to));
+    if let Some(w) = skipped {
+        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        patch.insert("plan".into(), json!({ "state": kanban_store::PLAN_SKIPPED, "at": at, "whose": w.word(), "from": card.column }));
+    }
     store.update(&card.id, card.version, &patch, by).map_err(|e| e.to_string())?;
     let why = if reason.is_empty() { String::new() } else { format!(": {reason}") };
     store.add_log(&card.id, &format!("Moved from {} to {to} by {by}{why}", card.column), by).map_err(|e| e.to_string())?;
+    if let Some(w) = skipped {
+        let _ = store.add_log(&card.id, &kanban_store::skip_planning_line(w), by);
+    }
     after_stack_move(app, store, &card.id, by);
     auto_progress(app, store, &card.id);
     // A stack's child (card #113): in Human test it is ready to merge, so its lead is woken;
@@ -786,7 +1024,7 @@ pub fn session_move(app: &AppHandle, store: &mut Store, card: &Card, to: &str, r
             child_ready(app, store, &card.id);
         }
     }
-    Ok(())
+    Ok(to.to_string())
 }
 
 /// Is `card` built, for a join: in Human test or later, or with a PR.
@@ -1408,7 +1646,7 @@ pub fn run(app: AppHandle) {
             let Ok(mut store) = board.0.lock() else { continue };
             if let Ok(Some(m)) = store.waiting(&card_id, "move") {
                 let to: Value = serde_json::from_str(&m.payload).unwrap_or_default();
-                let col = to.get("column").and_then(Value::as_str).unwrap_or("").to_string();
+                let mut col = to.get("column").and_then(Value::as_str).unwrap_or("").to_string();
                 let reason = to.get("reason").and_then(Value::as_str).unwrap_or("").to_string();
                 // The app's own held move (card #98: a card routed small going on to In
                 // progress) says so; any other is the session's.
@@ -1437,11 +1675,15 @@ pub fn run(app: AppHandle) {
                     // Small-change auto-ship (card #104) checks only a session's own held move
                     // into Human test, and needs to know if Take it to was set before the move.
                     let had_auto = c.auto_to().is_some();
-                    let moved = session_move(&app, &mut store, &c, &col, &reason, &by);
-                    if moved.is_ok() && col == "Human test" {
+                    let moved = session_move_to(&app, &mut store, &c, &col, &reason, &by);
+                    if moved.as_deref() == Ok("Human test") {
                         crate::goes_on::consider(&app, &c.id, had_auto);
                     }
                     moved
+                });
+                // Card #162: a move into Planning on a card that skips it went to In progress.
+                let res = res.map(|to| {
+                    col = to;
                 });
                 let _ = store.done(m.id, if res.is_ok() { "applied" } else { "failed" });
                 if let (Err(_), Some(_)) = (&res, &app_by) {
@@ -1762,6 +2004,121 @@ mod tests {
         assert_eq!(line, "Hugh set its subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer.");
         assert!(note.starts_with("Hugh changed this card's subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer.") && note.contains("Only Hugh changes this."), "{note}");
         assert!(!kanban_store::looks_secret(&line) && !kanban_store::looks_secret(&note));
+    }
+
+    /// Card #162: when a card that skips Human test goes on into Ship it. A session's move (or the
+    /// stack rules) into Human test does; Hugh's own drag doesn't; Take it to: Human test wins; a
+    /// stack's child never does; the default reaches a card with no choice of its own.
+    #[test]
+    fn skip_human_test_goes_on_only_after_a_sessions_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        let to_test = |s: &mut Store, c: &Card, by: &str| s.update(&c.id, c.version, &p(json!({ "column": "Human test" })), by).unwrap();
+        let c = s.create(None, p(json!({ "title": "T", "column": "In progress", "skipHumanTest": true })), "Hugh (board)").unwrap();
+        assert!(skip_human_test_why(&s, &c).is_none(), "not in Human test");
+        let c = to_test(&mut s, &c, "card #1's session (held until its turn ended)");
+        let why = skip_human_test_why(&s, &c).unwrap();
+        assert_eq!(why, "he set it to skip Human test (this card's own), which is his approval to ship it with no human test");
+        // Off on the card: no.
+        let off = s.update(&c.id, c.version, &p(json!({ "skipHumanTest": false })), "Hugh (board)").unwrap();
+        assert!(skip_human_test_why(&s, &off).is_none());
+        // The default, for a card with no choice of its own.
+        let d = s.create(None, p(json!({ "title": "D", "column": "In progress" })), "Hugh (board)").unwrap();
+        let d = to_test(&mut s, &d, "card #2's session");
+        assert!(skip_human_test_why(&s, &d).is_none(), "default off");
+        s.set_page_setting(kanban_store::SKIP_HUMAN_TEST_RULE_KEY, "on").unwrap();
+        assert!(skip_human_test_why(&s, &d).unwrap().contains("(the default in Settings)"));
+        // Hugh's own drag into Human test never skips.
+        let h = s.create(None, p(json!({ "title": "H", "column": "In progress" })), "Hugh (board)").unwrap();
+        let h = s.move_by_hugh(&h.id, h.version, "Human test", Patch::new()).unwrap().card;
+        assert!(skip_human_test_why(&s, &h).is_none());
+        // Take it to: Human test wins: it stops there, also once its autoTo is cleared.
+        let a = s.create(None, p(json!({ "title": "A", "column": "In progress", "autoTo": "Human test" })), "Hugh (board)").unwrap();
+        let a = to_test(&mut s, &a, "card #3's session");
+        assert!(skip_human_test_why(&s, &a).is_none(), "autoTo set");
+        let a = s.update(&a.id, a.version, &p(json!({ "autoTo": null })), kanban_store::AUTO_BY).unwrap();
+        assert!(skip_human_test_why(&s, &a).is_none(), "autoTo cleared on arrival: it stopped for Hugh");
+        // A stack's child never goes on by itself.
+        let lead = s.create(None, p(json!({ "title": "L" })), "t").unwrap();
+        let kid = s.create_in_stack(p(json!({ "title": "K", "column": "In progress" })), lead.number, "t").unwrap();
+        let kid = s.update(&kid.id, kid.version, &p(json!({ "skipHumanTest": true })), "Hugh (board)").unwrap();
+        let kid = to_test(&mut s, &kid, "card #9's session");
+        assert!(skip_human_test_why(&s, &kid).is_none());
+    }
+
+    /// Card #162: what the sessions are told about the card's flow.
+    #[test]
+    fn the_flow_notes_tell_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        // Hugh's drag of a card that skips Planning: the In progress message says so.
+        let c = s.create(None, p(json!({ "title": "T", "repo": "a/b", "skipPlanning": true })), "Hugh (board)").unwrap();
+        let c = s.move_by_hugh(&c.id, c.version, "Planning", Patch::new()).unwrap().card;
+        let m = move_message(&s, &c, "Backlog", false);
+        assert!(m.starts_with("Hugh moved this card from Backlog to In progress."), "{m}");
+        assert!(m.contains(&format!("{SKIPPED_PLANNING} (Planning skipped by his choice for this card).")), "{m}");
+        assert!(SKIPPED_PLANNING.contains("no plan and no plan critique") && SKIPPED_PLANNING.contains("make the card's own worktree") && SKIPPED_PLANNING.contains("summary"));
+        assert!(!m.contains("Plan it now"), "no Planning prompt");
+        // Not from Human test (only the move that skipped says it), and the record is gone then.
+        let c2 = s.update(&c.id, c.version, &p(json!({ "column": "Human test" })), "card #1's session").unwrap();
+        assert!(c2.fields.get("plan").is_none(), "the skipped record goes with the next move");
+        let back = s.move_by_hugh(&c2.id, c2.version, "In progress", Patch::new()).unwrap().card;
+        assert!(!move_message(&s, &back, "Human test", false).contains(SKIPPED_PLANNING));
+        // The app's start for Hugh (Add card's Take it to Planning), on the default.
+        s.set_page_setting(kanban_store::SKIP_PLANNING_RULE_KEY, "on").unwrap();
+        let d = s.create(None, p(json!({ "title": "D" })), "Hugh (board)").unwrap();
+        let d = s.move_for_hugh(&d.id, d.version, "Planning", "he added it to be planned now").unwrap().card;
+        let m = move_message(&s, &d, "Backlog", true);
+        assert!(m.contains("The app moved this card from Backlog to In progress for Hugh: he asked for it to start when he added it."), "{m}");
+        assert!(m.contains("(Planning skipped by his default in Settings > Sessions)"), "{m}");
+        // Skip Human test: told in In progress, and in Ship it once the app moved it there.
+        let h = s.create(None, p(json!({ "title": "H", "column": "In progress", "skipHumanTest": true })), "Hugh (board)").unwrap();
+        let n = flow_note(&s, &h, "Planning").unwrap();
+        assert_eq!(n, format!("{SKIPS_HUMAN_TEST} (Human test skipped by his choice for this card)."));
+        let h = s.update(&h.id, h.version, &p(json!({ "column": "Human test" })), "card #3's session").unwrap();
+        let shipped = s.move_for_hugh(&h.id, h.version, "Ship it", "he set it to skip Human test").unwrap().card;
+        let m = move_message(&s, &shipped, "Human test", false);
+        assert!(m.contains("for Hugh: he set it to skip Human test, which is his approval to ship it with no human test."), "{m}");
+        assert!(m.contains(SHIP_NO_HUMAN_TEST), "{m}");
+        // autoTo wins: a card with Take it to hears that instead.
+        let a = card(json!({ "title": "A", "skipHumanTest": true, "autoTo": "Human test" }), "In progress");
+        assert!(flow_note(&s, &a, "Planning").is_none());
+        // A stack's child hears nothing of it.
+        let k = card(json!({ "title": "K", "skipHumanTest": true, "stackOf": 4 }), "In progress");
+        assert!(flow_note(&s, &k, "Planning").is_none());
+        for t in [SKIPPED_PLANNING, SKIPS_HUMAN_TEST, SHIP_NO_HUMAN_TEST] {
+            assert!(!kanban_store::looks_secret(t));
+        }
+    }
+
+    /// Card #162: Hugh's change of the card's flow, logged and told.
+    #[test]
+    fn hughs_flow_change_is_logged_and_told() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        let before = s.create(None, p(json!({ "title": "T" })), "Hugh (board)").unwrap();
+        let after = s.update(&before.id, before.version, &p(json!({ "skipPlanning": true, "skipHumanTest": false, "subagents": { "critic": false } })), "Hugh (board)").unwrap();
+        let ch = flow_changed(Some(&before), &after);
+        assert_eq!(ch, ["skipPlanning", "skipHumanTest", "subagents"]);
+        let lines = flow_log_lines(&s, &after, &ch);
+        assert_eq!(lines[0], "Hugh set Skip Planning: on for this card.");
+        assert_eq!(lines[1], "Hugh set Skip Human test: off for this card.");
+        assert!(lines[2].ends_with("This card's own: card-critic; the rest follow the defaults in Settings > Sessions."), "{}", lines[2]);
+        let n = skips_changed_note(&s, &after, &ch).unwrap();
+        assert!(n.starts_with("Hugh changed this card's flow:\n- Skip Planning: on (his choice for this card). A move into Planning from Backlog or Blocked goes straight to In progress"), "{n}");
+        assert!(n.contains("- Skip Human test: off (his choice for this card). It stops in Human test for him as usual.") && n.ends_with("Only Hugh changes this."), "{n}");
+        assert!(skips_changed_note(&s, &after, &["subagents"]).is_none());
+        // Back to the default.
+        let back = s.update(&after.id, after.version, &p(json!({ "skipPlanning": null })), "Hugh (board)").unwrap();
+        assert_eq!(flow_changed(Some(&after), &back), ["skipPlanning"]);
+        assert_eq!(skip_line(&s, &back, "skipPlanning"), "Hugh set Skip Planning back to the default in Settings (off).");
+        assert!(skips_changed_note(&s, &back, &["skipPlanning"]).unwrap().contains("- Skip Planning: off (his default in Settings > Sessions). It is planned in Planning as usual."));
+        assert!(flow_changed(Some(&back), &back).is_empty());
+        let none = card(json!({ "title": "N" }), "In progress");
+        assert!(subagents_changed(&s, &none).0.ends_with("All follow the defaults in Settings > Sessions."));
     }
 
     #[test]

@@ -466,10 +466,13 @@ pub fn git_facts(checkout: &str, branch: &str) -> Result<Facts, String> {
 // ---------------------------------------------------------------------------------------------
 
 /// True when the card never goes on by itself, so the app checks nothing and logs nothing.
+/// A card set to skip Human test (card #162) goes on by that rule instead, at once: its own
+/// `skipHumanTest` here, the board's default in `goes_on` (which reads the store).
 pub fn skip(card: &Card) -> bool {
     let auto_to = card.fields.get("autoTo").and_then(Value::as_str).is_some_and(|s| !s.is_empty());
     let opt_out = card.fields.get("smallOptOut").and_then(Value::as_bool) == Some(true);
-    card.archived || card.stack_of().is_some() || card.is_lead() || auto_to || opt_out
+    let skips_test = card.skip_choice(kanban_store::SKIP_HUMAN_TEST_KEY) == Some(true);
+    card.archived || card.stack_of().is_some() || card.is_lead() || auto_to || opt_out || skips_test
 }
 
 /// A path to compare: lower case, "\" as "/", no trailing "/".
@@ -1187,6 +1190,9 @@ mod tests {
             ("autoTo", json!(""), false),
             ("smallOptOut", json!(true), true),
             ("smallOptOut", json!(false), false),
+            // Card #162: a card that skips Human test goes on by that rule, with no wait.
+            ("skipHumanTest", json!(true), true),
+            ("skipHumanTest", json!(false), false),
         ] {
             let mut c = good_card();
             c.fields.insert(k.into(), v.clone());

@@ -91,6 +91,11 @@ pub fn set_setting(app: AppHandle, board: State<Board>, key: String, value: Stri
         crate::private::set(&v);
     }
     settings_changed(&app, &key);
+    // Card #162: a flow default (a subagent, skip Human test) reaches the cards that follow it
+    // at once; their sessions are told where it matters.
+    if changed_now {
+        crate::dispatch::after_default_change(&app, &key);
+    }
     // The repos whose small changes ship with no human test (card #104): every change is told,
     // so one Hugh didn't make is seen. The same rule as the log's.
     if key == kanban_store::SMALL_REPOS_KEY && changed_now {

@@ -93,7 +93,7 @@ fn tell(app: &AppHandle, card: &Card, text: &str) {
 /// CSS change has its screenshots. None when the card isn't one to check.
 fn read(store: &Store, card_id: &str) -> Option<(Card, SmallRepo, bool)> {
     let card = store.get(card_id).ok()?;
-    if small::skip(&card) {
+    if small::skip(&card) || store.skips_human_test(&card) {
         return None;
     }
     let entry = store.small_repo_for(repo_of(&card))?;
@@ -116,7 +116,7 @@ fn check(card: &Card, entry: &SmallRepo, ev: bool) -> Result<Value, String> {
 /// None when the card is no longer one to check: moved on, skipped, or its repo's entry changed.
 fn decide_now(store: &Store, card_id: &str, entry: &SmallRepo, facts: &Result<small::Facts, String>) -> Option<(Card, Result<Value, String>)> {
     let card = store.get(card_id).ok()?;
-    if card.column != "Human test" || small::skip(&card) || store.small_repo_for(repo_of(&card)).as_ref() != Some(entry) {
+    if card.column != "Human test" || small::skip(&card) || store.skips_human_test(&card) || store.small_repo_for(repo_of(&card)).as_ref() != Some(entry) {
         return None;
     }
     let ev = css_evidence(store, &card);
@@ -252,6 +252,9 @@ fn cant_go_on(store: &Store, card: &Card) -> Option<String> {
         "Hugh set Take it to on it"
     } else if card.fields.get(SMALL_OPT_OUT_KEY).and_then(Value::as_bool) == Some(true) {
         "Hugh turned small-change auto-ship off for it"
+    } else if store.skips_human_test(card) {
+        // Card #162: it goes on by that rule when a session moves it into Human test, not this one.
+        "Hugh set it to skip Human test"
     } else if store.small_repo_for(repo_of(card)).is_none() {
         "its repo is no longer on the small-change list"
     } else {

@@ -203,18 +203,18 @@ fn create_card(app: AppHandle, board: State<Board>, id: String, mut fields: Patc
 fn update_card(app: AppHandle, board: State<Board>, id: String, version: i64, patch: Patch, by: Option<String>) -> CmdResult<Value> {
     let mut store = board.0.lock().map_err(CmdError::other)?;
     let by = by.unwrap_or_else(|| "Hugh (board)".into());
-    let subs_before = store.get(&id).ok().and_then(|c| c.fields.get(kanban_store::SUBAGENTS_KEY).cloned());
+    let before = store.get(&id).ok();
     let card = store.update(&id, version, &patch, &by).map_err(|e| refused(&store, e))?;
-    // Card #151: Hugh's change of the card's subagents is logged, once, only when it changed.
-    let subs_changed = card.fields.get(kanban_store::SUBAGENTS_KEY).cloned() != subs_before;
-    if subs_changed {
-        let (line, _) = dispatch::subagents_changed(&store, &card);
+    // Cards #151 and #162: Hugh's change of the card's flow (its subagents, skip Planning, skip
+    // Human test) is logged, once each, only when it changed.
+    let flow = dispatch::flow_changed(before.as_ref(), &card);
+    for line in dispatch::flow_log_lines(&store, &card, &flow) {
         let _ = store.add_log(&id, &line, &by);
     }
     let out = doc(&store, &card);
     drop(store);
     changed(&app);
-    let keys: Vec<String> = patch.keys().filter(|k| k.as_str() != kanban_store::SUBAGENTS_KEY || subs_changed).cloned().collect();
+    let keys: Vec<String> = patch.keys().filter(|k| !kanban_store::FLOW_FIELDS.contains(&k.as_str()) || flow.contains(&k.as_str())).cloned().collect();
     let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
     dispatch::after_edit(&app, &id, &refs);
     Ok(out)
@@ -247,7 +247,7 @@ fn hugh_move(app: &AppHandle, mut store: lockwatch::WatchedGuard<'_, Store>, id:
             }
         }
     }
-    let out = json!({ "card": doc(&store, &card), "version": card.version, "ship": m.ship, "plan": m.plan, "shipWaitFor": wait_for });
+    let out = json!({ "card": doc(&store, &card), "version": card.version, "ship": m.ship, "plan": m.plan, "skippedPlanning": m.skipped_planning, "shipWaitFor": wait_for });
     // A stack's child has its own session (card #113), which after_move tells or starts like any
     // card's. Its lead hears of the move, and a child now in Human test is ready to merge.
     let lead = store.stack_lead(&card).ok().flatten();

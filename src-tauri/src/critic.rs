@@ -71,6 +71,11 @@ pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
     if card.column == "Blocked" && built {
         return None;
     }
+    // Card #162: a card that skips Planning has no plan to critique on its way from Backlog or
+    // Blocked into In progress. Once Hugh moves it into Planning, it is critiqued as any card.
+    if matches!(card.column.as_str(), "Backlog" | "Blocked") && to == "In progress" && store.skips_planning(card) {
+        return None;
+    }
     // Card #144's holds, where today's applies (the rule on, from before the build into it):
     // a question for Hugh, and a card routed small whose one critique failed.
     let required = store.subagent_on(card, "critic");
@@ -129,6 +134,24 @@ mod tests {
 
     fn card(fields: Value, column: &str) -> Card {
         Card { id: "c4".into(), number: 4, column: column.into(), order: None, order_col: None, archived: false, fields: fields.as_object().cloned().unwrap(), version: 1 }
+    }
+
+    /// Card #162: a card that skips Planning isn't held for a plan critique from Backlog or
+    /// Blocked into In progress; from Planning (Hugh's move back there) it is, as any card.
+    #[test]
+    fn a_card_that_skips_planning_needs_no_critique_to_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let skip = |col: &str| card(json!({ "title": "T", "skipPlanning": true }), col);
+        for from in ["Backlog", "Blocked"] {
+            assert!(gate(&s, &skip(from), "In progress").is_none(), "{from}");
+            assert!(gate(&s, &skip(from), "Human test").is_some(), "{from}: never straight past the build");
+        }
+        assert!(gate(&s, &skip("Planning"), "In progress").is_some(), "in Planning it plans, so it is critiqued");
+        assert!(gate(&s, &card(json!({ "title": "T", "skipPlanning": false }), "Backlog"), "In progress").is_some());
+        s.set_page_setting(kanban_store::SKIP_PLANNING_RULE_KEY, "on").unwrap();
+        assert!(gate(&s, &card(json!({ "title": "T" }), "Backlog"), "In progress").is_none(), "the default");
+        assert!(gate(&s, &card(json!({ "title": "T", "stackOf": 9 }), "Backlog"), "In progress").is_some(), "a stack's child never skips");
     }
 
     #[test]

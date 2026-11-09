@@ -59,7 +59,7 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card } } },
         { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, blockedBy and waitedOn, and for stacks: stack, stackOf, passed).",
           "inputSchema": { "type": "object", "properties": { "column": { "type": "string" }, "include_archived": { "type": "boolean" } } } },
-        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it.", UPDATABLE.join(", ")),
+        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning and skipHumanTest (true, false, or null for the default in Settings) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
         { "name": "kanban_add_log", "description": "Add a line to a card's log.",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
@@ -90,9 +90,18 @@ fn base_schemas() -> Value {
     ])
 }
 
-/// The first field in `fields` that kanban_update_card may not set.
+/// The first field in `fields` that kanban_update_card may not set from a card's session.
+#[cfg(test)]
 fn not_updatable(fields: &serde_json::Map<String, Value>) -> Option<&String> {
     fields.keys().find(|k| !UPDATABLE.contains(&k.as_str()))
+}
+
+/// The first field in `fields` that this caller may not set with kanban_update_card. A card's
+/// session and the Router (`held`) get `UPDATABLE` only. Hugh's own sessions outside the app and
+/// his `kb` (not held) may also set the card's flow (card #162: skipPlanning, skipHumanTest and
+/// subagents), which are his alone.
+fn not_updatable_by(fields: &serde_json::Map<String, Value>, held: bool) -> Option<&String> {
+    fields.keys().find(|k| !UPDATABLE.contains(&k.as_str()) && (held || !kanban_store::FLOW_FIELDS.contains(&k.as_str())))
 }
 
 /// Tools only `kb` reaches (over /tool), never listed for or callable by a card session's MCP.
@@ -140,6 +149,9 @@ fn doc(store: &Store, c: &Card) -> Value {
     // Card #151: the subagents on the card as they hold now: its own choice, else the board's
     // default (a card made before it). Hugh's only: kanban_update_card refuses the field.
     d[kanban_store::SUBAGENTS_KEY] = Value::Object(store.subagents_of(c));
+    // Card #162: the card's flow, each option's value and whether it is the card's own or the
+    // default: skipPlanning, skipHumanTest and the six subagents.
+    d["flow"] = store.flow_of(c);
     d
 }
 
@@ -291,8 +303,9 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
         "kanban_update_card" => {
             let c = target(&store, own.as_deref(), args)?;
             let fields = args.get("fields").and_then(Value::as_object).ok_or("pass the fields to change as `fields`")?;
-            if let Some(bad) = not_updatable(fields) {
-                return Err(format!("\"{bad}\" can't be set this way (allowed: {})", UPDATABLE.join(", ")));
+            if let Some(bad) = not_updatable_by(fields, held) {
+                let only_hugh = if kanban_store::FLOW_FIELDS.contains(&bad.as_str()) { " The card's flow (skipPlanning, skipHumanTest, subagents) is Hugh's alone: ask him." } else { "" };
+                return Err(format!("\"{bad}\" can't be set this way (allowed: {}).{only_hugh}", UPDATABLE.join(", ")));
             }
             if let Some(ch) = fields.get("choices") {
                 let ok = ch.is_null() || ch.as_array().map_or(false, |a| a.iter().all(|v| v.as_str().map_or(false, |t| !t.trim().is_empty())));
@@ -305,7 +318,18 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             }
             let version = args.get("if_version").and_then(Value::as_i64).unwrap_or(c.version);
             let card = store.update(&c.id, version, &fields.clone(), &by).map_err(|e| e.to_string())?;
-            doc(&store, &card)
+            // Card #162: Hugh's change of the card's flow from his own session or kb: logged as
+            // the page's edit is, and the same after-edit (the session told, holds and the
+            // stack rules run again) once the board is let go.
+            let flow = dispatch::flow_changed(Some(&c), &card);
+            for line in dispatch::flow_log_lines(&store, &card, &flow) {
+                let _ = store.add_log(&card.id, &line, &by);
+            }
+            if !flow.is_empty() {
+                let (a, id) = (app.clone(), card.id.clone());
+                std::thread::spawn(move || dispatch::after_edit(&a, &id, &flow));
+            }
+            doc(&store, &store.get(&card.id).unwrap_or(card))
         }
         "kanban_add_log" => {
             let c = target(&store, own.as_deref(), args)?;
@@ -342,8 +366,13 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
                     .map_err(|e| e.to_string())?;
                 json!(format!("Queued: card #{} moves to {to} when your turn ends. Finish your turn as normal.", c.number))
             } else {
-                dispatch::session_move(app, &mut store, &c, to, reason, &by)?;
-                json!(format!("Moved card #{} to {to}.", c.number))
+                let went = dispatch::session_move_to(app, &mut store, &c, to, reason, &by)?;
+                if went != to {
+                    // Card #162: Hugh has Planning skipped for it.
+                    json!(format!("Moved card #{} to {went}: Hugh has Planning skipped for it, so it went straight to In progress.", c.number))
+                } else {
+                    json!(format!("Moved card #{} to {to}.", c.number))
+                }
             }
         }
         "kanban_create_card" => {
@@ -550,10 +579,32 @@ mod tests {
         // Card #151: a card's subagents are Hugh's alone, not a session's or the Router's.
         assert!(!UPDATABLE.contains(&kanban_store::SUBAGENTS_KEY) && !CREATE_FIELDS.contains(&kanban_store::SUBAGENTS_KEY));
         assert_eq!(not_updatable(&json!({ "title": "T", "subagents": { "tester": false } }).as_object().cloned().unwrap()).map(String::as_str), Some(kanban_store::SUBAGENTS_KEY));
+        // Card #162: nor skip Planning or skip Human test.
+        for k in kanban_store::FLOW_FIELDS {
+            assert!(!UPDATABLE.contains(&k) && !CREATE_FIELDS.contains(&k), "{k}");
+        }
         assert!(UPDATABLE.contains(&"blockedBy"));
         assert!(!UPDATABLE.contains(&"waitedOn"), "the app writes waitedOn");
         let create = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_create_card").cloned().unwrap();
         assert!(create["inputSchema"]["properties"].get("stack").is_some());
+    }
+
+    /// Card #162: a card's session and the Router (held) can't set the card's flow; Hugh's own
+    /// sessions outside the app and kb (not held) can, and nothing else beyond UPDATABLE.
+    #[test]
+    fn only_hughs_own_callers_set_the_cards_flow() {
+        let f = |v: Value| v.as_object().cloned().unwrap();
+        for flow in [json!({ "skipPlanning": true }), json!({ "skipHumanTest": null }), json!({ "subagents": { "critic": false } }), json!({ "summary": "s", "skipHumanTest": false })] {
+            let bad = not_updatable_by(&f(flow.clone()), true).cloned();
+            assert!(bad.as_deref().is_some_and(|k| kanban_store::FLOW_FIELDS.contains(&k)), "held: {flow}");
+            assert_eq!(not_updatable_by(&f(flow.clone()), false), None, "unheld: {flow}");
+        }
+        // Not held is still held to the list for everything else.
+        assert_eq!(not_updatable_by(&f(json!({ "autoTo": "Deploy complete" })), false).map(String::as_str), Some("autoTo"));
+        assert_eq!(not_updatable_by(&f(json!({ "smallOptOut": true })), false).map(String::as_str), Some("smallOptOut"));
+        assert_eq!(not_updatable_by(&f(json!({ "summary": "s" })), true), None);
+        let upd = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_update_card").cloned().unwrap();
+        assert!(upd["description"].as_str().unwrap().contains("The card's flow is Hugh's alone"));
     }
 
     #[test]

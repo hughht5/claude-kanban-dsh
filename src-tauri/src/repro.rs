@@ -777,8 +777,11 @@ mod tests {
         // A second report joins the open cycle.
         let (c, _) = mark_needed(&mut s, &c, "card-tester", "Esc doesn't close it").unwrap();
         assert_eq!(c.fields[REPRO_KEY]["reports"].as_array().unwrap().len(), 2);
-        // Card #151: the board's default off is for new cards; this one keeps its reproducer.
+        // Card #162: the board's default reaches a card with no choice of its own, both ways.
         s.set_page_setting(REPRO_RULE_KEY, "off").unwrap();
+        assert!(!mark_needed(&mut s, &c, "found-a-problem", "while off").unwrap().1);
+        s.set_page_setting(REPRO_RULE_KEY, "on").unwrap();
+        let c = s.get(&c.id).unwrap();
         assert!(mark_needed(&mut s, &c, "found-a-problem", "again").unwrap().1);
         // Its own choice off: the report is only logged.
         let c = s.get(&c.id).unwrap();
@@ -788,7 +791,8 @@ mod tests {
         assert_eq!(c2.fields[REPRO_KEY]["reports"].as_array().unwrap().len(), 3, "off changes nothing");
         assert_eq!(s.get(&c.id).unwrap().fields[REPRO_KEY], c.fields[REPRO_KEY]);
         assert!(s.log(&c.id).unwrap().iter().any(|l| l.text.contains("Hugh has the card-reproducer off for this card")));
-        // A card made now has it off from the start, and its gate holds nothing.
+        // A card that follows the default off has it off, and its gate holds nothing.
+        s.set_page_setting(REPRO_RULE_KEY, "off").unwrap();
         let n = s.create(None, json!({ "title": "N", "column": "In progress" }).as_object().cloned().unwrap(), "test").unwrap();
         assert!(!mark_needed(&mut s, &n, "report-a-bug", "x").unwrap().1);
     }
