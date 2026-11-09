@@ -263,7 +263,8 @@ fn keep_out_of_status(g: &Git, checkout: &Path, branch: &str) -> Result<(), Stri
 /// Makes `plan`'s worktree, or finds it made. Touches nothing that isn't the card's own: a
 /// folder already there that isn't this card's worktree is left alone and refused. Before it
 /// adds one, `git worktree prune` forgets worktrees whose folders were deleted by hand (only
-/// git's own records of them), so a card whose folder went can have it again.
+/// git's own records of them), so a card branch whose folder went gets a worktree again. A card
+/// that still names the missing folder in its worktreePath isn't planned again: clear the field first.
 pub fn make(plan: &Plan) -> Result<Made, String> {
     let g = Git::new();
     let co = &plan.checkout;

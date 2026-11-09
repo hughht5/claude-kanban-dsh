@@ -297,7 +297,8 @@ fn start_card(app: &AppHandle, args: &Value, may_start: bool) -> Result<Value, S
     let mode = if crate::conversation(&store, &c).is_some() { "resume" } else { "new" };
     let begun = crate::begin_session(app, &mut store, &c, mode, "router")?;
     let text = match begun {
-        crate::Begun::Started(_) => format!("Started card #{}'s session ({mode}) in {wt}.", c.number),
+        // The folder it really runs in: the start may have made the card's own worktree (card #146).
+        crate::Begun::Started(row) => format!("Started card #{}'s session ({mode}) in {}.", c.number, row.cwd),
         crate::Begun::Queued(pos) => format!("Card #{}'s start waits under Hugh's cap: number {pos} in line.", c.number),
     };
     let _ = store.add_log(&c.id, &format!("The Router started its session ({mode})"), ROUTER_BY);
