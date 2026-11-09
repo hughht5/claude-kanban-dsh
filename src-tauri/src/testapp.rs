@@ -429,6 +429,9 @@ pub struct Step {
     pub messages: Vec<(String, String)>,
     /// The card whose turn it is but whose session is stopped (card #168): the pump starts it.
     pub wake: Option<String>,
+    /// A card given the turn while stopped whose session didn't start in time (card #168): `run`
+    /// frees its test app too, so the next card waiting for one gets it.
+    pub free: Option<String>,
     pub changed: bool,
 }
 
@@ -481,6 +484,7 @@ pub fn step(
     if let Some(t) = queue.wake_ran_out(now, |id| live.live.contains(id)) {
         let why = Ended::NoSession(format!("didn't start within {} min", q::WAKE_GRACE_MINUTES));
         ended(&mut out, &t, &why, &card);
+        out.free = t.who.card_id.clone();
     }
     // Its turn came while its session was stopped: the pump starts it (card #168). Before
     // `next`, so the card behind it doesn't take the turn while its session starts. A holder
@@ -720,6 +724,11 @@ pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, l
         logs.extend(st.logs);
         messages.extend(st.messages);
         wakes.extend(st.wake.map(|id| (id, slot)));
+        if let Some(id) = st.free {
+            if let Some(m) = free_unstarted(store, &id) {
+                messages.push((id, m));
+            }
+        }
     }
     if let Ok(ls) = store.step_slot_line(now, kanban_store::slot(), &shared.elsewhere()) {
         for (id, why) in ls.left {
@@ -767,14 +776,25 @@ fn wake(app: &AppHandle, id: &str, slot: u32, now: DateTime<Utc>) {
                 // Heard when its session next runs, as every other end of a turn is.
                 let why = Ended::NoSession(format!("couldn't be started ({e})"));
                 let _ = store.queue(id, "message", &ended_message(&why.text()));
+                if let Some(m) = free_unstarted(&mut store, id) {
+                    let _ = store.queue(id, "message", &m);
+                }
             }
-            let next = if ended.is_some() { "its turn ended, and the next in line gets it" } else { "it keeps its place, and the next in line gets the turn" };
+            let next = if ended.is_some() { "its turn ended and its test app is free again, for the next card waiting for one" } else { "it keeps its place, and the next in line gets the turn" };
             format!("Its turn on {on} came while its session was stopped, and the app couldn't start it ({e}): {next}")
         }
     };
     let _ = store.add_log(id, &line, "the app");
     drop(store);
     let _ = app.emit("cards-changed", ());
+}
+
+/// A card whose session couldn't be started for its turn can't use its test app: it is freed
+/// (logged by the store), so the next card waiting for a test app gets it (card #168). Returns
+/// the message for the card's session, heard when it next runs.
+fn free_unstarted(store: &mut Store, id: &str) -> Option<String> {
+    let why = "its session was stopped and couldn't be started for its turn";
+    store.free_test_app(id, why, "the app").ok().flatten().map(|s| freed_message(s, why))
 }
 
 /// What a new session started for its turn hears first (card #168): it has no conversation to
@@ -1779,6 +1799,32 @@ mod tests {
         store.move_by_hugh(&a.id, c.version, "Ship it", kanban_store::Patch::new()).unwrap();
         run(&mut store, t(3), 60, &Shared::default(), &Live::default());
         assert!(store.waiting(&a.id, "message").unwrap().is_none());
+    }
+
+    /// Card #168: a card given a test app and its turn while stopped (the slot line's take) is
+    /// woken; if its session hasn't started within the grace, its turn ends and its test app is
+    /// freed, so the next card waiting for one gets it.
+    #[test]
+    fn a_stopped_card_whose_start_never_comes_frees_its_test_app_for_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let a = mk_card(&mut store, "In progress");
+        store.give_test_app(&a.id, 2, t(0)).unwrap();
+        let mut queue = TestAppQueue::default();
+        queue.take(Ask::tester(&a.id, a.number), t(0), false);
+        store.save_test_app_queue_for(2, &queue).unwrap();
+        store.queue(&a.id, "message", &given_message(a.number, 60, 2)).unwrap();
+        // Stopped, its turn unheard: woken once.
+        let (_, wakes) = run(&mut store, t(1), 60, &Shared::default(), &Live::default());
+        assert_eq!(wakes, vec![(a.id.clone(), 2)]);
+        assert_eq!(run(&mut store, t(2), 60, &Shared::default(), &Live::default()).1, vec![]);
+        assert_eq!(kanban_store::card_slot(&store.get(&a.id).unwrap()), Some(2), "kept while its session starts");
+        // Not up within the grace: the turn ends and Test 2 is free again.
+        run(&mut store, t(1 + q::WAKE_GRACE_MINUTES), 60, &Shared::default(), &Live::default());
+        assert!(store.test_app_queue_for(2).unwrap().holder.is_none());
+        assert_eq!(kanban_store::card_slot(&store.get(&a.id).unwrap()), None);
+        let log: Vec<String> = store.log(&a.id).unwrap().iter().map(|l| l.text.clone()).collect();
+        assert!(log.iter().any(|l| l.contains("didn't start within 5 min")), "{log:?}");
     }
 
     #[test]

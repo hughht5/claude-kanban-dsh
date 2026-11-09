@@ -1297,8 +1297,10 @@ covered only cards that knew about it.
   desktop app is never started. For `WAKE_GRACE_MINUTES` (5) a woken card in line keeps the turn's
   place (`next` and `take_now` give it to nobody behind it); once its session runs, `next` gives
   it the turn and its usual message. Then the line moves on, and it keeps its place; a woken
-  holder whose session still isn't up loses the turn (`wake_ran_out`, `Ended::NoSession`). If the
-  start fails, the card's log says why: a held turn ends (with its ended message), and a place in
+  holder whose session still isn't up loses the turn (`wake_ran_out`, `Ended::NoSession`) and its
+  test app (`free_unstarted`), so the next card waiting for a test app gets it. If the start
+  fails, the card's log says why: a held turn ends (with its ended message) and its test app is
+  freed the same way, and a place in
   line is passed over at once (`wake_failed`). A new session (no app conversation) is first told
   why it runs (`woke_new_message`). It asks again (a take) to be woken again. The status shows
   `waking` on the holder and line entries; the board shows "starting its session".
