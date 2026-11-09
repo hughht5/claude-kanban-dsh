@@ -80,11 +80,13 @@ pub fn stage(store: &Store, child: &Card, lead: &Card) -> &'static str {
     kanban_store::stack_stage(child, lead, waiting(store, child, lead))
 }
 
-/// The worktree a child makes for itself: its repo's checkout folder with `-<n>`, as
-/// kanban-app.md says (C:\Users\someone\kanban-app-<n>).
+/// The worktree a child makes for itself: `.claude\worktrees\card-<n>` inside its repo's
+/// checkout, the one name every card's worktree has (card #146, and kanban-app.md's 6 Nov rule:
+/// inside the trusted checkout, Claude Code never asks to trust the folder).
 fn child_worktree(child: &Card, lead: &Card) -> String {
     let repo = text(child, "repo").or_else(|| text(lead, "repo"));
-    format!("{}-{}", crate::sessions::repo_folder(repo.as_deref()).display(), child.number)
+    let folder = crate::sessions::repo_folder(repo.as_deref()).join(".claude").join("worktrees").join(format!("card-{}", child.number));
+    folder.display().to_string()
 }
 
 /// What a stack child's session is told in every message about a move or a start: how it
@@ -511,8 +513,8 @@ mod tests {
         let lead = card(40, "In progress", json!({ "title": "L", "stack": [41], "branch": "dsh-order", "worktreePath": "C:\\Users\\someone\\kanban-app-order" }));
         let kid = card(41, "Planning", json!({ "title": "K", "stackOf": 40, "repo": "hughht5/kanban-app" }));
         let n = child_note(&kid, &lead);
-        // The repo's folder (repos.json, else home) plus the child's number.
-        let want = format!("{}-41,", crate::sessions::repo_folder(Some("hughht5/kanban-app")).display());
+        // Inside the repo's folder (repos.json, else home), as every card's worktree is (card #146).
+        let want = format!("{},", crate::sessions::repo_folder(Some("hughht5/kanban-app")).join(".claude").join("worktrees").join("card-41").display());
         assert!(n.contains(&want), "{n}");
         assert!(n.contains("on branch dsh-order-41, made from dsh-order"), "{n}");
         assert!(n.contains("don't bring up a dev stack"));

@@ -82,6 +82,10 @@ fn session_testing(live: State<Arc<sessions::Sessions>>) -> Value {
 /// Starts a session for `card`. `mode` is "new" (a fresh conversation in the repo's folder)
 /// or "resume" (the card's conversation, in the folder it ran in, on its own account).
 pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mode: &str) -> Result<SessionRow, String> {
+    // A card of a repo Hugh listed builds in its own worktree (card #146): the app makes it
+    // before a new session starts, so the session starts in it.
+    let (made, worktree_failed) = if mode == "new" { own_worktree(store, card) } else { (None, None) };
+    let card = made.as_ref().unwrap_or(card);
     let live = app.state::<Arc<sessions::Sessions>>();
     let api = app.state::<Api>().0.clone();
     let (model, effort, permission_mode) = session_settings(store, card);
@@ -178,16 +182,60 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
     stackrun::mark_own_build(store, &card.id);
     if plan.resume.is_none() {
         if store.waiting(&card.id, "message").ok().flatten().is_none() {
-            // A new session learns which card it is for, and its template's starting prompt.
-            // A move's message (the column prompt) is added after this one.
+            // A new session learns which card it is for, and its template's starting prompt
+            // (and where it builds, card #146). A move's message (the column prompt) is added
+            // after this one.
             let first = dispatch::dry(card, dispatch::opening(store, card));
             let _ = store.queue(&card.id, "message", &first);
-        } else if let Some(start) = dispatch::template_prompt(store, card) {
-            let _ = store.queue(&card.id, "message", &start);
+        } else {
+            if let Some(start) = dispatch::template_prompt(store, card) {
+                let _ = store.queue(&card.id, "message", &start);
+            }
+            // A start that waited under the cap: its move's message was written before the
+            // worktree was made.
+            if let Some(n) = dispatch::worktree_note_unsent(store, card) {
+                let _ = store.queue(&card.id, "message", &n);
+            }
+        }
+        if let Some(n) = worktree_failed {
+            let _ = store.queue(&card.id, "message", &n);
         }
     }
     let _ = app.emit("session-changed", card.id.clone());
     Ok(row)
+}
+
+/// Card #146: makes the card's own worktree if its repo is in Hugh's list and it has none yet,
+/// and records it on the card. Returns the card as written (None if nothing changed) and, if
+/// the worktree couldn't be made, the note that tells the session how to make it. A failure
+/// never stops the start: the session then starts in the repo's folder, as before.
+fn own_worktree(store: &mut Store, card: &Card) -> (Option<Card>, Option<String>) {
+    let list = store.own_worktree_repos();
+    let Some(p) = worktree::plan_for(card, &list, kanban_store::channel()) else { return (None, None) };
+    let by = "the app";
+    let folder = sessions::repo_folder(card.fields.get("repo").and_then(Value::as_str));
+    let m = match worktree::make(&p) {
+        Ok(m) => m,
+        Err(why) => {
+            let _ = store.add_log(&card.id, &format!("Couldn't make its own worktree: {why}. It starts in {} (card #146)", folder.display()), by);
+            return (None, Some(worktree::failed_note(&p, &why)));
+        }
+    };
+    let mut patch = kanban_store::Patch::new();
+    patch.insert("worktreePath".into(), serde_json::json!(p.path.display().to_string()));
+    patch.insert("branch".into(), serde_json::json!(p.branch));
+    // Read again: the card may have changed since the caller read it.
+    match store.get(&card.id).and_then(|fresh| store.update(&card.id, fresh.version, &patch, by)) {
+        Ok(c) => {
+            let _ = store.add_log(&card.id, &worktree::made_log(&p, &m), by);
+            (Some(c), None)
+        }
+        Err(e) => {
+            let why = e.to_string();
+            let _ = store.add_log(&card.id, &format!("{}, but couldn't write it on the card: {why}. It starts in {}", worktree::made_log(&p, &m), folder.display()), by);
+            (None, Some(worktree::unrecorded_note(&p, &why)))
+        }
+    }
 }
 
 #[tauri::command]
@@ -884,5 +932,86 @@ mod panel_cmd_tests {
         let c = save_attachment(root.path(), "c", "Q3 report.pdf", &pdf).unwrap();
         let n = c.file_name().unwrap().to_str().unwrap();
         assert!(n.starts_with("Q3-report-") && n.ends_with(".pdf"), "{n}");
+    }
+}
+
+/// Card #146: the start's own-worktree step, on a scratch repo.
+#[cfg(test)]
+mod own_worktree_tests {
+    use super::*;
+    use serde_json::json;
+    use std::process::Command;
+
+    fn sh(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = Command::new("git").current_dir(dir).args(args).output().expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn board(dir: &tempfile::TempDir) -> Option<(Store, std::path::PathBuf)> {
+        Command::new("git").arg("--version").output().ok()?;
+        let co = dir.path().join("repo");
+        std::fs::create_dir_all(&co).unwrap();
+        sh(&co, &["init", "-q", "-b", "main"]);
+        std::fs::write(co.join("a.txt"), "a").unwrap();
+        sh(&co, &["add", "a.txt"]);
+        sh(&co, &["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "a"]);
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        Some((s, co))
+    }
+
+    fn nothing(r: (Option<Card>, Option<String>)) -> bool {
+        r.0.is_none() && r.1.is_none()
+    }
+
+    fn new_card(s: &mut Store, fields: Value) -> Card {
+        s.create(None, fields.as_object().cloned().unwrap(), "t").unwrap()
+    }
+
+    #[test]
+    fn a_listed_cards_start_makes_and_records_its_worktree_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((mut s, co)) = board(&dir) else { return };
+        let c = new_card(&mut s, json!({ "title": "T", "repo": "a/b" }));
+        // Off (the default): nothing happens.
+        assert!(nothing(own_worktree(&mut s, &c)));
+        s.set_page_setting(kanban_store::OWN_WORKTREE_REPOS_KEY, &json!([{ "repo": "a/b", "checkout": co.display().to_string() }]).to_string()).unwrap();
+        let (made, failed) = own_worktree(&mut s, &c);
+        assert!(failed.is_none(), "{failed:?}");
+        let made = made.unwrap();
+        let name = worktree::name(c.number, kanban_store::channel());
+        let wt = co.join(".claude").join("worktrees").join(&name);
+        assert_eq!(made.fields.get("worktreePath").and_then(Value::as_str), Some(wt.display().to_string().as_str()));
+        assert_eq!(made.fields.get("branch").and_then(Value::as_str), Some(name.as_str()));
+        assert!(wt.is_dir());
+        let log = s.log(&c.id).unwrap();
+        assert!(log.iter().any(|l| l.text.starts_with("Made its own worktree") && l.by.as_deref() == Some("the app")), "{log:?}");
+        // The card is in it now: a second start changes nothing.
+        assert!(nothing(own_worktree(&mut s, &made)));
+        // A stack's card keeps its own flow.
+        let kid = new_card(&mut s, json!({ "title": "K", "repo": "a/b" }));
+        let mut kid_fields = kid.clone();
+        kid_fields.fields.insert("stackOf".into(), json!(1));
+        assert!(nothing(own_worktree(&mut s, &kid_fields)));
+    }
+
+    #[test]
+    fn a_failed_make_is_logged_and_the_session_is_told_how() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((mut s, co)) = board(&dir) else { return };
+        s.set_page_setting(kanban_store::OWN_WORKTREE_REPOS_KEY, &json!([{ "repo": "a/b", "checkout": co.display().to_string() }]).to_string()).unwrap();
+        let c = new_card(&mut s, json!({ "title": "T", "repo": "a/b" }));
+        // Something else is in the card's folder already.
+        let wt = co.join(".claude").join("worktrees").join(worktree::name(c.number, kanban_store::channel()));
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join("keep.txt"), "mine").unwrap();
+        let (made, failed) = own_worktree(&mut s, &c);
+        assert!(made.is_none());
+        let note = failed.unwrap();
+        assert!(note.contains("couldn't make it") && note.contains("worktree add --no-track -b"), "{note}");
+        assert_eq!(std::fs::read_to_string(wt.join("keep.txt")).unwrap(), "mine");
+        assert!(s.get(&c.id).unwrap().fields.get("worktreePath").is_none());
+        let log = s.log(&c.id).unwrap();
+        assert!(log.iter().any(|l| l.text.starts_with("Couldn't make its own worktree:") && l.text.contains("left it alone")), "{log:?}");
     }
 }

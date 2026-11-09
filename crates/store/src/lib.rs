@@ -46,6 +46,7 @@ pub use config::{default_profiles, page_default, profile_for, Profile, CRITIC_RU
 pub use evidence::{add_run, has_tested_evidence, EVIDENCE_KEY};
 pub use feed::{agent_of_by, agent_of_field, FeedItem, FeedPage, FeedQuery, FEED_DEFAULT_LIMIT, FEED_MAX_LIMIT, VERDICT_FIELDS, VERDICT_TEXT_MAX};
 pub use config::TODO_TOOLS_KEY;
+pub use config::{check_own_worktree_repos, OwnWorktreeRepo, OWN_WORKTREE_REPOS_KEY};
 pub use done_when::{
     clean_done_when, clean_done_when_checks, looks_like_sign_in, DONE_WHEN_CHECKS_KEY, DONE_WHEN_CHECK_LEN,
     DONE_WHEN_KEY, DONE_WHEN_MAX_CHECKS, DONE_WHEN_MAX_LEN, DONE_WHEN_NOTE_LEN, DONE_WHEN_STATES,

@@ -538,6 +538,26 @@ Decisions (the router's, from Hugh's delegation, and the card session's), after 
 - **The status rule is checked in the test app through `tools/cdp.mjs`**, as the repo has no
   JavaScript test runner (router accepted).
 
+## Card #146: each card in its own worktree (9 Nov 2026, stack #145)
+
+Decisions (the card session's, from Hugh's brief for stack #145):
+
+- **The app makes the worktree, not the session.** "One card builds at a time" was only a prompt
+  rule. With a prompt rule alone each session would make its worktree by hand after starting in the
+  shared checkout. Made first, the session starts in it and never works in the checkout.
+- **Opt-in per repo** (`sessions.own_worktree_repos`, empty by default), naming the checkout like
+  card #104's list, so a repo whose own prompts make their worktrees is untouched.
+- **Inside the checkout**, `.claude\worktrees\card-<n>` (the 6 Nov rule): Claude Code trusts a
+  trusted folder's subfolders, so the session isn't asked to trust a new folder. Stack children
+  are told the same folder name.
+- **`<channel>-card-<n>` on test channels**, because test boards are copies whose card numbers run
+  ahead of live's.
+- **From `origin/main` with no fetch**: the checkout's local `main` may hold a card's unshipped
+  commits (the old way of building), and the board is locked during a start. The merger rebases at
+  ship.
+- **Stacks keep card #113's flow**, and a card with a `worktreePath` keeps it. Only a new session
+  makes one: a resumed conversation stays where it ran.
+
 ## Platforms (6 Nov 2026, cards #114 and #117)
 
 - Every operating-system call sits in `src-tauri/src/platform/` behind one interface

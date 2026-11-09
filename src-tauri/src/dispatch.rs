@@ -187,7 +187,7 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
     if let Some(notes) = build_notes_for(card, from) {
         text = format!("{text}\n\n{notes}");
     }
-    dry(card, text)
+    dry(card, with_worktree_note(store, card, text))
 }
 
 /// The plan critic's build notes (card #144) for a card that has just come into In progress
@@ -238,7 +238,27 @@ pub fn app_move_message(store: &Store, card: &Card, from: &str, lead: &str) -> S
     if let Some(notes) = build_notes_for(card, from) {
         text = format!("{text}\n\n{notes}");
     }
-    dry(card, text)
+    dry(card, with_worktree_note(store, card, text))
+}
+
+/// Card #146: what a session in the worktree the app made for its card is told, after any
+/// column prompt that says to work in the shared checkout. None for any other card.
+pub fn worktree_note(_store: &Store, card: &Card) -> Option<String> {
+    crate::worktree::made_for(card, kanban_store::channel()).map(|p| crate::worktree::note(&p))
+}
+
+/// The card's worktree note (card #146), unless the message already waiting for its session
+/// has it (a new session's first message does).
+pub fn worktree_note_unsent(store: &Store, card: &Card) -> Option<String> {
+    worktree_note(store, card).filter(|n| !store.waiting(&card.id, "message").ok().flatten().is_some_and(|w| w.payload.contains(n.as_str())))
+}
+
+/// `text` with the card's worktree note at the end, unless it is waiting already.
+fn with_worktree_note(store: &Store, card: &Card, text: String) -> String {
+    match worktree_note_unsent(store, card) {
+        Some(n) => format!("{text}\n\n{n}"),
+        None => text,
+    }
 }
 
 /// What a card back in In progress from Human test is to do (card #93).
@@ -342,9 +362,13 @@ pub fn template_prompt(store: &Store, card: &Card) -> Option<String> {
 
 /// A new session's first message: who it is, then its card's template starting prompt.
 pub fn opening(store: &Store, card: &Card) -> String {
-    match template_prompt(store, card) {
+    let text = match template_prompt(store, card) {
         Some(start) => format!("{}\n\n{start}", header(card)),
         None => header(card),
+    };
+    match worktree_note(store, card) {
+        Some(n) => format!("{text}\n\n{n}"),
+        None => text,
     }
 }
 
@@ -371,7 +395,7 @@ pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<Strin
     if let Some(notes) = build_notes_for(card, from) {
         text = format!("{text}\n\n{notes}");
     }
-    Some(dry(card, text))
+    Some(dry(card, with_worktree_note(store, card, text)))
 }
 
 /// After a card moved by a session or the stack rules, or Hugh changed where it goes (card
@@ -1795,6 +1819,43 @@ mod tests {
         let s = Store::open(dir.path().join("b.db")).unwrap();
         assert!(move_message(&s, &moved, "Human test", false).contains("It came back from Human test"));
         assert!(!move_message(&s, &moved, "Planning", false).contains("It came back from Human test"));
+    }
+
+    /// Card #146: a card in the worktree the app made for it is told where it builds, in its
+    /// first message and in each move's message, once. Other cards hear nothing new.
+    #[test]
+    fn a_card_in_its_own_worktree_is_told_where_it_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let co = dir.path().join("repo");
+        std::fs::create_dir_all(co.join(".git")).unwrap();
+        let list = json!([{ "repo": "a/b", "checkout": co.display().to_string() }]).to_string();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        let c = s.create(None, p(json!({ "title": "T", "repo": "a/b", "column": "Planning" })), "t").unwrap();
+        // Before Hugh lists the repo, and before the card has its worktree: nothing.
+        assert!(worktree_note(&s, &c).is_none());
+        s.set_page_setting(kanban_store::OWN_WORKTREE_REPOS_KEY, &list).unwrap();
+        assert!(worktree_note(&s, &c).is_none(), "no worktreePath yet");
+        let wt = co.join(".claude").join("worktrees").join(crate::worktree::name(c.number, kanban_store::channel()));
+        let mut patch = Patch::new();
+        patch.insert("worktreePath".into(), json!(wt.display().to_string()));
+        let c = s.update(&c.id, c.version, &patch, "the app").unwrap();
+        let note = worktree_note(&s, &c).unwrap();
+        assert!(note.contains(&wt.display().to_string()) && note.contains("never on main"), "{note}");
+        assert!(opening(&s, &c).ends_with(&note));
+        // A move's message ends with it, after the column prompt it overrides.
+        let m = move_message(&s, &c, "Planning", false);
+        assert!(m.ends_with(&note) && m.matches(&note).count() == 1, "{m}");
+        // A new session's first message is waiting with it: the move's message doesn't repeat it.
+        s.queue(&c.id, "message", &opening(&s, &c)).unwrap();
+        assert_eq!(move_message(&s, &c, "Planning", false).matches(&note).count(), 0);
+        assert_eq!(app_move_message(&s, &c, "Planning", "why").matches(&note).count(), 0);
+        // The main checkout (the old way of building), or another repo: no note.
+        let old = card(json!({ "title": "T", "repo": "a/b", "worktreePath": co.display().to_string() }), "In progress");
+        assert!(worktree_note(&s, &old).is_none());
+        assert!(!move_message(&s, &old, "Planning", false).contains("its own git worktree"));
+        let other = card(json!({ "title": "T", "repo": "c/d", "worktreePath": wt.display().to_string() }), "In progress");
+        assert!(worktree_note(&s, &other).is_none());
     }
 
     #[test]

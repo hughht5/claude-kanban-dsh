@@ -772,3 +772,15 @@ an older build doesn't write (`input-test2.json` and the like) are harmless and 
 | `kb testapp --slot N`, `kb testapp free --slot N` | The revert |
 | `install.ps1`: per-slot turn and input waits, the owner wait, `channel` in the lock | The revert; an older script still meets the new apps on Test |
 | The page: tile chips, popover per test app, card details row, Settings box | The revert |
+
+## Card #146: each card in its own worktree (9 Nov 2026, stack #145, branch `dsh-146`)
+
+PowerShell 5.1 commands. `<checkout>` is the repo's checkout named in the setting, `<n>` the card's number.
+
+| Change | Undo |
+|---|---|
+| The setting `sessions.own_worktree_repos` (Settings > Sessions, "Build each card in its own worktree") | Remove every row in Settings and Save (empty is off). New sessions then start in the repo's folder, as before |
+| A card's worktree, made by the app (`<checkout>\.claude\worktrees\card-<n>`, branch `card-<n>`; `test-card-<n>` and so on from a test app) | Once the card's work is shipped or no longer wanted: `git -C <checkout> worktree remove <checkout>\.claude\worktrees\card-<n>` (it refuses while there is uncommitted work), then `git -C <checkout> branch -d card-<n>`. Clear the card's `worktreePath` and `branch` with `kb update <n>` if it lives on |
+| `/.claude/worktrees/` added to a checkout's `.git\info\exclude`, only where git didn't ignore it already | Delete the two lines under "# Card worktrees the kanban app makes (card #146)" from `<checkout>\.git\info\exclude` |
+| `start_session` makes the worktree, the note in the session's messages (`session_cmds.rs`, `dispatch.rs`, `src-tauri\src\worktree.rs`), the store setting (`crates\store\src\config.rs`), the Settings box (`ui\settings.js`) | `git revert` the card's commits (marked `(card #146)`) |
+| A stack child's note names `<checkout>\.claude\worktrees\card-<n>` (`stackrun::child_worktree`), not `<checkout>-<n>` | The same revert puts back `<checkout>-<n>` |

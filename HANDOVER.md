@@ -860,6 +860,50 @@ fields (`merge` on a child, written by card #100) and the start queue's `first` 
 - **Lead hold:** card #96's `stackHeld` and `after_lead_verdict` stay: the lead's own test of the
   integrated build must pass before the app moves the stack to Human test.
 
+## Each card in its own worktree (9 Nov 2026, card #146, stack #145)
+
+Built on the branch `dsh-146` from the stack's branch `dsh-145`. No migration: the list is one
+settings row, and the card's worktree is its ordinary `worktreePath` and `branch` fields.
+
+- **The setting:** `sessions.own_worktree_repos` (Settings > Sessions, "Build each card in its
+  own worktree"), a list of `{repo, checkout}` checked like card #104's list (owner/name, each
+  once, a full path holding `.git`, no secrets). Empty, the default, is off. Store:
+  `config.rs` (`OwnWorktreeRepo`, `check_own_worktree_repos`, `own_worktree_repos`,
+  `own_worktree_repo_for`); tests in `crates/store/tests/own_worktree.rs`.
+- **`src-tauri/src/worktree.rs`:** `plan_for` (pure) plans for a card of a listed repo that has no
+  `worktreePath`, isn't archived and isn't in a stack. The folder is
+  `<checkout>\.claude\worktrees\<name>` and the branch is `<name>`: `card-<n>` on live,
+  `<channel>-card-<n>` on a test channel, so a test board's numbers never take a live card's
+  branch. `make` runs git (no window, 15 s for all its commands together, because the board is
+  locked; git's error kept): a folder that is already that branch's worktree is used (one git
+  still has locked, an add stopped part way, is refused); otherwise `git worktree prune` forgets
+  folders deleted by hand, then a branch with no folder gets a worktree, else a new branch from
+  `origin/main` (else `main`), made with `--no-track` so it never has main as its upstream. There is no fetch, because the board is locked while a session
+  starts; the merger rebases at ship (card #100). Anything else in the folder is refused and left
+  alone. If git doesn't ignore `.claude/worktrees/` already, `make` adds it to the checkout's own
+  `info/exclude` (never committed), so the checkout's `git status` stays as it was.
+- **The start:** `start_session` (`session_cmds.rs`), mode "new" only, calls `own_worktree` first:
+  it makes the worktree, writes `worktreePath` and `branch` (by "the app") and logs "Made its own
+  worktree ...", so the session starts there. On a failure it logs "Couldn't make its own worktree:
+  ...", the session starts in the repo's folder as before, and its first message gets
+  `worktree::failed_note` (the git command to make it); if it was made but the card couldn't be
+  written, `worktree::unrecorded_note` (record it). A resumed session keeps the folder its
+  conversation ran in, on purpose: a card mid-build in the checkout must not lose its
+  uncommitted work to a new folder.
+- **The note:** `dispatch::worktree_note` (`worktree::note`) goes at the end of `opening`,
+  `move_message`, `app_move_message` and `held_move_message` for a card whose `worktreePath` is
+  its app-made folder and whose branch is its name (`worktree::made_for`, read from the card
+  alone, so it keeps its note if Hugh later edits the list): work only there, never in the checkout or on main,
+  don't change `worktreePath` or `branch`, and this replaces the prompts' shared-checkout rules. A
+  message already waiting with the note (a new session's first one) isn't given it twice. A start
+  that waited under the cap gets it after its move's message.
+- **One folder name:** a stack child's note (`stackrun::child_worktree`) now names
+  `<checkout>\.claude\worktrees\card-<n>` too, not `<checkout>-<n>`.
+- **Not here:** the prompt and rule text (kanban-app.md, AGENTS.md and the rest) is card #148's;
+  a test app per card is card #147's. Small-change auto-ship (card #104) still reads only its own
+  checkout's `main`, so a card in its own worktree doesn't go on by itself: it waits in Human test.
+  Each worktree builds its own `target` folder, so a card's first build is slower.
+
 ## Before-and-after evidence on the card (6 Nov 2026, card #101)
 
 Built on the branch `dsh-humantest` in the worktree `~\kanban-app-humantest`, made

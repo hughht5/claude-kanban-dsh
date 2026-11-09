@@ -213,6 +213,38 @@ async function sessions(m){
   await ruleBox(m,SMALL_GO_ON_RULE); // card #98
   await ruleBox(m,TODO_TOOLS_RULE); // card #106
   await smallReposBox(m);
+  await ownWorktreeBox(m); // card #146
+}
+
+// Card #146: the repos whose cards each build in their own git worktree, which the app makes
+// (<checkout>\.claude\worktrees\card-<n>, on branch card-<n>) when a card's first session
+// starts, so several cards of one repo build at once. Empty is off. Changes are kept in the
+// settings log, shown here.
+const OWN_WT_KEY="sessions.own_worktree_repos";
+async function ownWorktreeBox(m){
+  let g=null,err="";try{g=await invoke("get_setting",{key:OWN_WT_KEY})}catch(e){err=errText(e)}
+  let rows=[];try{rows=JSON.parse(g&&g.value||"[]")}catch(e){rows=[]}if(!Array.isArray(rows))rows=[];
+  const b=document.createElement("div");b.className="st-box st-ownwt";m.appendChild(b);
+  const row=(r,i)=>`<div class="row st-wrow" data-i="${i}"><input class="st-wr" placeholder="owner/name" value="${esc(r.repo||"")}" aria-label="Repo">
+    <input class="st-wc" placeholder="C:\\Users\\you\\repo" value="${esc(r.checkout||"")}" aria-label="Checkout folder"><button class="btn ghost st-wx" type="button">Remove</button></div>`;
+  async function draw(msgText,kind){
+    let log=[];try{log=await invoke("get_setting_log",{key:OWN_WT_KEY,limit:5})}catch(e){}
+    b.innerHTML=`<p class="st-radio"><b>Build each card in its own worktree</b></p>
+    <p class="meta">For the repos listed here, when a card's first session starts the app makes the card its own git worktree inside the checkout (.claude\\worktrees\\card-&lt;n&gt;, on a new branch card-&lt;n&gt; from origin/main), puts it on the card, and starts the session there. Several cards of one repo then build at the same time, and none of them works in the checkout itself. A stack's cards, and a card that already has a worktree, are left as they are. Empty is off (the default).</p>
+    ${rows.map(row).join("")||`<p class="meta">No repos: each card's session starts in its repo's folder.</p>`}
+    <div class="row"><button class="btn ghost" id="st-wadd" type="button">Add a repo</button><button class="btn" id="st-wsave" type="button"${g?"":" disabled"}>Save</button><span class="msg" id="st-wmsg"></span></div>
+    ${log.length?`<p class="meta">Changes:</p><ul class="log">${log.map(x=>{let v=[];try{v=JSON.parse(x.value)}catch(e){}const list=Array.isArray(v)&&v.length?v.map(r=>esc(r.repo)).join(", "):"none (off)";
+      return`<li><time>${esc(x.at)}</time>${esc(x.by)}: ${list}</li>`}).join("")}</ul>`:""}`;
+    const msg=b.querySelector("#st-wmsg");
+    if(!g)note(msg,"Couldn't read this setting: "+err,"err");else if(msgText)note(msg,msgText,kind);
+    const read=()=>{rows=[...b.querySelectorAll(".st-wrow")].map(d=>({repo:d.querySelector(".st-wr").value.trim(),checkout:d.querySelector(".st-wc").value.trim()}))};
+    b.querySelectorAll(".st-wx").forEach(x=>x.onclick=()=>{read();rows.splice(+x.closest(".st-wrow").dataset.i,1);draw()});
+    b.querySelector("#st-wadd").onclick=()=>{read();rows.push({repo:"",checkout:""});draw()};
+    b.querySelector("#st-wsave").onclick=async()=>{read();
+      try{const x=await invoke("set_setting",{key:OWN_WT_KEY,value:JSON.stringify(rows)});rows=JSON.parse(x);await draw("Saved","ok")}
+      catch(e){note(msg,"Not saved: "+errText(e),"err")}};
+  }
+  await draw();
 }
 
 // Small-change auto-ship (card #104): the repos whose small, fully checked cards go on to Ship it

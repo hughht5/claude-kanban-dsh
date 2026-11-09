@@ -75,6 +75,7 @@ pub const PAGE_SETTINGS: &[&str] = &[
     SMALL_GO_ON_KEY,
     REPRO_RULE_KEY,
     SMALL_REPOS_KEY,
+    OWN_WORKTREE_REPOS_KEY,
     TODO_TOOLS_KEY,
     // Card #151: the card-router's and card-merger's defaults for a new card.
     crate::ROUTER_RULE_KEY,
@@ -106,6 +107,31 @@ pub struct SmallRepo {
     pub branch: String,
 }
 
+/// Checks one list row's repo: `owner/name`, not listed before in `seen`.
+fn check_repo_row(n: usize, repo: &str, seen: &[&str]) -> Result<()> {
+    let ok_part = |p: &str| !p.is_empty() && p != "." && p != ".." && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    let parts: Vec<&str> = repo.split('/').collect();
+    if parts.len() != 2 || !parts.iter().all(|p| ok_part(p)) {
+        return Err(Error::Invalid(format!("repo row {n}: \"{repo}\" should be owner/name, like hughht5/kanban-app")));
+    }
+    if seen.iter().any(|o| o.eq_ignore_ascii_case(repo)) {
+        return Err(Error::Invalid(format!("repo row {n}: {repo} is listed twice")));
+    }
+    Ok(())
+}
+
+/// Checks one list row's checkout: an absolute path to a folder holding a git checkout.
+fn check_checkout_row(n: usize, checkout: &str) -> Result<()> {
+    let path = std::path::Path::new(checkout);
+    if !path.is_absolute() {
+        return Err(Error::Invalid(format!("repo row {n}: the checkout \"{checkout}\" should be a full path, like C:\\Users\\you\\repo")));
+    }
+    if !path.join(".git").exists() {
+        return Err(Error::Invalid(format!("repo row {n}: {checkout} isn't a git checkout (it has no .git)")));
+    }
+    Ok(())
+}
+
 /// Checks the small-change repo list: each repo `owner/name` and listed once, each checkout an
 /// absolute path to a folder holding a git checkout, each branch a plain branch name.
 pub fn check_small_repos(json: &str) -> Result<Vec<SmallRepo>> {
@@ -115,22 +141,9 @@ pub fn check_small_repos(json: &str) -> Result<Vec<SmallRepo>> {
     for (i, r) in rows.iter().enumerate() {
         let n = i + 1;
         let repo = r.repo.trim();
-        let ok_part = |p: &str| !p.is_empty() && p != "." && p != ".." && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
-        let parts: Vec<&str> = repo.split('/').collect();
-        if parts.len() != 2 || !parts.iter().all(|p| ok_part(p)) {
-            return Err(Error::Invalid(format!("repo row {n}: \"{repo}\" should be owner/name, like hughht5/kanban-app")));
-        }
-        if out.iter().any(|o| o.repo.eq_ignore_ascii_case(repo)) {
-            return Err(Error::Invalid(format!("repo row {n}: {repo} is listed twice")));
-        }
+        check_repo_row(n, repo, &out.iter().map(|o| o.repo.as_str()).collect::<Vec<_>>())?;
         let checkout = r.checkout.trim();
-        let path = std::path::Path::new(checkout);
-        if !path.is_absolute() {
-            return Err(Error::Invalid(format!("repo row {n}: the checkout \"{checkout}\" should be a full path, like C:\\Users\\you\\repo")));
-        }
-        if !path.join(".git").exists() {
-            return Err(Error::Invalid(format!("repo row {n}: {checkout} isn't a git checkout (it has no .git)")));
-        }
+        check_checkout_row(n, checkout)?;
         let branch = r.branch.trim();
         let ok_branch = !branch.is_empty()
             && !branch.starts_with(['-', '/', '.'])
@@ -145,6 +158,43 @@ pub fn check_small_repos(json: &str) -> Result<Vec<SmallRepo>> {
             return Err(Error::Secret(format!("repo row {n}")));
         }
         out.push(SmallRepo { repo: repo.into(), checkout: checkout.into(), branch: branch.into() });
+    }
+    Ok(out)
+}
+
+/// The repos whose cards each build in their own git worktree, which the app makes when the
+/// card's first session starts (card #146): a JSON list of `OwnWorktreeRepo`, empty (the
+/// default) for none.
+pub const OWN_WORKTREE_REPOS_KEY: &str = "sessions.own_worktree_repos";
+
+/// A repo whose cards each get their own worktree (card #146): its name as cards hold it
+/// (`owner/name`), and the checkout the worktrees are made from (and inside, under
+/// `.claude\worktrees`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnWorktreeRepo {
+    pub repo: String,
+    pub checkout: String,
+}
+
+/// Checks the own-worktree repo list: each repo `owner/name` and listed once, each checkout an
+/// absolute path to a folder holding a git checkout.
+pub fn check_own_worktree_repos(json: &str) -> Result<Vec<OwnWorktreeRepo>> {
+    let rows: Vec<OwnWorktreeRepo> = serde_json::from_str(json)
+        .map_err(|e| Error::Invalid(format!("the own-worktree repo list should be a list of {{repo, checkout}}: {e}")))?;
+    let mut out: Vec<OwnWorktreeRepo> = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        let n = i + 1;
+        let repo = r.repo.trim();
+        check_repo_row(n, repo, &out.iter().map(|o| o.repo.as_str()).collect::<Vec<_>>())?;
+        // A trailing separator goes, unless it is a drive's root (`D:\`).
+        let given = r.checkout.trim();
+        let cut = given.trim_end_matches(['\\', '/']);
+        let checkout = if std::path::Path::new(cut).is_absolute() { cut } else { given };
+        check_checkout_row(n, checkout)?;
+        if looks_like_token(repo) || looks_like_token(checkout) {
+            return Err(Error::Secret(format!("repo row {n}")));
+        }
+        out.push(OwnWorktreeRepo { repo: repo.into(), checkout: checkout.into() });
     }
     Ok(out)
 }
@@ -411,6 +461,21 @@ impl Store {
         self.small_repos().into_iter().find(|r| r.repo.eq_ignore_ascii_case(repo))
     }
 
+    /// The repos whose cards each build in their own worktree (card #146). A saved value that no
+    /// longer parses counts as none: cards then start in their repo's folder, as before.
+    pub fn own_worktree_repos(&self) -> Vec<OwnWorktreeRepo> {
+        self.setting(OWN_WORKTREE_REPOS_KEY).ok().flatten().and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
+    }
+
+    /// The own-worktree entry for `repo` (a card's `owner/name`, any case), if Hugh listed it.
+    pub fn own_worktree_repo_for(&self, repo: &str) -> Option<OwnWorktreeRepo> {
+        let repo = repo.trim();
+        if repo.is_empty() {
+            return None;
+        }
+        self.own_worktree_repos().into_iter().find(|r| r.repo.eq_ignore_ascii_case(repo))
+    }
+
     /// Writes one change of a setting to the append-only `settings_log`.
     pub fn log_setting(&mut self, key: &str, value: &str, by: &str) -> Result<()> {
         self.conn.execute(
@@ -492,6 +557,7 @@ impl Store {
                 _ => return Err(Error::Invalid(format!("the setting {k} is \"on\" or \"off\""))),
             },
             SMALL_REPOS_KEY => serde_json::to_string(&check_small_repos(value)?)?,
+            OWN_WORKTREE_REPOS_KEY => serde_json::to_string(&check_own_worktree_repos(value)?)?,
             crate::router::ROUTER_MODEL_KEY => match value.trim() {
                 v if ROUTER_MODELS.contains(&v) => v.to_string(),
                 _ => return Err(Error::Invalid(format!("the Router's model is one of {}", ROUTER_MODELS.join(", ")))),
@@ -556,7 +622,7 @@ pub fn page_default(key: &str) -> Result<String> {
         STUCK_CHECK_KEY => STUCK_CHECK_DEFAULT.to_string(),
         crate::STACK_RULE_KEY => "all".to_string(),
         k if RULE_KEYS.contains(&k) => "on".to_string(),
-        SMALL_REPOS_KEY => "[]".to_string(),
+        SMALL_REPOS_KEY | OWN_WORKTREE_REPOS_KEY => "[]".to_string(),
         crate::router::ROUTER_MODEL_KEY => crate::router::ROUTER_MODEL_DEFAULT.to_string(),
         crate::router::ROUTER_EFFORT_KEY => crate::router::ROUTER_EFFORT_DEFAULT.to_string(),
         crate::router::ROUTER_MAY_START_KEY => "off".to_string(),

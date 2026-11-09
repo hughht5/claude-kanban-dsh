@@ -47,6 +47,7 @@ mod testing;
 mod times;
 mod tools;
 mod transcript;
+mod worktree;
 mod tray;
 mod update;
 
