@@ -84,6 +84,10 @@ pub const PAGE_SETTINGS: &[&str] = &[
     REPRO_RULE_KEY,
     SMALL_REPOS_KEY,
     OWN_WORKTREE_REPOS_KEY,
+    // Card #160: the repos that ship through one merge lane, and the lanes' model and effort.
+    crate::lanes::MERGE_LANE_REPOS_KEY,
+    crate::lanes::LANE_MODEL_KEY,
+    crate::lanes::LANE_EFFORT_KEY,
     TODO_TOOLS_KEY,
     // Card #151: the card-router's and card-merger's defaults for a new card.
     crate::ROUTER_RULE_KEY,
@@ -193,20 +197,27 @@ pub fn check_own_worktree_repos(json: &str) -> Result<Vec<OwnWorktreeRepo>> {
         .map_err(|e| Error::Invalid(format!("the own-worktree repo list should be a list of {{repo, checkout}}: {e}")))?;
     let mut out: Vec<OwnWorktreeRepo> = Vec::new();
     for (i, r) in rows.iter().enumerate() {
-        let n = i + 1;
-        let repo = r.repo.trim();
-        check_repo_row(n, repo, &out.iter().map(|o| o.repo.as_str()).collect::<Vec<_>>())?;
-        // A trailing separator goes, unless it is a drive's root (`D:\`).
-        let given = r.checkout.trim();
-        let cut = given.trim_end_matches(['\\', '/']);
-        let checkout = if std::path::Path::new(cut).is_absolute() { cut } else { given };
-        check_checkout_row(n, checkout)?;
-        if looks_like_token(repo) || looks_like_token(checkout) {
-            return Err(Error::Secret(format!("repo row {n}")));
-        }
-        out.push(OwnWorktreeRepo { repo: repo.into(), checkout: checkout.into() });
+        let (repo, checkout) = check_repo_checkout(i + 1, &r.repo, &r.checkout, &out.iter().map(|o| o.repo.as_str()).collect::<Vec<_>>())?;
+        out.push(OwnWorktreeRepo { repo, checkout });
     }
     Ok(out)
+}
+
+/// One `{repo, checkout}` row of a repo list (the own-worktree list, card #146, and the
+/// merge-lane list, card #160), trimmed and checked: the repo `owner/name` and not in `seen`, the
+/// checkout an absolute path to a git checkout.
+pub(crate) fn check_repo_checkout(n: usize, repo: &str, checkout: &str, seen: &[&str]) -> Result<(String, String)> {
+    let repo = repo.trim();
+    check_repo_row(n, repo, seen)?;
+    // A trailing separator goes, unless it is a drive's root (`D:\`).
+    let given = checkout.trim();
+    let cut = given.trim_end_matches(['\\', '/']);
+    let checkout = if std::path::Path::new(cut).is_absolute() { cut } else { given };
+    check_checkout_row(n, checkout)?;
+    if looks_like_token(repo) || looks_like_token(checkout) {
+        return Err(Error::Secret(format!("repo row {n}")));
+    }
+    Ok((repo.into(), checkout.into()))
 }
 
 /// One change to a setting, from the append-only `settings_log` (card #104).
@@ -574,6 +585,15 @@ impl Store {
             },
             SMALL_REPOS_KEY => serde_json::to_string(&check_small_repos(value)?)?,
             OWN_WORKTREE_REPOS_KEY => serde_json::to_string(&check_own_worktree_repos(value)?)?,
+            crate::lanes::MERGE_LANE_REPOS_KEY => serde_json::to_string(&crate::lanes::check_merge_lane_repos(value)?)?,
+            crate::lanes::LANE_MODEL_KEY => match value.trim() {
+                v if ROUTER_MODELS.contains(&v) => v.to_string(),
+                _ => return Err(Error::Invalid(format!("the merge lanes' model is one of {}", ROUTER_MODELS.join(", ")))),
+            },
+            crate::lanes::LANE_EFFORT_KEY => match value.trim() {
+                v if EFFORTS.contains(&v) => v.to_string(),
+                _ => return Err(Error::Invalid(format!("the merge lanes' effort is one of {}", EFFORTS.join(", ")))),
+            },
             crate::router::ROUTER_MODEL_KEY => match value.trim() {
                 v if ROUTER_MODELS.contains(&v) => v.to_string(),
                 _ => return Err(Error::Invalid(format!("the Router's model is one of {}", ROUTER_MODELS.join(", ")))),
@@ -638,7 +658,9 @@ pub fn page_default(key: &str) -> Result<String> {
         STUCK_CHECK_KEY => STUCK_CHECK_DEFAULT.to_string(),
         crate::STACK_RULE_KEY => "all".to_string(),
         k if RULE_KEYS.contains(&k) => "on".to_string(),
-        SMALL_REPOS_KEY | OWN_WORKTREE_REPOS_KEY => "[]".to_string(),
+        SMALL_REPOS_KEY | OWN_WORKTREE_REPOS_KEY | crate::lanes::MERGE_LANE_REPOS_KEY => "[]".to_string(),
+        crate::lanes::LANE_MODEL_KEY => crate::lanes::LANE_MODEL_DEFAULT.to_string(),
+        crate::lanes::LANE_EFFORT_KEY => crate::lanes::LANE_EFFORT_DEFAULT.to_string(),
         crate::router::ROUTER_MODEL_KEY => crate::router::ROUTER_MODEL_DEFAULT.to_string(),
         crate::router::ROUTER_EFFORT_KEY => crate::router::ROUTER_EFFORT_DEFAULT.to_string(),
         crate::router::ROUTER_MAY_START_KEY => "off".to_string(),

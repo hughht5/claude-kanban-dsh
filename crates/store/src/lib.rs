@@ -14,6 +14,8 @@ mod done_when;
 mod evidence;
 mod feed;
 mod import;
+// The merge lanes, one per listed repo (card #160).
+mod lanes;
 mod secret;
 // The Router's own sessions and log (card #119).
 mod router;
@@ -53,6 +55,10 @@ pub use done_when::{
     clean_done_when, clean_done_when_checks, looks_like_sign_in, DONE_WHEN_CHECKS_KEY, DONE_WHEN_CHECK_LEN,
     DONE_WHEN_KEY, DONE_WHEN_MAX_CHECKS, DONE_WHEN_MAX_LEN, DONE_WHEN_NOTE_LEN, DONE_WHEN_STATES,
 };
+pub use lanes::{
+    check_merge_lane_repos, lane_key, lane_repo, merge_state, LaneSession, MergeLaneRepo, LANE_EFFORT_DEFAULT, LANE_EFFORT_KEY, LANE_KEY_PREFIX, LANE_MODEL_DEFAULT,
+    LANE_MODEL_KEY, MERGE_LANE_REPOS_KEY, MERGE_STATES, MERGE_WAITING,
+};
 pub use import::{CheckReport, FieldDiff, ImportReport};
 pub use config::ROUTER_MODELS;
 pub use router::{
@@ -86,7 +92,7 @@ pub const COLUMNS: [&str; 8] = [
     "Done",
 ];
 
-const MIGRATIONS: [&str; 15] = [
+const MIGRATIONS: [&str; 16] = [
     include_str!("schema.sql"),
     include_str!("schema2.sql"),
     include_str!("schema3.sql"),
@@ -105,6 +111,8 @@ const MIGRATIONS: [&str; 15] = [
     include_str!("schema14.sql"),
     // Card #153: the text of the messages the app sends on its own.
     include_str!("schema15.sql"),
+    // Card #160: the merge lanes' own sessions.
+    include_str!("schema16.sql"),
 ];
 
 /// The schema version this build brings a board up to: the number of migrations. A board at a
@@ -341,6 +349,9 @@ pub fn copy_board(from: &Path, to: &Path, replace: bool) -> Result<CopyReport> {
     // And the Router (card #119): a copy never resumes the source's Router conversation, and
     // starts with it off.
     copy.detach_router()?;
+    // And the merge lanes' jobs (card #160): a lane on the copy never merges a card of the board
+    // it came from.
+    copy.detach_lane_jobs()?;
     let cards = copy.list(true)?.len();
     Ok(CopyReport { cards, sessions_detached: running.len(), moved_aside })
 }
