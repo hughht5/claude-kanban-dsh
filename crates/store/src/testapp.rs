@@ -166,28 +166,43 @@ impl TestAppQueue {
         self.holder.as_ref().map_or(false, |h| h.who.same(kind, card_id, owner))
     }
 
-    /// Asks for a turn. The asker gets it now when nobody holds it, nobody is in line ahead
-    /// of it, and `blocked` (the old DSH lock folder belongs to someone else) is false.
+    /// Asks for a turn, with every card in line taken as live and `blocked` the same for
+    /// everyone: `take_now` with fixed answers.
+    pub fn take(&mut self, ask: Ask, now: DateTime<Utc>, blocked: bool) -> Take {
+        self.take_now(ask, now, |_| true, |_| blocked)
+    }
+
+    /// Asks for a turn. The asker gets it now when nobody holds it, `blocked(owner)` is false
+    /// for it (nobody else has the test app outside this queue), and nobody in line ahead of
+    /// it could be given it now: the same rule as `next`, so an install ahead always counts,
+    /// a card ahead only while its session is live (`live`), and a waiter that `blocked` stops
+    /// doesn't. That holds when it asks again from its place in line too (card #149), so a
+    /// card first in line, or behind only paused cards, gets the turn on its own take.
     /// Otherwise it goes in line: an install in front of every tester (behind earlier
     /// installs), a tester at the back. Asking again keeps the place, or renews a held turn.
-    pub fn take(&mut self, ask: Ask, now: DateTime<Utc>, blocked: bool) -> Take {
+    pub fn take_now(&mut self, ask: Ask, now: DateTime<Utc>, live: impl Fn(&str) -> bool, blocked: impl Fn(&str) -> bool) -> Take {
         let at = stamp(now);
         if let Some(h) = self.holder.as_mut().filter(|h| h.who.same(&ask.kind, ask.card_id.as_deref(), &ask.owner)) {
             h.renewed_at = at;
             return Take::Renewed;
         }
-        if let Some(p) = self.place(ask.card_id.as_deref(), &ask.owner, &ask.kind) {
-            self.line[p - 1].seen_at = Some(at);
-            return Take::Waiting(p);
-        }
-        if self.holder.is_none() && self.line.is_empty() && !blocked {
+        let place = self.place(ask.card_id.as_deref(), &ask.owner, &ask.kind);
+        // Where it stands, or would stand: an install behind the installs, a tester at the back.
+        let i = place.map(|p| p - 1).unwrap_or_else(|| if ask.kind == INSTALL { self.line.iter().take_while(|x| x.who.kind == INSTALL).count() } else { self.line.len() });
+        let ahead_can = self.line[..i].iter().any(|w| w.who.card_id.as_deref().map_or(true, &live) && !blocked(&w.who.owner));
+        if self.holder.is_none() && !ahead_can && !blocked(&ask.owner) {
+            if place.is_some() {
+                self.line.remove(i);
+            }
             self.holder = Some(Turn { who: ask, given_at: at.clone(), renewed_at: at, install_seen: false });
             return Take::Given;
         }
+        if let Some(p) = place {
+            self.line[p - 1].seen_at = Some(at);
+            return Take::Waiting(p);
+        }
         self.next_seq += 1;
-        let install = ask.kind == INSTALL;
         let w = Waiting { who: ask, asked_at: at.clone(), seq: self.next_seq, seen_at: Some(at) };
-        let i = if install { self.line.iter().take_while(|x| x.who.kind == INSTALL).count() } else { self.line.len() };
         self.line.insert(i, w);
         Take::Waiting(i + 1)
     }
@@ -390,6 +405,65 @@ mod tests {
         q.release(Some("card-1"), "1", TESTER);
         assert!(q.holder.is_none());
         assert_eq!(q.take(card(3), t(1), false), Take::Waiting(2));
+    }
+
+    /// Card #149: #131 sat first in line with nobody holding the turn, and asking again only
+    /// kept its place. Now its own take gives it the turn.
+    #[test]
+    fn a_card_first_in_line_with_no_holder_gets_it_on_its_own_take() {
+        let mut q = TestAppQueue::default();
+        assert_eq!(q.take(card(131), t(0), true), Take::Waiting(1), "blocked when it first asked");
+        assert_eq!(q.take(card(131), t(1), true), Take::Waiting(1), "still blocked: keeps its place");
+        assert_eq!(q.take(card(131), t(2), false), Take::Given);
+        assert_eq!(holder(&q).as_deref(), Some("#131"));
+        assert!(q.line.is_empty(), "it left the line for the turn");
+        assert_eq!(q.holder.as_ref().unwrap().given_at, stamp(t(2)));
+    }
+
+    /// Card #149's second form: #126 sat first in line with no session for days, and #131
+    /// stayed number 2 behind it. A paused card ahead is passed over, as `next` does, and
+    /// keeps its place.
+    #[test]
+    fn a_paused_card_ahead_doesn_t_hold_up_a_live_card_s_take() {
+        let mut q = TestAppQueue::default();
+        q.take(card(126), t(0), true);
+        let live = |id: &str| id != "card-126";
+        assert_eq!(q.take_now(card(131), t(1), live, FREE), Take::Given);
+        assert_eq!(line(&q), ["#126"], "the paused card keeps its place");
+        // Asking again from second place, with the paused card still ahead.
+        let mut q = TestAppQueue::default();
+        q.take(card(126), t(0), true);
+        q.take(card(131), t(0), true);
+        assert_eq!(q.take_now(card(131), t(1), live, FREE), Take::Given);
+        assert_eq!(line(&q), ["#126"]);
+        // Once the paused card is live again, it is ahead and a new take waits behind it.
+        let mut q = TestAppQueue::default();
+        q.take(card(126), t(0), true);
+        assert_eq!(q.take_now(card(131), t(1), ALL_LIVE, FREE), Take::Waiting(2));
+    }
+
+    #[test]
+    fn a_take_still_waits_for_a_holder_a_live_card_ahead_an_install_or_a_block() {
+        // A holder.
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), false);
+        assert_eq!(q.take_now(card(2), t(1), ALL_LIVE, FREE), Take::Waiting(1));
+        assert_eq!(q.take_now(card(2), t(2), ALL_LIVE, FREE), Take::Waiting(1));
+        // An install in line goes first, live or not (it has no session), even paused cards'.
+        let mut q = TestAppQueue::default();
+        q.take(Ask::install("router", "wave 3"), t(0), true);
+        assert_eq!(q.take_now(card(2), t(1), |_| false, FREE), Take::Waiting(2));
+        // Someone outside the queue (an install holding install.lock, a fresh DSH folder).
+        let mut q = TestAppQueue::default();
+        assert_eq!(q.take_now(card(2), t(1), ALL_LIVE, |o| o != "hugh"), Take::Waiting(1));
+        assert_eq!(q.take_now(card(2), t(2), ALL_LIVE, |o| o != "hugh"), Take::Waiting(1));
+        assert!(q.holder.is_none());
+        // A waiter ahead that the block stops (it isn't the block's owner) doesn't count: the
+        // block's own owner gets it, as `next` would give it.
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), true);
+        assert_eq!(q.take_now(card(105), t(1), ALL_LIVE, |o| o != "105"), Take::Given);
+        assert_eq!(line(&q), ["#1"]);
     }
 
     #[test]

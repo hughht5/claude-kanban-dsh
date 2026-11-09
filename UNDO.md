@@ -704,3 +704,13 @@ No migration: the feed's indexes were left out because card #119 takes migration
 ## Card worktrees inside the checkout (6 Nov 2026)
 
 Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit>`
+
+## Card #149: a card first in line with no holder gets its turn (9 Nov 2026, branch `card-149`)
+
+| Change | Undo |
+|---|---|
+| `crates\store\src\testapp.rs`: `TestAppQueue::take_now` gives the turn on a take (a first take or a take again from the line) when nobody holds it, the asker isn't blocked and nobody ahead could use it now (`next`'s rule: paused cards ahead are passed over); `take` calls it | `git -C ~\claude-kanban-dsh revert --no-edit <the card's commit>` |
+| `src-tauri\src\testapp.rs`: the old DSH lock folder made by an older writer (no pid line) counts as stale, and blocks nobody, once it is 60 min old (`Dsh::stale`, `Dsh::blocks`, a new `alive` field, also in the status's `mkdir`); a folder whose pid still runs blocks whatever its age; the tool's take passes the live sessions | Same revert |
+| `scripts\install.ps1`: `Move-DeadDshLock` also renames aside (never deletes) a no-pid-line DSH folder 60 min old or more | Same revert. A folder it renamed is `%USERPROFILE%\.dsh-test-app.lock.released-<time>`: `Rename-Item` it back to `.dsh-test-app.lock` if it is still wanted |
+
+Nothing on the board or in the data folders changed; the queue's JSON is the same shape.

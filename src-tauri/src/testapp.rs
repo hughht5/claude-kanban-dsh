@@ -37,7 +37,8 @@ pub const HOLD_MAX_MINUTES: i64 = 120;
 pub const ALLOW_MINUTES: i64 = 5;
 /// install.ps1 waits this long after Hugh's last input in the test app.
 pub const INPUT_QUIET_MINUTES: i64 = 10;
-/// The old DSH lock folder counts as stale after this long.
+/// The old DSH lock folder, made by an older writer (no pid line), counts as stale after this
+/// long and then blocks nobody (card #149). install.ps1 uses the same number.
 pub const DSH_STALE_MINUTES: i64 = 60;
 /// A turn in use is renewed at most this often.
 pub const RENEW_EVERY_SECS: i64 = 60;
@@ -208,6 +209,22 @@ pub struct Dsh {
     /// Its owner file names a process (line 2, "pid <pid> <start>", written by the new
     /// install.ps1) that no longer runs: a killed run's folder, which blocks nobody.
     pub dead: bool,
+    /// Its owner file names a process that still runs: an install holds it, whatever its age.
+    pub alive: bool,
+}
+
+impl Dsh {
+    /// It counts as nobody's (card #149): its run has ended, or an older writer (no pid line)
+    /// made it DSH_STALE_MINUTES or more ago. A folder whose run still runs is never stale.
+    pub fn stale(&self) -> bool {
+        self.dead || (!self.alive && self.age_minutes >= DSH_STALE_MINUTES)
+    }
+
+    /// It keeps the test app from everyone but its owner: a fresh folder, or one an install
+    /// still holds.
+    pub fn blocks(&self, owner: &str) -> bool {
+        !self.stale() && self.owner != owner
+    }
 }
 
 pub fn read_dsh(dir: &Path, now: DateTime<Utc>) -> Option<Dsh> {
@@ -216,13 +233,14 @@ pub fn read_dsh(dir: &Path, now: DateTime<Utc>) -> Option<Dsh> {
     let text = read_shared(&dir.join("owner")).unwrap_or_default();
     let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
     let owner = lines.next().unwrap_or("").to_string();
-    let dead = lines.next().and_then(|l| {
+    // Some(running) when line 2 names a process; None for an older writer's folder.
+    let runs = lines.next().and_then(|l| {
         let mut w = l.split_whitespace();
         (w.next() == Some("pid")).then_some(())?;
         let pid = w.next()?.parse::<u32>().ok()?;
-        Some(!alive_since(pid, w.next().and_then(parse)))
+        Some(alive_since(pid, w.next().and_then(parse)))
     });
-    Some(Dsh { owner, age_minutes: (now - made).num_minutes().max(0), dead: dead.unwrap_or(false) })
+    Some(Dsh { owner, age_minutes: (now - made).num_minutes().max(0), dead: runs == Some(false), alive: runs == Some(true) })
 }
 
 /// Hugh's Release of the old DSH lock folder: renamed aside, never deleted.
@@ -284,7 +302,7 @@ impl Seen {
     pub fn blocks(&self, owner: &str) -> bool {
         let lock = self.lock_present && self.lock.as_ref().map_or(true, |l| l.owner != owner);
         let other = self.other.as_deref().map_or(false, |o| o != owner);
-        let dsh = self.dsh.as_ref().map_or(false, |d| !d.dead && d.owner != owner);
+        let dsh = self.dsh.as_ref().map_or(false, |d| d.blocks(owner));
         lock || other || dsh
     }
 }
@@ -447,7 +465,7 @@ pub fn status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &Seen,
         "allowUntil": seen.hold.allow_until.map(stamp),
         "hughInputAt": seen.input.map(stamp),
         "hughInputRecent": input_recent,
-        "mkdir": seen.dsh.as_ref().map(|d| json!({ "owner": d.owner, "ageMinutes": d.age_minutes, "stale": d.dead || d.age_minutes >= DSH_STALE_MINUTES, "dead": d.dead })),
+        "mkdir": seen.dsh.as_ref().map(|d| json!({ "owner": d.owner, "ageMinutes": d.age_minutes, "stale": d.stale(), "dead": d.dead, "alive": d.alive })),
         "otherBoard": seen.other,
     })
 }
@@ -585,13 +603,14 @@ pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value
         return Ok(json!(format!("Released the old DSH lock folder: renamed to {}.", aside.display())));
     }
     let seen = look(&shared_dir(), &dsh_dir(), now);
+    let live = live_of(app);
     let reply = {
         let board = app.state::<Board>();
         let mut store = board.0.lock().map_err(|e| e.to_string())?;
         let own = crate::tools::caller_card(app, &store, caller);
         let mut queue = store.test_app_queue().map_err(|e| e.to_string())?;
         let limit = store.test_app_limit().unwrap_or(q::DEFAULT_LIMIT);
-        let reply = act(&mut store, &mut queue, own.as_deref(), action, args, now, limit, &seen)?;
+        let reply = act(&mut store, &mut queue, own.as_deref(), action, args, now, limit, &seen, &live)?;
         store.save_test_app_queue(&queue).map_err(|e| e.to_string())?;
         reply
     };
@@ -602,7 +621,10 @@ pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value
 }
 
 /// The tool's rules over the store, apart from files and sessions.
-pub fn act(store: &mut Store, queue: &mut TestAppQueue, own: Option<&str>, action: &str, args: &Value, now: DateTime<Utc>, limit: i64, seen: &Seen) -> Result<String, String> {
+/// A take gives the turn now by the pump's own rule (`TestAppQueue::take_now`): paused cards
+/// ahead are passed over, and `seen` blocks as it does in `step`.
+#[allow(clippy::too_many_arguments)]
+pub fn act(store: &mut Store, queue: &mut TestAppQueue, own: Option<&str>, action: &str, args: &Value, now: DateTime<Utc>, limit: i64, seen: &Seen, live: &Live) -> Result<String, String> {
     let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
     let install = args.get("install").and_then(Value::as_bool).unwrap_or(false) || args.get("kind").and_then(Value::as_str) == Some(INSTALL);
     match (own, action) {
@@ -615,8 +637,7 @@ pub fn act(store: &mut Store, queue: &mut TestAppQueue, own: Option<&str>, actio
                 return Err(format!("refused: {why}"));
             }
             let ask = Ask::tester(id, c.number);
-            let blocked = seen.blocks(&ask.owner);
-            let t = queue.take(ask, now, blocked);
+            let t = queue.take_now(ask, now, |id| live.live.contains(id), |o| seen.blocks(o));
             let line = match &t {
                 Take::Given => "Took its turn on the test app".to_string(),
                 Take::Renewed => "Renewed its turn on the test app".to_string(),
@@ -647,8 +668,7 @@ pub fn act(store: &mut Store, queue: &mut TestAppQueue, own: Option<&str>, actio
             let label = args.get("label").and_then(Value::as_str).unwrap_or("");
             let ask = Ask::install(owner, label);
             let shown = ask.label.clone();
-            let blocked = seen.blocks(&ask.owner);
-            let t = queue.take(ask, now, blocked);
+            let t = queue.take_now(ask, now, |id| live.live.contains(id), |o| seen.blocks(o));
             Ok(take_reply(&t, &shown, limit, None))
         }
         (None, "release") => {
@@ -843,10 +863,10 @@ mod tests {
         queue.take(Ask::tester("a", 1), t(0), false);
         queue.take(Ask::tester("b", 2), t(0), false);
         queue.force();
-        let dsh = Seen { dsh: Some(Dsh { owner: "105".into(), age_minutes: 3, dead: false }), ..Default::default() };
+        let dsh = Seen { dsh: Some(Dsh { owner: "105".into(), age_minutes: 3, dead: false, alive: false }), ..Default::default() };
         let card = cols(&[("a", "In progress"), ("b", "In progress")]);
         assert!(!step(&mut queue, t(1), 60, &dsh, &lv(&["a", "b"], &[]), &card).changed);
-        let mine = Seen { dsh: Some(Dsh { owner: "2".into(), age_minutes: 3, dead: false }), ..Default::default() };
+        let mine = Seen { dsh: Some(Dsh { owner: "2".into(), age_minutes: 3, dead: false, alive: false }), ..Default::default() };
         step(&mut queue, t(2), 60, &mine, &lv(&["a", "b"], &[]), &card);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#2");
     }
@@ -875,9 +895,113 @@ mod tests {
         assert_eq!(q.holder.as_ref().unwrap().who.label, "#2");
         // A killed run's DSH folder (dead pid) blocks nobody.
         let mut q = mk();
-        let dead = Seen { dsh: Some(Dsh { owner: "router".into(), age_minutes: 5, dead: true }), ..Default::default() };
+        let dead = Seen { dsh: Some(Dsh { owner: "router".into(), age_minutes: 5, dead: true, alive: false }), ..Default::default() };
         step(&mut q, t(3), 60, &dead, &lv(&["a", "b"], &[]), &card);
         assert_eq!(q.holder.as_ref().unwrap().who.label, "#1");
+    }
+
+    fn dsh(owner: &str, age_minutes: i64, dead: bool, alive: bool) -> Seen {
+        Seen { dsh: Some(Dsh { owner: owner.into(), age_minutes, dead, alive }), ..Default::default() }
+    }
+
+    /// Card #149, as it was on 9 Nov: nobody holds the turn, #131 is first in line and live,
+    /// and an older writer's DSH folder (owner 108, no pid line) is 3410 min old.
+    #[test]
+    fn a_stale_old_dsh_folder_no_longer_blocks_the_line() {
+        let card = cols(&[("card-131", "In progress")]);
+        let mk = || {
+            let mut q = TestAppQueue::default();
+            q.take(Ask::tester("card-131", 131), t(0), true);
+            q
+        };
+        let old = dsh("108", 3410, false, false);
+        assert!(!old.blocks("131"));
+        let mut q = mk();
+        let s = step(&mut q, t(1), 60, &old, &lv(&["card-131"], &[]), &card);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "#131");
+        assert!(s.messages.iter().any(|(id, m)| id == "card-131" && m.contains("your turn")), "its session is told");
+        assert_eq!(status(&q, t(1), 60, &old, &Live::default())["mkdir"]["stale"], true);
+        // Just under the stale age, it still blocks; at it, it doesn't.
+        let mut q = mk();
+        assert!(!step(&mut q, t(1), 60, &dsh("108", DSH_STALE_MINUTES - 1, false, false), &lv(&["card-131"], &[]), &card).changed);
+        step(&mut q, t(2), 60, &dsh("108", DSH_STALE_MINUTES, false, false), &lv(&["card-131"], &[]), &card);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "#131");
+    }
+
+    #[test]
+    fn a_fresh_dsh_folder_or_one_whose_install_still_runs_still_blocks() {
+        let card = cols(&[("card-131", "In progress")]);
+        let live = lv(&["card-131"], &[]);
+        for (seen, what) in [(dsh("108", 3, false, false), "fresh, no pid line"), (dsh("108", 3410, false, true), "old, but its run still runs")] {
+            let mut q = TestAppQueue::default();
+            q.take(Ask::tester("card-131", 131), t(0), true);
+            assert!(!step(&mut q, t(1), 60, &seen, &live, &card).changed, "{what}");
+            assert!(q.holder.is_none(), "{what}");
+            assert_eq!(status(&q, t(1), 60, &seen, &live)["mkdir"]["stale"], false, "{what}");
+        }
+        // Its own owner isn't blocked by it.
+        let mut q = TestAppQueue::default();
+        q.take(Ask::tester("card-131", 131), t(0), true);
+        step(&mut q, t(1), 60, &dsh("131", 3, false, true), &live, &card);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "#131");
+    }
+
+    #[test]
+    fn an_install_still_blocks_the_first_live_card() {
+        let card = cols(&[("card-131", "In progress")]);
+        let live = lv(&["card-131"], &[]);
+        let mk = || {
+            let mut q = TestAppQueue::default();
+            q.take(Ask::tester("card-131", 131), t(0), true);
+            q
+        };
+        // An install outside the queue holding install.lock, or its file there but unreadable.
+        for seen in [
+            Seen { lock: Some(Lock { owner: "hugh".into(), phase: "installing".into(), ..Default::default() }), lock_present: true, ..Default::default() },
+            Seen { lock_present: true, ..Default::default() },
+        ] {
+            let mut q = mk();
+            assert!(!step(&mut q, t(1), 60, &seen, &live, &card).changed);
+        }
+        // An install turn held in the queue.
+        let mut q = TestAppQueue::default();
+        q.take(Ask::install("router", "wave 3"), t(0), false);
+        q.take(Ask::tester("card-131", 131), t(0), false);
+        let installing = Seen { lock: Some(Lock { owner: "router".into(), ..Default::default() }), lock_present: true, ..Default::default() };
+        step(&mut q, t(1), 60, &installing, &live, &card);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "wave 3");
+        assert_eq!(q.line.len(), 1);
+    }
+
+    /// The tool's take, as #131's session called it: the reply says it has the turn.
+    #[test]
+    fn a_take_from_first_in_line_or_behind_a_paused_card_gets_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let mut p = kanban_store::Patch::new();
+        p.insert("title".into(), json!("x"));
+        let mut ids = vec![];
+        for _ in 0..2 {
+            let c = store.create(None, p.clone(), "t").unwrap();
+            store.move_by_hugh(&c.id, c.version, "In progress", kanban_store::Patch::new()).unwrap();
+            ids.push(c.id);
+        }
+        let (paused, me) = (ids[0].clone(), ids[1].clone());
+        let live = lv(&[&me], &[]);
+        let take = |s: &mut Store, q: &mut TestAppQueue, seen: &Seen| act(s, q, Some(&me), "take", &json!({}), t(1), 60, seen, &live).unwrap();
+        // Blocked by a fresh DSH folder: in line. Asked again once it is stale: given.
+        let mut queue = TestAppQueue::default();
+        let r = take(&mut store, &mut queue, &dsh("108", 3, false, false));
+        assert!(r.contains("number 1 in line"), "{r}");
+        let r = take(&mut store, &mut queue, &dsh("108", 3410, false, false));
+        assert!(r.contains("your turn"), "{r}");
+        assert!(queue.line.is_empty());
+        // Behind a card whose session isn't running.
+        let mut queue = TestAppQueue::default();
+        queue.take(Ask::tester(&paused, 1), t(0), true);
+        let r = take(&mut store, &mut queue, &Seen::default());
+        assert!(r.contains("your turn"), "{r}");
+        assert_eq!(queue.line.len(), 1, "the paused card keeps its place");
     }
 
     #[test]
@@ -928,7 +1052,7 @@ mod tests {
         store.move_by_hugh(&c.id, c.version, "In progress", kanban_store::Patch::new()).unwrap();
         let d = store.create(None, p, "t").unwrap();
         let mut queue = TestAppQueue::default();
-        let run = |s: &mut Store, q: &mut TestAppQueue, own: Option<&str>, action: &str, args: Value| act(s, q, own, action, &args, t(0), 60, &Seen::default());
+        let run = |s: &mut Store, q: &mut TestAppQueue, own: Option<&str>, action: &str, args: Value| act(s, q, own, action, &args, t(0), 60, &Seen::default(), &Live::default());
         // A card in Backlog is told which columns take a turn.
         let e = run(&mut store, &mut queue, Some(&d.id), "take", json!({})).unwrap_err();
         assert!(e.contains("In progress or Human test") && e.contains("Backlog"), "{e}");
@@ -959,7 +1083,7 @@ mod tests {
             lock: Some(Lock { owner: "router".into(), label: "wave 3".into(), phase: "waiting".into(), waiting_for: Some("the test app's turn: #1 (tester)".into()), ..Default::default() }),
             hold: Hold { until: Some(t(20)), allow_until: None },
             input: Some(t(-3)),
-            dsh: Some(Dsh { owner: "105".into(), age_minutes: 70, dead: false }),
+            dsh: Some(Dsh { owner: "105".into(), age_minutes: 70, dead: false, alive: false }),
             ..Default::default()
         };
         let s = status(&queue, t(46), 60, &seen, &lv(&["a"], &[]));
@@ -1054,13 +1178,18 @@ mod tests {
         std::fs::write(dsh.join("owner"), "105\n").unwrap();
         let d = read_dsh(&dsh, Utc::now()).unwrap();
         assert_eq!(d.owner, "105");
-        assert!(!d.dead, "an old card's folder has no pid line");
+        assert!(!d.dead && !d.alive, "an old card's folder has no pid line");
+        assert!(!d.stale() && d.blocks("1"), "fresh, it blocks");
+        let later = Utc::now() + Duration::minutes(DSH_STALE_MINUTES + 1);
+        assert!(read_dsh(&dsh, later).unwrap().stale(), "an hour on, it doesn't (card #149)");
         std::fs::write(dsh.join("owner"), "router\npid 4 2020-01-01T00:00:00Z\n").unwrap();
         let d = read_dsh(&dsh, Utc::now()).unwrap();
         assert_eq!(d.owner, "router");
-        assert!(d.dead);
+        assert!(d.dead && !d.alive);
         std::fs::write(dsh.join("owner"), format!("router\npid {me} {}\n", stamp(start))).unwrap();
-        assert!(!read_dsh(&dsh, Utc::now()).unwrap().dead);
+        let d = read_dsh(&dsh, later).unwrap();
+        assert!(!d.dead && d.alive);
+        assert!(!d.stale(), "its run still runs: never stale, whatever its age");
         let aside = release_dsh(&dsh, Utc::now()).unwrap();
         assert!(!dsh.exists() && aside.join("owner").exists());
         assert!(read_dsh(&dsh, Utc::now()).is_none());
