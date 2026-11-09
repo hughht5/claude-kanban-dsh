@@ -53,8 +53,11 @@ If it doesn't, say so on the card in one log line and go on to *Plan it*.
    drag, or their model and effort in the panel, beat the route.
 5. Never run the card-router for a stack's child. Run it once per card: the owner's Route again (the
    panel) clears the route and asks you to run it again.
-6. A card routed small goes on to In progress by itself once its plan critique passes (the owner's
-   setting): the app moves it when your turn ends and sends you the In progress prompt.
+6. A card routed small gets one plan critique (card #144). Once it passes, the card goes on to In
+   progress by itself (the owner's setting): the app moves it when your turn ends and sends you the In
+   progress prompt. An edit to the plan after that pass needs no fresh critique. If its one
+   critique fails, fix the plan for the findings, don't run the critic again, and leave the card in
+   Planning: only the owner moves it on (the findings go to the build as its notes).
 
 ## Plan it
 
@@ -96,16 +99,23 @@ off, skip it.
    and where the code is (the checkout and branch). Don't give it your conclusions. Wait for its
    result; if it runs in the background, wait for its notification.
 2. It ends with CARD and VERDICT lines, and the app records its verdict on the card (a "Plan
-   critiqued" or "Critique failed" chip).
-3. Fix the plan in `summary`, then run a fresh critic. A finding that starts "HUGH:" is the owner's
+   critiqued" or "Critique failed" chip). It fails a plan only for a real problem: a dropped
+   deliverable, a plan that would come out wrong, or something unsafe. Smaller points come as
+   notes after a PASS: the app keeps them and gives them to the build, so don't edit the plan for a
+   note (an edit needs a fresh critique).
+3. On a FAIL, fix the plan in `summary`, then run a fresh critic (not on a card routed small: it
+   has one critique, as *Route it first* step 6 says). A line that starts "HUGH:", after a PASS or a
+   FAIL, is the owner's
    to decide: put the question in `nextStep` (or in `blockedReason` with `choices`) and leave the
    card in Planning.
-4. Any edit to `summary` after a pass makes the critique needed again: finish the plan first, and
-   run the critic last. `nextStep` and the log don't count.
+4. Any edit to `summary` after a pass makes the critique needed again (not on a card routed
+   small): finish the plan first, and run the critic last. `nextStep` and the log don't count.
 5. Its third FAIL since the card came into Planning sends the card to Blocked, with the findings in
-   `blockedReason`.
+   `blockedReason`. A card routed small is never sent there: after its one FAIL it waits for
+   the owner.
 6. Your own move of the card into In progress (or straight on to Human test) is refused until its
-   latest critique passed. The owner's moves never are.
+   latest critique passed, while its critic's question for the owner (a HUGH: line) is open, and on a card
+   routed small after its one FAIL. The owner's moves never are.
 
 ## If the card goes on by itself
 
@@ -117,6 +127,8 @@ it on:
   in it is theirs to decide, move the card to In progress yourself
   (`kanban_move_card`) as the last thing in your turn. The app then sends you the In progress
   prompt, and you build it.
+- A card routed small whose one critique failed, or one whose critic asked the owner something, waits
+  for the owner too: you can't move it on.
 - If a decision is the owner's, ask it and leave the card in Planning: it waits for the owner as
   usual.
 - If something else holds it (another card building in the same checkout, say), say so and leave

@@ -729,3 +729,9 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 UI only; nothing on the board or in the data folder changes (saved images are plain files in `attachments/router` in the data folder).
 
 Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit>`
+
+## A gentler plan critic (9 Nov 2026, card #144)
+
+| Change | Undo |
+|---|---|
+| The critic's prompt, notes after a PASS, the HUGH: and small-card holds, build notes in the In progress message, one critique for a small card (`critic.rs`, `agents.rs`, `router.rs`, `dispatch.rs`, `crates/store/src/cards.rs`), with tests, the Settings help, the example prompts and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #144 commit>`, then install as usual. No data change: a record's `notes` and `hugh` keys are ignored by an older build. |

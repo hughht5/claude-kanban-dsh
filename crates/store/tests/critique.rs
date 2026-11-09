@@ -184,3 +184,50 @@ fn an_edit_to_the_acceptance_checks_counts_as_a_plan_edit() {
     let c = up(&mut s, &c, json!({ "doneWhenChecks": [{ "text": "a check", "state": "open" }] }));
     assert_eq!(crit(&c)["state"], "needed");
 }
+
+#[test]
+fn a_small_cards_one_critique_survives_a_plan_edit() {
+    // Card #144: a card routed small gets one plan critique. Once it passed or failed, a plan
+    // edit keeps the record as it is: no fresh critique, and a FAIL's notes stay for the build.
+    let (_d, mut s) = board();
+    let c = s.create(None, patch(json!({ "title": "T", "column": "Backlog" })), "test").unwrap();
+    let c = up(&mut s, &c, json!({ "column": "Planning", "route": { "size": "small" } }));
+    assert_eq!(crit(&c)["state"], "needed");
+    // Before its critique ran, an edit is just an edit.
+    let c = up(&mut s, &c, json!({ "summary": "the plan" }));
+    assert_eq!((crit(&c)["state"].as_str(), crit(&c)["round"].as_u64()), (Some("needed"), Some(0)));
+    // After a pass.
+    let c = up(&mut s, &c, json!({ CRITIQUE_KEY: { "state": "passed", "at": "t", "round": 0, "notes": ["a note"] } }));
+    let c = up(&mut s, &c, json!({ "summary": "the plan, tidied" }));
+    let c = up(&mut s, &c, json!({ "doneWhenChecks": ["a sharper check"] }));
+    assert_eq!((crit(&c)["state"].as_str(), crit(&c)["notes"].clone()), (Some("passed"), json!(["a note"])));
+    // After a FAIL: kept, with its findings as notes and its round.
+    let c = up(&mut s, &c, json!({ CRITIQUE_KEY: { "state": "failed", "at": "t", "round": 1, "detail": "it drops the docs", "notes": ["it drops the docs"] } }));
+    let c = up(&mut s, &c, json!({ "summary": "the plan, fixed for the finding" }));
+    assert_eq!((crit(&c)["state"].as_str(), crit(&c)["round"].as_u64(), crit(&c)["notes"].clone()), (Some("failed"), Some(1), json!(["it drops the docs"])));
+    // In Backlog too.
+    let c = up(&mut s, &c, json!({ "column": "Backlog" }));
+    let c = up(&mut s, &c, json!({ "summary": "edited in Backlog" }));
+    assert_eq!(crit(&c)["state"], "failed");
+    // A move into Planning still starts it again.
+    let c = up(&mut s, &c, json!({ "column": "Planning" }));
+    assert_eq!((crit(&c)["state"].as_str(), crit(&c)["round"].as_u64()), (Some("needed"), Some(0)));
+    assert!(crit(&c).get("notes").is_none());
+    // A normal card, a split card, and a small card in a stack still reset on an edit.
+    for extra in [json!({ "route": { "size": "normal" } }), json!({ "route": { "size": "split" } }), json!({})] {
+        let mut f = json!({ "title": "N", "column": "Planning" });
+        f.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap());
+        let n = s.create(None, patch(f), "test").unwrap();
+        let n = verdict(&mut s, &n, "passed", 0);
+        let n = up(&mut s, &n, json!({ "summary": "changed" }));
+        assert_eq!(crit(&n)["state"], "needed", "{extra}");
+    }
+    let lead = s.create(None, patch(json!({ "title": "L", "column": "Planning", "route": { "size": "small" } })), "test").unwrap();
+    let child = s.create_in_stack(patch(json!({ "title": "C", "column": "Planning", "route": { "size": "small" } })), lead.number, "test").unwrap();
+    for id in [lead.id.clone(), child.id.clone()] {
+        let k = s.get(&id).unwrap();
+        let k = verdict(&mut s, &k, "passed", 0);
+        let k = up(&mut s, &k, json!({ "summary": "changed" }));
+        assert_eq!(crit(&k)["state"], "needed", "{}", k.number);
+    }
+}

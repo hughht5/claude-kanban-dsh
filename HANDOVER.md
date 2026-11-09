@@ -388,6 +388,55 @@ at #96's 146e29d. It plugs into #96's tables; nothing of #96's is changed.
   `agents::move_refused`, the agent's effort and prompt), `crates/store/tests/critique.rs` (every
   reset, the round kept across fixes up to the cap, `started`, Hugh's moves, the setting).
 
+## A gentler plan critic (9 Nov 2026, card #144, branch `dsh-144`)
+
+Hugh: "your critic is too strong - lower it down". Small UI cards (#127, #128, #130) went 6+
+rounds on test-script details. Built in `~\claude-kanban-dsh-144` on `dsh-144`.
+
+- **The prompt** (`critic.rs` `PROMPT`, under 2,000 characters): a blocker is only a dropped
+  deliverable, a plan that would come out wrong in a way the build wouldn't catch (file:line), or
+  a step that is unsafe or breaks a hard rule (live, data, secrets). Everything else is a note;
+  notes never fail a plan. Scope questions are HUGH: lines. After the VERDICT line come `- ` lines:
+  the blockers after a FAIL, the notes after a PASS, and any HUGH: lines.
+- **Notes** (`agents.rs`): `parse_verdict` reads the `- ` lines after a PASS into `Verdict.notes`
+  (shared code: any agent's PASS can carry them). `record_of` keeps them on the record as `notes`
+  (`note_list`: at most `MAX_NOTES` 8, masked, cut to `NOTE_LEN` 300) and logs
+  "<label>: PASS, N notes: ...". On the critic's record only, any `HUGH:` line (`is_hugh`) sets
+  `hugh: true`.
+  `pass_fails_on_checks` clears the notes when it turns a PASS into a FAIL.
+- **The build gets them** (`critic::build_notes`, `dispatch::build_notes_for`): the In progress
+  message ends with them when the card comes in from Planning or Backlog, through `move_message`
+  (Hugh's and the Router's moves), `app_move_message` (the small-card move) and
+  `held_move_message` (now given `from`; a Take it to card's own move). Not from Human test or
+  Blocked.
+- **The holds** (`critic::gate`), only where today's applies (rule on, from Backlog/Planning/
+  Blocked into the build) and after the mid-build pass-through: `hugh: true` on the latest
+  critique, and a card routed small (`kanban_store::routed_small`: `route.size` small, not in a
+  stack) whose critique is marked `oneFailed` (`critic::one_failed`; not inferred from `round`,
+  so a FAIL from before a Route again doesn't count). Both refuse a session's and the Router's
+  move; Hugh's never.
+  `router::go_on_blocker` waits on the same two.
+- **One critique for a small card**: `cards.rs` `critique_resets` keeps a small card's passed or
+  failed record through a plan edit (in Planning, Backlog or Blocked before the build);
+  `agents::one_critique` marks a small card's FAIL `oneFailed` (`kanban_store::ONE_FAILED_KEY`),
+  saves its findings (not its HUGH: lines) as its `notes`, skips the cap, and keeps the mark and
+  those notes (ahead of its own) if the critic is run again anyway.
+  A move into Planning still resets it to round 0.
+- **Texts**: the gate's refusals, the Take it to notes (`auto_note`, the autoTo edit note), the
+  Settings help (`ui/settings.js`), `prompts/planning.md` (route step 6, *Check the plan*, *If the
+  card goes on by itself*) and `prompts/kanban-app.md` Planning step 6; the private copies on the
+  private repo's `card-144` branch, merged at Ship it.
+- **Known limits:** sessions started before the install keep the old critic (`--agents` is fixed
+  at session start). Planning to Backlog to Planning resets the record, as it does for the cap. A
+  card that went to Blocked before its build and then to In progress gets no build notes (the
+  message can't tell it from a card blocked mid-build).
+- **Tests:** `agents.rs` (`a_pass_keeps_its_dash_lines_as_notes`,
+  `a_hugh_line_is_flagged_on_a_pass_or_a_fail`, notes cleared by a failed check), `critic.rs`
+  (the prompt, the small-card and HUGH: holds, build notes, no cap for small), `router.rs`
+  (`a_small_card_waits_for_hugh_after_a_fail_or_a_question`), `dispatch.rs`
+  (`the_in_progress_message_ends_with_the_critics_build_notes`), `crates/store/tests/critique.rs`
+  (`a_small_cards_one_critique_survives_a_plan_edit`).
+
 ## The card-router subagent (6 Nov 2026, card #98, stack A)
 
 Built on the branch `dsh-98` in the worktree `~\kanban-app-98`, from `dsh-agents`

@@ -152,16 +152,43 @@ pub struct Verdict {
     /// None when there is no VERDICT line.
     pub passed: Option<bool>,
     pub failures: Vec<String>,
+    /// The `- ` lines after a PASS (card #144): points that don't fail the work. The critic's go
+    /// to the build as build notes.
+    pub notes: Vec<String>,
     /// The last `SCOPE: full|narrowed` line, lower case (the reviewer's, card #104).
     pub scope: Option<String>,
 }
 
+/// At most this many notes are kept on a record, each cut to `NOTE_LEN` characters (card #144).
+pub const MAX_NOTES: usize = 8;
+pub const NOTE_LEN: usize = 300;
+
+/// Whether a finding or note is a question for Hugh: it starts `HUGH:` (any case, markdown bold
+/// or backticks around the word allowed).
+pub fn is_hugh(line: &str) -> bool {
+    let t = strip_marks(line);
+    t.get(..4).is_some_and(|w| w.eq_ignore_ascii_case("HUGH")) && strip_marks(&t[4..]).starts_with(':')
+}
+
+/// `s` without the markdown marks (`*`, `` ` ``, `_`) and spaces at its start.
+fn strip_marks(s: &str) -> &str {
+    s.trim_start_matches(|c: char| c == '*' || c == '`' || c == '_' || c.is_whitespace())
+}
+
+/// Lines as a record keeps them: at most `MAX_NOTES`, each masked (the board refuses a secret,
+/// and must never hold one) and cut to `NOTE_LEN` characters.
+pub fn note_list(lines: &[String]) -> Vec<String> {
+    lines.iter().take(MAX_NOTES).map(|l| kanban_store::mask_secrets(l).chars().take(NOTE_LEN).collect()).collect()
+}
+
 /// Reads an agent's closing lines: the last `CARD: #n` and the last `VERDICT: PASS|FAIL`
-/// (any case, markdown bold or backticks around them allowed), and the `- ` lines after a FAIL.
+/// (any case, markdown bold or backticks around them allowed), the `- ` lines after a FAIL (its
+/// failures) and the `- ` lines after a PASS (its notes, card #144).
 pub fn parse_verdict(text: &str) -> Verdict {
     let clean = |l: &str| l.trim().trim_matches(|c| c == '*' || c == '`' || c == '_').trim().to_string();
-    let mut v = Verdict { card: None, passed: None, failures: vec![], scope: None };
+    let mut v = Verdict { card: None, passed: None, failures: vec![], notes: vec![], scope: None };
     let mut after_fail = false;
+    let mut after_pass = false;
     for raw in text.lines() {
         let l = clean(raw);
         let up = l.to_ascii_uppercase();
@@ -171,26 +198,33 @@ pub fn parse_verdict(text: &str) -> Verdict {
                 v.card = Some(n);
             }
             after_fail = false;
+            after_pass = false;
         } else if let Some(rest) = up.strip_prefix("SCOPE:") {
             let word: String = rest.trim().trim_matches(|c| c == '*' || c == '`').trim().chars().take_while(char::is_ascii_alphabetic).collect();
             if word == "FULL" || word == "NARROWED" {
                 v.scope = Some(word.to_ascii_lowercase());
             }
             after_fail = false;
+            after_pass = false;
         } else if let Some(rest) = up.strip_prefix("VERDICT:") {
             let word: String = rest.trim().trim_matches(|c| c == '*' || c == '`').trim().chars().take_while(char::is_ascii_alphabetic).collect();
             if word == "PASS" {
                 v.passed = Some(true);
                 v.failures.clear();
+                v.notes.clear();
                 after_fail = false;
+                after_pass = true;
             } else if word == "FAIL" || word == "FAILED" {
                 v.passed = Some(false);
                 v.failures.clear();
+                v.notes.clear();
                 after_fail = true;
+                after_pass = false;
             }
-        } else if after_fail {
+        } else if after_fail || after_pass {
             if let Some(f) = raw.trim().strip_prefix("- ").or_else(|| raw.trim().strip_prefix("* ")) {
-                v.failures.push(f.trim().to_string());
+                let list = if after_fail { &mut v.failures } else { &mut v.notes };
+                list.push(f.trim().to_string());
             }
         }
     }
@@ -210,7 +244,11 @@ pub fn record_of(check: &Check, v: &Verdict, tools: Option<usize>, agent_id: &st
     let label = check.label;
     let (state, detail, line) = match (v.passed, tools) {
         (Some(true), Some(0)) => ("unclear", format!("the {} said PASS but ran no tools, so it didn't {} anything", check.who, check.verb), None),
-        (Some(true), _) => ("passed", String::new(), Some(format!("{label}: PASS"))),
+        (Some(true), _) if v.notes.is_empty() => ("passed", String::new(), Some(format!("{label}: PASS"))),
+        (Some(true), _) => {
+            let n = v.notes.len();
+            ("passed", String::new(), Some(format!("{label}: PASS, {n} note{}: {}", if n == 1 { "" } else { "s" }, note_list(&v.notes).join("; "))))
+        }
         (Some(false), _) => {
             let d = if v.failures.is_empty() { format!("see the {}'s report in the session", check.who) } else { v.failures.join("; ") };
             ("failed", d.clone(), Some(format!("{label}: FAIL: {d}")))
@@ -227,7 +265,41 @@ pub fn record_of(check: &Check, v: &Verdict, tools: Option<usize>, agent_id: &st
     if !detail.is_empty() {
         rec["detail"] = json!(detail);
     }
+    // Card #144: a PASS's notes, and, for the critic, whether any of its lines is a question for
+    // Hugh, which holds the card for him (`critic::gate`).
+    if state == "passed" && !v.notes.is_empty() {
+        rec["notes"] = json!(note_list(&v.notes));
+    }
+    let lines: &[String] = if v.passed == Some(false) { &v.failures } else { &v.notes };
+    if check.agent == crate::critic::CRITIC && v.passed.is_some() && lines.iter().any(|l| is_hugh(l)) {
+        rec["hugh"] = json!(true);
+    }
     (rec, line)
+}
+
+/// Card #144: a card routed small gets one plan critique. Its FAIL marks the record
+/// `oneFailed` (only Hugh moves it on, `critic::gate`), and its findings, not its HUGH:
+/// questions, become its build notes. A critique run again after that keeps both: the mark, and
+/// the first FAIL's notes ahead of its own. Its FAILs never cap it. `card` is the card as it was
+/// before this verdict. Returns whether the rule applies, so the cap is skipped.
+pub fn one_critique(check: &Check, card: &Card, v: &Verdict, rec: &mut Value) -> bool {
+    if check.agent != crate::critic::CRITIC || !kanban_store::routed_small(card) {
+        return false;
+    }
+    let prev = card.fields.get(check.key);
+    let before = prev.and_then(|p| p.get(kanban_store::ONE_FAILED_KEY)).and_then(Value::as_bool) == Some(true);
+    let failed = rec.get("state").and_then(Value::as_str) == Some("failed");
+    if before || failed {
+        rec[kanban_store::ONE_FAILED_KEY] = json!(true);
+        let mut notes: Vec<String> = if before { prev.and_then(|p| p.get("notes")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default() } else { vec![] };
+        notes.extend(if failed { v.failures.iter().filter(|l| !is_hugh(l)).cloned().collect::<Vec<_>>() } else { v.notes.clone() });
+        if notes.is_empty() {
+            rec.as_object_mut().map(|o| o.remove("notes"));
+        } else {
+            rec["notes"] = json!(note_list(&notes));
+        }
+    }
+    true
 }
 
 /// Where a verdict was given (card #104): the checkout the app looked at, and its HEAD and status
@@ -447,11 +519,12 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
         rec["placeMoved"] = json!(true);
     }
     add_place(&mut rec, tools, place, v.scope.as_deref());
+    let small = one_critique(check, &card, &v, &mut rec);
     let prev = card.fields.get(check.key);
     let already = prev.and_then(|p| p.get("capped")).and_then(Value::as_bool) == Some(true);
     carry_cap(prev, &mut rec);
     // The cap fires once; from then on `capped_hold` keeps the card from going anywhere but Blocked.
-    let cap = !already && capped(check, &rec, &card.column);
+    let cap = !already && !small && capped(check, &rec, &card.column);
     if cap {
         rec["capped"] = json!(true);
     }
@@ -598,6 +671,7 @@ pub fn pass_fails_on_checks(card: &Card, v: &mut Verdict, results: &[crate::done
     if !failed.is_empty() {
         v.passed = Some(false);
         v.failures = vec![format!("the tester said PASS, but {}", failed.join("; "))];
+        v.notes.clear();
     }
 }
 
@@ -648,7 +722,7 @@ mod tests {
     #[test]
     fn verdict_lines_are_read_from_the_end_of_the_report() {
         let v = parse_verdict("Tested the form.\n\nCARD: #76\nVERDICT: PASS");
-        assert_eq!(v, Verdict { card: Some(76), passed: Some(true), failures: vec![], scope: None });
+        assert_eq!(v, Verdict { card: Some(76), passed: Some(true), failures: vec![], notes: vec![], scope: None });
         let v = parse_verdict("**CARD:** #12\n**VERDICT: FAIL**\n- the chip doesn't show\n- BUG: Esc doesn't close it\n");
         assert_eq!(v.card, Some(12));
         assert_eq!(v.passed, Some(false));
@@ -664,13 +738,13 @@ mod tests {
 
     #[test]
     fn a_pass_with_no_tools_run_doesnt_count_and_fails_are_counted() {
-        let pass = Verdict { card: None, passed: Some(true), failures: vec![], scope: None };
+        let pass = Verdict { card: None, passed: Some(true), failures: vec![], notes: vec![], scope: None };
         assert_eq!(record_of(&T, &pass, Some(3), "a1", "t", 0).0["state"], "passed");
         assert_eq!(record_of(&T, &pass, None, "a1", "t", 0).0["state"], "passed"); // transcript unreadable: trust the verdict
         let (rec, line) = record_of(&T, &pass, Some(0), "a1", "t", 0);
         assert_eq!(rec["state"], "unclear");
         assert_eq!(line, "Subagent x unclear: the xer said PASS but ran no tools, so it didn't x anything");
-        let fail = Verdict { card: None, passed: Some(false), failures: vec!["a".into(), "b".into()], scope: None };
+        let fail = Verdict { card: None, passed: Some(false), failures: vec!["a".into(), "b".into()], notes: vec![], scope: None };
         let (rec, line) = record_of(&T, &fail, Some(4), "a1", "t", 0);
         assert_eq!((rec["state"].as_str(), rec["detail"].as_str(), rec["round"].as_u64()), (Some("failed"), Some("a; b"), Some(1)));
         assert_eq!(line, "Subagent x: FAIL: a; b");
@@ -685,7 +759,7 @@ mod tests {
         assert_eq!(rec["round"], 2);
         assert!(!capped(&T, &rec, "In progress"));
         assert!(!capped(&Check { cap: None, ..T }, &record_of(&T, &fail, Some(1), "a", "t", 9).0, "In progress"));
-        assert_eq!(record_of(&T, &Verdict { card: None, passed: None, failures: vec![], scope: None }, Some(2), "a", "t", 0).0["state"], "unclear");
+        assert_eq!(record_of(&T, &Verdict { card: None, passed: None, failures: vec![], notes: vec![], scope: None }, Some(2), "a", "t", 0).0["state"], "unclear");
     }
 
     #[test]
@@ -745,7 +819,7 @@ mod tests {
 
     #[test]
     fn a_verdict_that_names_a_secret_is_still_recorded_and_holds_none() {
-        let fail = Verdict { card: None, passed: Some(false), failures: vec!["a hard-coded Password in config.rs".into(), "it logs the token eyJhbGciOiJIUzI1NiJ9.e30.abc".into()], scope: None };
+        let fail = Verdict { card: None, passed: Some(false), failures: vec!["a hard-coded Password in config.rs".into(), "it logs the token eyJhbGciOiJIUzI1NiJ9.e30.abc".into()], notes: vec![], scope: None };
         let (rec, line) = record_of(&T, &fail, Some(3), "a1", "t", 0);
         let d = rec["detail"].as_str().unwrap();
         assert_eq!(d, "a hard-coded Pass word in config.rs; it logs the token [hidden]");
@@ -1040,6 +1114,69 @@ VERDICT: PASS", 4);
         let mut v = parse_verdict("VERDICT: PASS");
         pass_fails_on_checks(&c, &mut v, &[]);
         assert_eq!(v.passed, Some(true));
+        // Card #144: a PASS turned into a FAIL by its checks keeps no notes.
+        let c = s.get(&c.id).unwrap();
+        let (_, rec) = record(&mut s, &c, "CHECK 1: PASS
+CHECK 2: FAIL - the tick is lost
+CARD: #1
+VERDICT: PASS
+- a note", 4);
+        assert_eq!(rec["state"], json!("failed"));
+        assert!(rec.get("notes").is_none(), "{rec}");
+    }
+
+    // Card #144: the lines after a PASS are notes, and a HUGH: line is flagged.
+    #[test]
+    fn a_pass_keeps_its_dash_lines_as_notes() {
+        let v = parse_verdict("Read it.\nCARD: #144\n**VERDICT: PASS**\n- name the scroller in check 2\n* keep the prompt short\n");
+        assert_eq!((v.card, v.passed, v.failures.len()), (Some(144), Some(true), 0));
+        assert_eq!(v.notes, vec!["name the scroller in check 2".to_string(), "keep the prompt short".into()]);
+        // Lines before the VERDICT aren't notes, a later VERDICT starts again, and a FAIL's lines stay failures.
+        let v = parse_verdict("- an early line\nVERDICT: PASS\n- n1\nVERDICT: FAIL\n- f1");
+        assert_eq!((v.passed, v.failures.clone(), v.notes.len()), (Some(false), vec!["f1".to_string()], 0));
+        let v = parse_verdict("VERDICT: FAIL\n- f1\nVERDICT: PASS\n- n1");
+        assert_eq!((v.passed, v.failures.len(), v.notes.clone()), (Some(true), 0, vec!["n1".to_string()]));
+        // A CARD or SCOPE line after the VERDICT ends the notes.
+        assert!(parse_verdict("VERDICT: PASS\nCARD: #3\n- not a note").notes.is_empty());
+
+        let (rec, line) = record_of(&T, &parse_verdict("VERDICT: PASS\n- a\n- b"), Some(3), "a1", "t", 0);
+        assert_eq!((rec["state"].as_str(), rec["round"].as_u64()), (Some("passed"), Some(0)));
+        assert_eq!(rec["notes"], json!(["a", "b"]));
+        assert!(rec.get("detail").is_none() && rec.get("hugh").is_none(), "{rec}");
+        assert_eq!(line, "Subagent x: PASS, 2 notes: a; b");
+        assert_eq!(record_of(&T, &parse_verdict("VERDICT: PASS\n- only one"), Some(3), "a1", "t", 0).1, "Subagent x: PASS, 1 note: only one");
+        let (rec, line) = record_of(&T, &parse_verdict("VERDICT: PASS"), Some(3), "a1", "t", 0);
+        assert!(rec.get("notes").is_none());
+        assert_eq!(line, "Subagent x: PASS");
+        // A FAIL's record has no notes (record_check gives a small card's FAIL its own, `critic.rs`).
+        assert!(record_of(&T, &parse_verdict("VERDICT: FAIL\n- a"), Some(3), "a1", "t", 0).0.get("notes").is_none());
+        // A PASS that ran no tools is unclear, notes or not.
+        assert!(record_of(&T, &parse_verdict("VERDICT: PASS\n- a"), Some(0), "a1", "t", 0).0.get("notes").is_none());
+        // At most MAX_NOTES, each cut to NOTE_LEN and masked.
+        let many: String = (0..12).map(|i| format!("- note {i} {}\n", "x".repeat(400))).collect();
+        let (rec, _) = record_of(&T, &parse_verdict(&format!("VERDICT: PASS\n{many}")), Some(1), "a1", "t", 0);
+        let n = rec["notes"].as_array().unwrap();
+        assert_eq!(n.len(), MAX_NOTES);
+        assert!(n.iter().all(|x| x.as_str().unwrap().chars().count() <= NOTE_LEN));
+        let (rec, line) = record_of(&T, &parse_verdict("VERDICT: PASS\n- it logs the token eyJhbGciOiJIUzI1NiJ9.e30.abc"), Some(1), "a1", "t", 0);
+        assert!(!kanban_store::looks_secret(&rec.to_string()) && !kanban_store::looks_secret(&line), "{rec} {line}");
+    }
+
+    #[test]
+    fn a_hugh_line_is_flagged_on_a_pass_or_a_fail() {
+        // Only the critic's records carry it (the gate it holds is the critic's).
+        let t = crate::critic::CHECK;
+        let (rec, _) = record_of(&T, &parse_verdict("VERDICT: PASS
+- HUGH: x"), Some(1), "a1", "t", 0);
+        assert!(rec.get("hugh").is_none());
+        for r in ["VERDICT: PASS\n- HUGH: keep the old chip?", "VERDICT: FAIL\n- **HUGH:** which repo?\n- a blocker", "VERDICT: PASS\n- `hugh`: scope", "VERDICT: PASS\n- hugh : no, not this"] {
+            let (rec, _) = record_of(&t, &parse_verdict(r), Some(1), "a1", "t", 0);
+            assert_eq!(rec["hugh"], json!(true), "{r}");
+        }
+        for r in ["VERDICT: PASS\n- ask Hugh later", "VERDICT: FAIL\n- Hughes' rule", "- HUGH: before the verdict\nVERDICT: PASS", "VERDICT: PASS", "- HUGH: no verdict"] {
+            let (rec, _) = record_of(&t, &parse_verdict(r), Some(1), "a1", "t", 0);
+            assert!(rec.get("hugh").is_none(), "{r}: {rec}");
+        }
     }
 
     #[test]

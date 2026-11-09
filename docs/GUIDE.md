@@ -727,10 +727,23 @@ Every card's plan is checked by an independent critic before it is built (card #
 - Each card session the app starts also has a **card-critic** subagent, at high effort. At the end
   of Planning, once the whole plan is in the card's summary, the session briefs it with the card
   number and where the code is. It reads the card, the code the plan names and the repo's
-  AGENTS.md / CLAUDE.md, and attacks the plan: a deliverable the card asks for that the plan
-  dropped, missing cases, wrong assumptions about the code, steps that break a hard rule,
-  deliverables nobody could test, and work the card didn't ask for. A finding that is yours to
+  AGENTS.md / CLAUDE.md. Since card #144 (9 Nov 2026) it fails a plan only for a real problem: a
+  deliverable the card asks for that the plan dropped, a plan that would come out wrong in a way
+  the build wouldn't catch, or a step that is unsafe or breaks a hard rule (live, data, secrets).
+  Everything else (test steps and wording, the number of checks, small test-harness gaps, details
+  the build will find, style) is a **note**: notes never fail a plan. A question that is yours to
   decide starts "HUGH:", and the session asks you. It changes nothing, and ends PASS or FAIL.
+- **Notes go to the build.** A PASS can list notes. The app keeps them on the critique and in its
+  log line ("Plan critique: PASS, 2 notes: ..."), and adds them to the end of the In progress
+  message when the card comes into In progress from Planning or Backlog (your move, the app's
+  small-card move, or a Take it to card's own move).
+- **A question for you holds the card.** While the latest critique has a HUGH: line (after a PASS
+  or a FAIL), no card session and not the Router can move the card into the build, and a small
+  card doesn't go on by itself. Your own move takes it on.
+- **A card routed small gets one critique.** After a pass, an edit to its plan needs no fresh
+  critique, and it goes on by itself as before. After a FAIL, the session fixes the plan and
+  doesn't run the critic again; the card waits in Planning for your move (never Blocked), and the
+  critic's findings go to the build as its notes. Not for a stack's cards.
 - The app records its verdict on the card (`critique`). A card session's own move into In
   progress (or straight on to Human test) is refused until the latest critique passed: a card set to go on by itself, a stack's
   lead moving a child, any session moving its own card. **Your moves are never held**, so the
@@ -738,9 +751,10 @@ Every card's plan is checked by an independent critic before it is built (card #
 - **What makes it needed again:** every move into Planning, and an edit to the plan (the summary, or the
   "done when" checks)
   while the card is in Planning or Backlog, or in Blocked before its build started. Once a card has been in
-  In progress, a stop in Blocked doesn't need a new critique.
+  In progress, a stop in Blocked doesn't need a new critique. A card routed small keeps its one
+  critique through a plan edit.
 - **Three FAILs** since the card came into Planning send it to Blocked, with the findings as its
-  blocked reason. Fixing the plan doesn't reset that count; a move back into Planning does.
+  blocked reason (not a card routed small: it has one critique). Fixing the plan doesn't reset that count; a move back into Planning does.
 - **On the card:** a **Plan critiqued**, **Critique failed** or **Critique unclear** chip on
   Planning and Blocked cards, and a **Plan critique** row in the panel's details.
 - **Switch it off:** Settings › Sessions, untick "Critique every plan with a subagent before

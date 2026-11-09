@@ -47,7 +47,7 @@ You stay in charge of the one decision that matters: what ships.
 
 - **Every card is a live session.** Each card owns a real Claude Code session in an embedded terminal, with a chat view beside it. Open a card to talk to it, watch it work or take over the terminal.
 - **Truly parallel.** Every card builds in its own git worktree and branch, so a dozen cards can work at once without stepping on each other.
-- **Plans that survive a critic.** A critic agent attacks every plan for missing cases, wrong assumptions and broken rules before a line of code is written.
+- **Plans that survive a critic.** A critic agent checks every plan before a line of code is written. It fails a plan only for a real problem (a dropped deliverable, a plan that would come out wrong, anything unsafe); smaller points go to the build as notes. A small card gets one critique.
 - **Tested and reviewed before you see it.** A tester uses the real app and saves before-and-after screenshots. A reviewer reads the diff for bugs, risk and scope creep. Nothing reaches you until both pass.
 - **Bugs proved, fixes proved.** When something fails, a reproducer shows the bug in a few steps, then shows that it's gone after the fix. No more re-testing by hand.
 - **Never stuck.** A monitor watches every session. If one loops or stalls, it gets a nudge, and if it's still stuck, you get a notification.
@@ -79,7 +79,7 @@ Each column's instructions are plain Markdown files you can read and change.
 | Agent | What it does | When |
 |---|---|---|
 | **Router** | Sizes each card: small, normal or split into several. Picks the model and effort. Runs at low effort, so it's fast and cheap. | A card enters Planning |
-| **Critic** | Attacks the plan for missing cases, wrong assumptions and broken rules. | Before building |
+| **Critic** | Fails the plan only for a real problem: a dropped deliverable, a wrong assumption the build wouldn't catch, a broken rule. Smaller points become build notes. | Before building |
 | **Tester** | Uses the real app, follows the card's checks and saves before-and-after screenshots. | After building |
 | **Reviewer** | Reads the diff for mistakes, risky changes and work nobody asked for. | After building |
 | **Reproducer** | Proves a reported bug, then proves the fix. | Any failure |

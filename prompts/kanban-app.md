@@ -96,7 +96,9 @@ Otherwise, as before: the stack's lead works on `main` in `<checkout>`, as below
 6. If your session has the card-critic subagent (the Agent tool lists it), check the plan with it
    last, as planning.md's *Check the plan with a subagent* says: brief it with the card number and
    the checkout (`<checkout>`, or the card's worktree), fix what it finds, and run
-   a fresh one until it passes. If your session doesn't have it, say so on the card and go on.
+   a fresh one until it passes (a card routed small has one critique: after a FAIL, fix the plan
+   and leave the card for the owner). Don't edit the plan for a PASS's notes: they go to the build. If
+   your session doesn't have it, say so on the card and go on.
 
 ## In progress
 

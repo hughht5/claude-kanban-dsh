@@ -274,8 +274,9 @@ pub const RESET_ON_IN_PROGRESS: &[&str] = &[
 /// The card field holding its latest plan critique (card #97): `{state, at, agentId, detail,
 /// round, started}`. Every move into Planning resets it to needed with round 0; an edit to the
 /// summary (the plan) in Planning, or in Blocked before the build started, makes it needed
-/// again but keeps the FAIL count; every move into In progress marks `started`, so a card
-/// blocked mid-build can go back without a new critique.
+/// again but keeps the FAIL count (not on a card routed small once its one critique passed or
+/// failed, card #144: the record is kept as it is); every move into In progress marks `started`,
+/// so a card blocked mid-build can go back without a new critique.
 pub const CRITIQUE_KEY: &str = "critique";
 /// The card fields that hold the plan, so an edit to one makes the critique needed again: the
 /// summary, and card #105's acceptance checks (if that card's fields are on the board).
@@ -500,6 +501,17 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
     Ok(changed)
 }
 
+/// On the critique record of a card routed small whose one plan critique failed (card #144):
+/// only Hugh moves it on, and its findings are its build notes. A move into Planning clears it
+/// with the rest of the record.
+pub const ONE_FAILED_KEY: &str = "oneFailed";
+
+/// Whether `card` is routed small (the card-router's `route.size`) and not in a stack, so it
+/// gets one plan critique (card #144).
+pub fn routed_small(card: &Card) -> bool {
+    card.fields.get(ROUTE_KEY).and_then(|r| r.get("size")).and_then(Value::as_str) == Some("small") && card.stack_of().is_none() && !card.is_lead()
+}
+
 /// Whether `card`'s plan critique says its build has started (`CRITIQUE_KEY`'s `started`).
 fn critique_started(card: &Card) -> bool {
     card.fields.get(CRITIQUE_KEY).and_then(|r| r.get("started")).and_then(Value::as_bool) == Some(true)
@@ -536,6 +548,13 @@ fn critique_resets(card: &mut Card, patch: &Patch, changed: &mut Vec<String>, wa
             r.insert("started".into(), json!(true));
             Some(Value::Object(r))
         }
+    } else if edited
+        && routed_small(card)
+        && (matches!(rec.and_then(|r| r.get("state")).and_then(Value::as_str), Some("passed" | "failed")) || rec.and_then(|r| r.get(ONE_FAILED_KEY)).and_then(Value::as_bool) == Some(true))
+    {
+        // Card #144: a card routed small gets one plan critique. Once it has passed or failed,
+        // a plan edit keeps it: no fresh critique, and a FAIL's findings stay as its notes.
+        None
     } else if edited && rec.and_then(|r| r.get("state")).and_then(Value::as_str) != Some("needed") {
         // The plan changed, so an older verdict was for an older plan: in Planning or Backlog,
         // and in Blocked before the build started. A Blocked card with no record needs none

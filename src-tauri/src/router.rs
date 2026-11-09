@@ -486,6 +486,14 @@ pub fn go_on_blocker(store: &Store, card: &Card, queued: bool) -> Option<&'stati
     if state != Some("passed") {
         return Some("its plan critique hasn't passed");
     }
+    // Card #144: a question for Hugh, or a FAIL since it came into Planning (its one critique
+    // failed, so a later pass doesn't count), means Hugh moves it on.
+    if critique.and_then(|c| c.get("hugh")).and_then(Value::as_bool) == Some(true) {
+        return Some("its plan critic asked Hugh something");
+    }
+    if crate::critic::one_failed(card) {
+        return Some("its one plan critique failed, so Hugh moves it on");
+    }
     // Both are the app's own RFC 3339 times in UTC with milliseconds, so they sort as text.
     if route_at.is_empty() || critique_at <= route_at {
         return Some("its plan critique passed before the route, so the plan needs a fresh critique");
@@ -753,6 +761,37 @@ mod tests {
         // No route: no move.
         let plain = mk(&mut s, "Planning");
         assert!(!go_on_due(&s, &plain));
+    }
+
+    // Card #144: one critique for a small card; a FAIL or a question for Hugh leaves it to him.
+    #[test]
+    fn a_small_card_waits_for_hugh_after_a_fail_or_a_question() {
+        let (_d, mut s) = board();
+        let with = |s: &mut Store, extra: Value| {
+            let c = routed(s, "small", "passed");
+            let mut rec = c.fields["critique"].clone();
+            rec.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap());
+            s.update(&c.id, c.version, &json!({ "critique": rec }).as_object().cloned().unwrap(), "test").unwrap()
+        };
+        // A pass after its one FAIL (marked) doesn't move it; a FAIL from before the route doesn't count.
+        let c = with(&mut s, json!({ "round": 1 }));
+        assert!(go_on_due(&s, &c));
+        let c = with(&mut s, json!({ "round": 1, "oneFailed": true }));
+        assert_eq!(go_on_blocker(&s, &c, false), Some("its one plan critique failed, so Hugh moves it on"));
+        assert!(!go_on_if_ready(&mut s, &c));
+        // A pass with a HUGH: line doesn't either.
+        let c = with(&mut s, json!({ "round": 0, "hugh": true }));
+        assert_eq!(go_on_blocker(&s, &c, false), Some("its plan critic asked Hugh something"));
+        // A pass with plain notes does.
+        let c = with(&mut s, json!({ "round": 0, "notes": ["a note"] }));
+        assert!(go_on_due(&s, &c));
+        // A plan edit after the pass keeps it (the store keeps a small card's record), so the
+        // waiting move still applies when the turn ends.
+        assert!(go_on_if_ready(&mut s, &c));
+        let c = s.get(&c.id).unwrap();
+        let c = s.update(&c.id, c.version, &json!({ "summary": "the plan, tidied after the pass" }).as_object().cloned().unwrap(), "test").unwrap();
+        assert_eq!(c.fields["critique"]["state"], "passed");
+        assert_eq!(go_on_blocker(&s, &c, true), None);
     }
 
     #[test]

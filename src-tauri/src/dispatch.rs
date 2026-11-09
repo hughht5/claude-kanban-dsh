@@ -138,7 +138,7 @@ pub fn auto_note(card: &Card) -> Option<String> {
         return None;
     }
     Some(match card.column.as_str() {
-        "Planning" => format!("Hugh set this card to go on by itself to {t} (Take it to). When your plan is ready, its card-critic has passed it (the planning prompt's critic step, unless the app said the plan critique is off) and nothing in it is his to decide, move this card to In progress yourself (kanban_move_card) as the last thing in your turn, instead of waiting for him: the app then sends you the In progress prompt. If something is his to decide, ask it and leave the card in Planning: it waits for him."),
+        "Planning" => format!("Hugh set this card to go on by itself to {t} (Take it to). When your plan is ready, its card-critic has passed it (the planning prompt's critic step, unless the app said the plan critique is off) and nothing in it is his to decide, move this card to In progress yourself (kanban_move_card) as the last thing in your turn, instead of waiting for him: the app then sends you the In progress prompt. If something is his to decide (a HUGH: line from the critic), ask it and leave the card in Planning: it waits for him. A card routed small gets one critique: if it fails, fix the plan, don't run the critic again, and leave the card for Hugh."),
         "In progress" if t == "Human test" => "Hugh set this card to go on by itself to Human test: hand it over there as usual (after its subagent test passes), and it stops there for him.".into(),
         "In progress" => "Hugh set this card to go on by itself to Deploy complete. Once you move it to Human test (after its subagent test passes, with the hand-over as usual), the app moves it into Ship it for him and sends you the Ship it prompt. That is his approval to ship it with no human test, so make your own testing count.".into(),
         "Ship it" if auto_moved(card) => "This is Hugh's approval to ship it with no human test: he set the card to go on by itself to Deploy complete. Ship it as the Ship it prompt says, then move it to Deploy complete.".into(),
@@ -184,7 +184,17 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
     if let Some(note) = waits_moved(card).then(|| store.wait_note(card)).flatten() {
         text = format!("{text}\n\n{note}");
     }
+    if let Some(notes) = build_notes_for(card, from) {
+        text = format!("{text}\n\n{notes}");
+    }
     dry(card, text)
+}
+
+/// The plan critic's build notes (card #144) for a card that has just come into In progress
+/// from before its build (Planning or Backlog): not from Human test or Blocked, where the build
+/// had already had them.
+pub fn build_notes_for(card: &Card, from: &str) -> Option<String> {
+    (card.column == "In progress" && matches!(from, "Planning" | "Backlog")).then(|| crate::critic::build_notes(card)).flatten()
 }
 
 /// What a card coming into Planning is told while Hugh has the plan critique off (card #97).
@@ -206,6 +216,9 @@ pub fn app_move_message(store: &Store, card: &Card, from: &str, lead: &str) -> S
     // A stack's child builds itself, in parallel with its siblings (card #113).
     if let Ok(Some(lead)) = store.stack_lead(card) {
         text = format!("{text}\n\n{}", child_note(card, &lead));
+    }
+    if let Some(notes) = build_notes_for(card, from) {
+        text = format!("{text}\n\n{notes}");
     }
     dry(card, text)
 }
@@ -312,7 +325,7 @@ pub fn opening(store: &Store, card: &Card) -> String {
 /// The message for a session's own held move of `card` (already moved), when the column it
 /// went into runs its prompt at once, or it is In progress on a card that goes on by itself
 /// (card #76: its session moved it there from Planning). None for any other column.
-pub fn held_move_message(store: &Store, card: &Card) -> Option<String> {
+pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<String> {
     let cfg = store.column(&card.column).ok().flatten()?;
     let auto = card.column == "In progress" && auto_note(card).is_some() && cfg.mode != "none";
     if cfg.mode != "immediate" && !auto {
@@ -325,6 +338,9 @@ pub fn held_move_message(store: &Store, card: &Card) -> Option<String> {
 {prompt}", card.column);
     if let Some(note) = auto_note(card) {
         text = format!("{text}\n\n{note}");
+    }
+    if let Some(notes) = build_notes_for(card, from) {
+        text = format!("{text}\n\n{notes}");
     }
     Some(dry(card, text))
 }
@@ -411,7 +427,7 @@ pub fn edit_message(card: &Card, changed: &[&str]) -> Option<String> {
         }
         if *k == "autoTo" {
             lines.push(match card.auto_to() {
-                Some(t) => format!("- autoTo: {t}. The card now goes on by itself to {t}: in Planning, once your plan is ready, its card-critic has passed it (unless the plan critique is off) and nothing in it is his to decide, move it to In progress yourself; {}", if t == "Deploy complete" { "from Human test the app moves it into Ship it for him, which is his approval to ship it with no human test." } else { "it stops in Human test for him." }),
+                Some(t) => format!("- autoTo: {t}. The card now goes on by itself to {t}: in Planning, once your plan is ready, its card-critic has passed it (unless the plan critique is off) and nothing in it is his to decide (no HUGH: line), move it to In progress yourself (a card routed small gets one critique: after a FAIL it waits for him); {}", if t == "Deploy complete" { "from Human test the app moves it into Ship it for him, which is his approval to ship it with no human test." } else { "it stops in Human test for him." }),
                 None => "- autoTo: (cleared). The card no longer goes on by itself: wait for Hugh at each step as usual.".into(),
             });
             continue;
@@ -1275,7 +1291,7 @@ pub fn run(app: AppHandle) {
                         let _ = store.queue(&card_id, "message", &text);
                     }
                 } else if res.is_ok() {
-                    if let Some(text) = store.get(&card_id).ok().filter(|c| c.column == col).and_then(|c| held_move_message(&store, &c)) {
+                    if let Some(text) = store.get(&card_id).ok().filter(|c| c.column == col).and_then(|c| held_move_message(&store, &c, &from)) {
                         let _ = store.queue(&card_id, "message", &text);
                     }
                 }
@@ -1504,10 +1520,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = Store::open(dir.path().join("b.db")).unwrap();
         let c = card(json!({ "title": "T" }), "Deploy complete");
-        let m = held_move_message(&s, &c).unwrap();
+        let m = held_move_message(&s, &c, "Planning").unwrap();
         assert!(m.starts_with("Your move of this card to Deploy complete is done."));
         assert!(m.contains("deploy-complete.md") && m.contains("Hugh moves it to Done"));
-        assert!(held_move_message(&s, &card(json!({ "title": "T" }), "Human test")).is_none());
+        assert!(held_move_message(&s, &card(json!({ "title": "T" }), "Human test"), "In progress").is_none());
         let h = header(&card(json!({ "title": "T" }), "Planning"));
         assert_eq!(h, "You are the session for card #7, \"T\" (no repo). Read and update your card with the kanban_* tools (or `kb` in Bash). Never move a card into Ship it, never merge, never push to main.");
     }
@@ -1524,6 +1540,41 @@ mod tests {
         assert!(m.contains("in-progress.md"), "{m}");
         let dry = card(json!({ "title": "T", "dryRun": true }), "In progress");
         assert!(app_move_message(&s, &dry, "Planning", "x").starts_with("Dry run:"));
+    }
+
+    // Card #144: the plan critic's notes reach the build, by each way into In progress.
+    #[test]
+    fn the_in_progress_message_ends_with_the_critics_build_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("b.db")).unwrap();
+        let noted = |extra: Value| {
+            let mut f = json!({ "title": "T", "critique": { "state": "passed", "round": 0, "started": true, "notes": ["name the scroller"] } });
+            f.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap());
+            card(f, "In progress")
+        };
+        let has = |m: &str| m.trim_end().ends_with("sharpening doneWhenChecks now (an edit in In progress needs no new critique).") && m.contains("Build notes from the plan critic") && m.contains("- name the scroller");
+        // Hugh's move (and the Router's, which uses the same message), from Planning or Backlog.
+        for from in ["Planning", "Backlog"] {
+            let m = move_message(&s, &noted(json!({})), from, false);
+            assert!(m.contains("in-progress.md") && has(&m), "{from}: {m}");
+        }
+        // The app's small-card move.
+        let m = app_move_message(&s, &noted(json!({})), "Planning", crate::router::GO_ON_LEAD);
+        assert!(has(&m), "{m}");
+        // A Take it to card's own move.
+        let m = held_move_message(&s, &noted(json!({ "autoTo": "Human test" })), "Planning").unwrap();
+        assert!(m.contains("Build notes from the plan critic"), "{m}");
+        // Not back from Human test, nor from Blocked (the build already had them).
+        for from in ["Human test", "Blocked"] {
+            assert!(!move_message(&s, &noted(json!({})), from, false).contains("Build notes"), "{from}");
+        }
+        assert!(held_move_message(&s, &noted(json!({ "autoTo": "Human test" })), "Blocked").unwrap().find("Build notes").is_none());
+        // Not into another column, and nothing when there are no notes.
+        let planning = card(json!({ "title": "T", "critique": { "state": "passed", "notes": ["x"] } }), "Planning");
+        assert!(!move_message(&s, &planning, "Backlog", false).contains("Build notes"));
+        assert!(!move_message(&s, &card(json!({ "title": "T", "critique": { "state": "passed" } }), "In progress"), "Planning", false).contains("Build notes"));
+        // A dry run still says so first.
+        assert!(move_message(&s, &noted(json!({ "dryRun": true })), "Planning", false).starts_with("Dry run:"));
     }
 
     #[test]
@@ -1556,9 +1607,9 @@ mod tests {
         assert!(move_message(&s, &asked, "Backlog", false).starts_with("The app moved this card from Backlog to Planning for Hugh: he asked for it to start in Planning when he added it."));
         // A held move into In progress gets the In progress prompt, only on a card that goes on.
         let ip = card(json!({ "title": "T", "autoTo": "Deploy complete" }), "In progress");
-        let h = held_move_message(&s, &ip).unwrap();
+        let h = held_move_message(&s, &ip, "Planning").unwrap();
         assert!(h.starts_with("Your move of this card to In progress is done.") && h.contains("in-progress.md") && h.contains("the app moves it into Ship it for him"), "{h}");
-        assert!(held_move_message(&s, &card(json!({ "title": "T" }), "In progress")).is_none());
+        assert!(held_move_message(&s, &card(json!({ "title": "T" }), "In progress"), "Planning").is_none());
         // A stack's child never goes on by itself.
         assert!(auto_note(&card(json!({ "title": "T", "autoTo": "Human test", "stackOf": 3 }), "Planning")).is_none());
         // The app's move into Ship it is Hugh's approval, and says so.
