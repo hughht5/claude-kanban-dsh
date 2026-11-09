@@ -558,6 +558,27 @@ Decisions (the card session's, from Hugh's brief for stack #145):
 - **Stacks keep card #113's flow**, and a card with a `worktreePath` keeps it. Only a new session
   makes one: a resumed conversation stays where it ran.
 
+## Card #148: the rules for parallel builds (9 Nov 2026, stack #145)
+
+Decisions (the card session's, from Hugh's brief for stack #145: build in parallel, test each in
+its own test app, ship one by one or together if stacked):
+
+- **One rule, everywhere.** Every card for this repo builds in its own worktree and branch, tests in
+  its own test app, and ships alone, one at a time per repo, rebased onto the latest `origin/main`
+  by its card-merger. A stack ships as one. "One kanban-app card builds at a time" and "work on
+  `main` in the shared checkout" are gone from the prompts and docs, and a test keeps them out.
+- **A card makes its own worktree when the app hasn't.** Same folder and branch name as card #146's
+  (`.claude\worktrees\card-<n>`, `card-<n>`), so the rule holds whether or not Hugh lists the repo.
+- **The Router stops integrating single cards.** Its integration branch and install waves existed
+  because every card shared one test app. With a test app per card, each card is tested on its own
+  branch, and the ship's rebase onto `origin/main` replaces the integration branch. Hugh can
+  overturn this; the merger's integrate job stays in the code.
+- **Ship it leaves the worktree** and logs the commands to remove it: Windows won't delete a folder
+  the card's running session is in.
+- **Private prompts change on a branch.** The live app reads the private folder's `prompts\` from
+  its checkout, so editing its `main` would change every live session before the code ships. The
+  private branch ships with the stack.
+
 ## Platforms (6 Nov 2026, cards #114 and #117)
 
 - Every operating-system call sits in `src-tauri/src/platform/` behind one interface

@@ -69,7 +69,7 @@ group for integration, test and ship, not one builder. The router's decisions R1
 `PLAN.md` (Decisions 15 to 20).
 
 - **Each child is an ordinary card session.** It plans itself, runs the card-critic on its plan (if
-  its session has it), and builds in its own worktree `<checkout>-<n>` on the branch
+  its session has it), and builds in its own worktree `<checkout>/.claude/worktrees/card-<n>` on the branch
   `<stack branch>-<n>`, made from the stack's branch. No commits to the stack's branch, no PR, no
   dev stack. It unit-tests, runs its card-reviewer and card-tester on its branch, writes its own
   how-to-test into `nextStep`, and moves itself to Human test. Its session then stops (the

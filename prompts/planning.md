@@ -131,8 +131,8 @@ it on:
   for the owner too: you can't move it on.
 - If a decision is the owner's, ask it and leave the card in Planning: it waits for the owner as
   usual.
-- If something else holds it (another card building in the same checkout, say), say so and leave
-  it in Planning: the owner moves it on.
+- If something else holds it (a card it needs that isn't built yet, say), say so and leave it in
+  Planning: the owner moves it on.
 - For Deploy complete, the app moves the card from Human test into Ship it for the owner, which is
   their approval to ship it with no human test. Plan the testing with that in mind.
 
@@ -204,8 +204,9 @@ number) shows a `stage` for each child, you plan and build this card yourself, i
 siblings, and the lead merges it into the stack's branch:
 
 - **Plan only this card.** Follow *Plan it*, but in place of step 2 make your own worktree
-  `<checkout>-<n>` on the branch `<stack branch>-<n>`, from the stack's branch (the app's note names
-  both; for kanban-app, `kanban-app.md` gives the place), and record `worktreePath` and `branch`.
+  `<checkout>/.claude/worktrees/card-<n>` on the branch `<stack branch>-<n>`, from the stack's
+  branch (the app's note names both; for kanban-app, `kanban-app.md` gives the place), and record
+  `worktreePath` and `branch`.
   Never work in the lead's worktree or on the stack's branch.
 - **Your siblings build at the same time.** If your plan touches what a sibling changes, log it on
   both cards and on the lead. If you wait on a sibling (your `blockedBy`), you started only once it

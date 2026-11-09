@@ -10,6 +10,7 @@ repo. Distilled from `HANDOVER.md`, `README.md`, `UNDO.md`, `ACCEPTANCE.md`, `PL
 - [What the app is](#what-the-app-is)
 - [Layout](#layout)
 - [Build and test](#build-and-test)
+- [Parallel builds](#parallel-builds)
 - [Test version and live](#test-version-and-live)
 - [Driving the UI](#driving-the-ui)
 - [Hard rules](#hard-rules)
@@ -63,6 +64,29 @@ In Git Bash:
   archived afterwards. Prefer making them on the test board.
 - The API's requests are logged in the data folder's `api.log` (token hidden).
 
+## Parallel builds
+
+Several cards for this repo build at once (card #145), each in its own worktree with its own test
+app, and they ship one at a time.
+
+- **Its own worktree and branch.** Every card builds in `~\claude-kanban-dsh\.claude\worktrees\card-<n>`
+  on the branch `card-<n>`, made from `origin/main`. For a repo listed in Settings › Sessions ›
+  "Build each card in its own worktree" (`sessions.own_worktree_repos`), the app makes it when the
+  card's first session starts and records `worktreePath` and `branch` (card #146); otherwise the
+  card's session makes it in Planning. A stack's lead and children make their own (card #113).
+- **Work only there.** Build, test and commit in the card's worktree: never in the main checkout
+  `~\claude-kanban-dsh`, never in another card's worktree, never on `main`. Each worktree has its
+  own `target` folder, so its first build is slow.
+- **Its own test app.** `kanban_test_app` take gives the card a test app of its own (Test, Test 2,
+  ... up to `testapp.slots`), kept on the card as `testApp` while it is In progress or Human test
+  (card #147). Its reply names the install command (`-Channel test`, `test2`, ...) and the CDP
+  port (9333 + N). Hugh tests each card in its own test app.
+- **Ships go one at a time per repo** (card #79). At ship the card-merger rebases the branch onto
+  the latest `origin/main` and reruns the tests (card #100); `main` is fast-forwarded to it and
+  pushed. A stack's cards ship together, once, on the lead (card #113).
+- **Private prompts too.** The live app reads the private folder's `prompts\` from its `main`, so a
+  change there goes on a branch in a worktree of the private repo, and ships with the card.
+
 ## Test version and live
 
 - **Test** ("Claude Kanban DSH Test"): the same code built with `KANBAN_CHANNEL=test`. Install in
@@ -71,15 +95,18 @@ In Git Bash:
   board, not on PATH (so `kb` is always the live one).
   - Install or refresh: `powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test`
     (quits and restarts only the test app).
-  - Turns (card #115): the test app is shared. A card session uses it only during its tester
-    turn (`kanban_test_app` take / release). Whoever installs it from outside a card session
-    takes an install turn first (`kb testapp take --install --owner <o> --label <l> --wait`),
-    runs `install.ps1` with `KANBAN_LOCK_OWNER=<o>` in the background, and the turn ends when
-    the install has started the test app again. `install.ps1 -Channel test` waits for other
-    installs, a tester's turn, Hugh's Hold and 10 min after Hugh's last input in the test app.
+  - A test app per card, turns per test app (cards #115 and #147). A card session gets its own
+    test app and a turn on it with `kanban_test_app` take, and gives the turn back with release
+    (the test app stays the card's). Whoever installs from outside a card session takes an
+    install turn on one test app first (`kb testapp take --install --slot <N> --owner <o>
+    --label <l> --wait`), runs `install.ps1` with `KANBAN_LOCK_OWNER=<o>` in the background, and
+    the turn ends when the install has started that test app again. A test app that holds a
+    card's build refuses an outside install turn: free it first (`kb testapp free --slot <N>`).
+    `install.ps1 -Channel <channel>` waits for other installs, a tester's turn on that test app,
+    Hugh's Hold, 10 min after Hugh's last input in it, and while it holds another card's build.
   - `-FreshCopy` replaces the test board with a new copy of the live one (old one to its `backups`).
   - Test sessions are real Claude Code sessions on real repos: treat its cards with care.
-- **More test slots** (card #118), for testers in parallel: `-Channel test2`, `test3`, ... (up to
+- **More test slots** (card #118), the test apps the board gives cards (card #147): `-Channel test2`, `test3`, ... (up to
   `test10`; ports 9334 to 9343). Slot N is "Claude Kanban DSH Test N": install `Programs\Claude Kanban DSH Test N`, exe
   `claude-kanban-dsh-testN.exe`, data `.claude-kanban-dsh-testN`, build `target\testN`, identifier
   `io.github.hughht5.claude-kanban-dsh.testN`, quit event `Local\ClaudeKanbanDshQuitTestN`, its own lock, WebView profile
@@ -162,11 +189,15 @@ In Git Bash:
 - Update `README.md` and `HANDOVER.md` when behaviour changes; `ACCEPTANCE.md` when a phase's tests
   change; `PLAN.md` for decisions.
 - Every change to the app is pushed to GitHub, to the right repo: the app's code, tests and docs to
-  this public repo (`hughht5/claude-kanban-dsh`, built in `~\claude-kanban-dsh`, also for cards whose
-  repo is the old `hughht5/kanban-app`); the owner's own material (column prompts, skills,
-  `repos.json`) to the owner's private repo, never here.
-  - In progress: commit on `main` locally with a clear message, then push the card's own branch
-    (`git push origin HEAD:refs/heads/card-<n>`, or a stack card's branch). Never push `main`.
-  - Ship it: merge to `main`, push `main`, delete the card's branch, then stage the live update
-    (`scripts\install.ps1`, never `-Now`).
+  this public repo (`hughht5/claude-kanban-dsh`, built in a worktree of `~\claude-kanban-dsh`, also
+  for cards whose repo is the old `hughht5/kanban-app`); the owner's own material (column prompts,
+  skills, `repos.json`) to the owner's private repo, never here.
+  - In progress: commit on the card's own branch in its worktree, with `(card #<n>)` in the
+    message, then push that branch (`git push -u origin card-<n>`, or a stack card's branch).
+    Never push `main`.
+  - Ship it, one card or one stack at a time per repo: the card-merger rebases the branch onto
+    `origin/main` and reruns the tests, `main` is fast-forwarded to it in the main checkout and
+    pushed, the card's branch is deleted on GitHub, then the live update is staged
+    (`scripts\install.ps1`, never `-Now`). The card's worktree is removed once its session has
+    stopped (Windows won't remove a folder a running session is in).
   - The pre-commit check (`scripts\check-public.sh`) must pass before every commit here.

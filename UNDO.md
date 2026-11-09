@@ -784,3 +784,13 @@ PowerShell 5.1 commands. `<checkout>` is the repo's checkout named in the settin
 | `/.claude/worktrees/` added to a checkout's `.git\info\exclude`, only where git didn't ignore it already | Delete the two lines under "# Card worktrees the kanban app makes (card #146)" from `<checkout>\.git\info\exclude` |
 | `start_session` makes the worktree, the note in the session's messages (`session_cmds.rs`, `dispatch.rs`, `src-tauri\src\worktree.rs`), the store setting (`crates\store\src\config.rs`), the Settings box (`ui\settings.js`) | `git revert` the card's commits (marked `(card #146)`) |
 | A stack child's note names `<checkout>\.claude\worktrees\card-<n>` (`stackrun::child_worktree`), not `<checkout>-<n>` | The same revert puts back `<checkout>-<n>` |
+
+## Card #148: the rules for parallel builds (9 Nov 2026, stack #145, branch `dsh-148`)
+
+Docs, prompts and one test; no app code, no data. PowerShell 5.1 commands.
+
+| Change | Undo |
+|---|---|
+| The rule text in `AGENTS.md`, `HANDOVER.md`, `PLAN.md`, `docs/GUIDE.md` and the bundled `prompts/kanban-app.md`, `planning.md`, `in-progress.md` and `router.md` (the Router's job 5 included, which is its system prompt once built) | `git -C ~\claude-kanban-dsh revert --no-edit <the card's commits, marked (card #148)>`, then stage the live update as usual |
+| The test `src-tauri\tests\prompt_rules.rs` | The same revert |
+| The owner's private copies of the same prompts | Revert the card's commit in the private repo (its own `UNDO.md` has the line) |

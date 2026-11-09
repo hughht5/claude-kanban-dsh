@@ -135,7 +135,8 @@ on the card, and ask the owner to turn the rule off or restart the session.
    the steps and a screenshot, and drafts a failing test. The app keeps them on the card as the
    "before".
 2. Add the test it drafted. See it fail. Then fix the bug.
-3. Put the fix where it runs: install it in the test app (or bring the dev stack up on it).
+3. Put the fix where it runs: install it in the card's own test app (or bring the dev stack up on
+   it).
 4. Run the `card-reproducer` again. Give it the fix commit and the test's name. It checks that the
    app runs the fix, repeats the same steps, runs the test, and ends FIXED or REPRODUCED. The app
    keeps it as the "after".
@@ -179,8 +180,8 @@ Or ask them to turn the rule off or restart the session.
 2. **Brief it like a stranger**, because it starts with no memory of your work and shouldn't take
    on your conclusions. Give it the card number, every deliverable from the summary, where the
    change is (worktree, branch, PR) and how to try it (the dev stack and which login; for the
-   kanban app, which test app and its DevTools port, 9334 for the test app or 9333+N for test N,
-   and dry-run cards). Don't tell it what you found. If the
+   kanban app, the card's own test app (`kanban_test_app` take names it) and its CDP port, 9334
+   for Test or 9333+N for Test N, and dry-run cards). Don't tell it what you found. If the
    card has `doneWhenChecks` (and `kanban_update_card` lists `doneWhen`), say so in the brief: the
    tester reads them from the card and ends with one `CHECK <n>: PASS|FAIL` line per check, which
    the app marks on the card its `CARD` line names. A PASS that fails a check counts as a FAIL.
@@ -321,8 +322,8 @@ effort unless your card sets its own. A child's `stage` is `waiting` (on a sibli
 - **Test the integrated build once.** When the stack is ready by the owner's rule (every child
   merged, or the first, by `stacks.human_test_when`), bring up its one build from the stack's
   branch: for a web product, push the stack's branch, open its one PR and bring up its one dev stack
-  (*Build* steps 6 and 7), and set the logins on your card; for kanban-app, the test app
-  (`kanban-app.md`). Then run your own `card-tester` on it, briefed with every child's deliverables.
+  (*Build* steps 6 and 7), and set the logins on your card; for kanban-app, your card's own test
+  app (`kanban-app.md`). Then run your own `card-tester` on it, briefed with every child's deliverables.
   Your own review counts as passed once every child's review has passed. If a child is merged after
   that, bring the build up to date and test again, so the owner tests what the stack's branch holds.
 - **The app moves the stack to Human test** once it is ready, counting merged children only, and
@@ -358,8 +359,9 @@ Your card is in a stack when its `stackOf` names a lead. If `kanban_stack_list` 
 number) shows a `stage` for each child, you build this card yourself, in parallel with its siblings,
 and the lead merges it into the stack's branch:
 
-- **Your own worktree and branch.** Work in the worktree you made in Planning, `<checkout>-<n>` on
-  the branch `<stack branch>-<n>` from the stack's branch (the app's note names both; for
+- **Your own worktree and branch.** Work in the worktree you made in Planning,
+  `<checkout>/.claude/worktrees/card-<n>` on the branch `<stack branch>-<n>` from the stack's
+  branch (the app's note names both; for
   kanban-app, `kanban-app.md` gives the place). If you have none yet, make it now and record
   `worktreePath` and `branch`. In *Before you build* step 3, rebase onto the stack's branch, not
   `origin/main`. Never commit to the stack's branch.

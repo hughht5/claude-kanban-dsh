@@ -15,7 +15,7 @@ A second copy of the app, "Claude Kanban DSH Test", runs beside the live one so 
 
 - **Install or update the test copy:** `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel test`. The first install copies the live board into the test folder; later installs keep the test board.
 - **Refresh the test board from the live one:** add `-FreshCopy`. The old test board is kept in `%USERPROFILE%\.claude-kanban-dsh-test\backups`.
-- **More test copies side by side:** `-Channel test2`, `-Channel test3` (and so on) install "Claude Kanban DSH Test 2", "Test 3", each with its own install folder (`Programs\Claude Kanban DSH Test 2`), data (`.claude-kanban-dsh-test2`), quit event, lock and `kb.exe`, "(test 2)" in its titles and warning bar. `-FreshCopy` works on each. DevTools ports: live 9333, test 9334, test 2 9335, test 3 9336, up to test 10 on 9343. `-NamesOnly` prints a channel's names without building anything.
+- **More test copies side by side:** `-Channel test2`, `-Channel test3` (and so on) install "Claude Kanban DSH Test 2", "Test 3", each with its own install folder (`Programs\Claude Kanban DSH Test 2`), data (`.claude-kanban-dsh-test2`), quit event, lock and `kb.exe`, "(test 2)" in its titles and warning bar. `-FreshCopy` works on each. DevTools ports: live 9333, test 9334, test 2 9335, test 3 9336, up to test 10 on 9343. `-NamesOnly` prints a channel's names without building anything. The board hands these out, one per card (*Turns on the test app*, below).
 - **Copy a board by hand:** `kb copy-board --to <path> [--from <path>] [--replace]` takes a consistent snapshot (SQLite `VACUUM INTO`, safe while the live app runs). `--from` defaults to the live board.
 - **Swap a change into the live app:** once it works in the test copy, run `scripts\install.ps1` (no `-Channel`) from the same commit. The live app quits cleanly, its sessions are suspended and resume at the next start.
 
@@ -23,25 +23,58 @@ Sessions started in the test copy are real Claude Code sessions on real repos, s
 
 ## Turns on the test app
 
-The test app is one shared install, so its use goes in turns (card #115). The **Test app** chip in
-the board header shows who has it, the line, any install and Hugh's Hold; it has **Release** for
-the turn and for the old DSH lock folder.
+Each card gets a test app of its own (card #147), and the use of each test app goes in turns (card
+#115). The **Test apps** chip in the board header ("Test apps: 2 in use") opens a row per test app
+in use: its card, its turn, its line and any install, with **Release** (the turn) and **Free** (take
+the test app from its card; its session is told). It also shows Hugh's Hold and the old DSH lock
+folder.
 
-- **A tester turn**: one card session uses the installed test app (its own checks and its
-  card-tester). A card in In progress or Human test asks with `kanban_test_app` (action `take`);
-  it gets the turn, or a place in line and a message when the turn is its own. A paused session is
-  never resumed for it: the turn passes to the next card with a running session, and the paused
-  card keeps its place ("Test app: turn waits for its session" on its tile).
-- **An install turn**: a session outside the app (Hugh's own, for example installing a merged batch of cards) takes one
-  with `kb testapp take --install --owner <o> --label "wave 3"`. It goes ahead of every tester,
-  waits only for the current turn to end, and ends when its install has started the test app again.
+- **A card's own test app**: a card in In progress or Human test asks with `kanban_test_app`
+  (action `take`). Its first take gives it the lowest free test app (Test, Test 2, ... up to
+  Settings › Sessions › **Test apps, at most**, default 10), kept on the card as `testApp` and
+  shown on its tile ("Test 2 · testing") and in its details. The reply names the install command
+  and the CDP port. The card keeps it while it is In progress or Human test (a stack's child: In
+  progress only, since you test a stack on its lead's install), so you test each card's build in
+  its own test app. Moving the card on or archiving it frees it. Only when every one is taken does
+  a card wait ("Test app: 1st in line"), and it gets the next one freed.
+- **A tester turn**: the card's session uses its own test app (its own checks and its
+  card-tester) during its turn, or waits in line for it and gets a message when the turn is its
+  own. A paused session is never resumed for it: the turn passes to the next card with a running
+  session, and the paused card keeps its place ("Test app: turn waits for its session" on its
+  tile). Release gives back the turn only: the test app stays the card's.
+- **An install turn**: a session outside the app (Hugh's own, for example) takes one on one test
+  app with `kb testapp take --install --slot <N> --owner <o> --label "wave 3"`. It goes ahead of
+  every tester on that test app, waits only for the current turn to end, and ends when its install
+  has started the test app again. A test app that holds a card's build refuses it: free it first
+  (`kb testapp free --slot <N>`).
 - A turn ends when it is released, when its card leaves In progress and Human test or is archived,
   or after `testapp.turn_minutes` (default 60) with nothing running (a working session or a running
   card-tester keeps it). Past 45 min with someone waiting, the chip turns amber.
-- `scripts\install.ps1 -Channel test` builds first, then waits before it restarts the test app:
-  for another install, for a tester's turn, for Hugh's Hold, and while Hugh has used the test app
-  in the last 10 min. Both boards show **Test app restart pending (wave 3)** with **Hold** (30 min,
-  at most 2 hours) and **Let it restart**. No toast; nothing takes focus.
+- `scripts\install.ps1 -Channel <channel>` builds first, then waits before it restarts that test
+  app: for another install, for a tester's turn on it, for Hugh's Hold, while Hugh has used it in
+  the last 10 min, and while it holds another card's build. Both boards show **Test app restart
+  pending (wave 3)** with **Hold** (30 min, at most 2 hours) and **Let it restart**. No toast;
+  nothing takes focus.
+
+## This app's own cards build in parallel
+
+Several cards for this app's own repo build at once (card #145). Each one:
+
+- **builds in its own git worktree** inside the checkout, `.claude\worktrees\card-<n>`, on the
+  branch `card-<n>`, made from `origin/main`. List the repo under Settings › Sessions › **Build
+  each card in its own worktree** and the app makes it when the card's first session starts
+  (card #146); otherwise the card's Planning session makes it. The main checkout is never built in.
+- **is tested in its own test app** (*Turns on the test app*, above), so several cards can wait
+  for you in Human test side by side. The card's hand-over names its test app and port.
+- **ships alone.** Cards of one repo ship one at a time (*One ship at a time per repo*), and each
+  ship's card-merger first rebases the card's branch onto the latest `origin/main` and reruns the
+  tests (*The merger at ship*), so each ships on top of the last. A stack still ships as one, on
+  its lead (*Stacked cards*).
+
+A ship can't remove the card's worktree, because the card's session runs in it and Windows won't
+remove a folder in use. The card's log gives the two git commands that remove the folder and its
+branch once the session has stopped. Each worktree has its own build folder of several GB, so
+remove them.
 
 ## Layout
 
@@ -438,7 +471,7 @@ Cards outside Backlog and Planning show what their work changed, read from git b
   with Open and Show in folder.
 - **Where the figures come from:** the card's checkout (`worktreePath`). A card on its own branch
   is measured against the newest commit it shares with main, master, origin/main or origin/master.
-  A card on main (as kanban-app cards are), or whose branch was merged, is measured from the
+  A card on main (as this app's cards were before card #145), or whose branch was merged, is measured from the
   commits whose message names it, such as "(card #94)", "(cards #89, #94)" or a range
   "(cards #96-#112)"; renames across those commits are followed. A stack child with
   no checkout uses its lead's, counting only commits that name the child. The checkout's current
@@ -465,7 +498,9 @@ Hugh, moved out of Ship it or archived), the app hands the oldest waiting card o
 session within a couple of seconds, as if you had just moved it. Cards of different repos ship side
 by side, and cards with no repo never wait. Moving a waiting card out of Ship it cancels its
 request. A card whose session never started (say, its conversation is in the desktop app) stops
-holding its repo after a minute.
+holding its repo after a minute. Each card built on its own branch, so its card-merger first
+rebases that branch onto the latest `origin/main` (*The merger at ship*): the second card ships on
+top of the first.
 
 ## The Archive (no Done column)
 
@@ -716,7 +751,7 @@ Every card in Human test says how long it should take you to check (card #103, 6
   stack on the card, a "Route: login" hand-over, or a change to a product repo's
   app code that needs a signed-in user); if its diff is empty, can't be read, has uncommitted work
   or is on another branch than the card says; or if the router expected 30 min+.
-- **Where the diff comes from:** a card built on main, as this app's cards are: its commits marked
+- **Where the diff comes from:** a card built on main (as this app's cards were before card #145): its commits marked
   "(card #N)" (and its stack's children's). A card on its own branch: the branch's commits marked
   "(card #N)" since it left main (or origin/main, whichever it left more recently), so a branch
   made from another unmerged branch isn't charged with that branch's work; with none marked, the
@@ -953,7 +988,8 @@ change by looking (card #101, 6 Nov 2026).
   the card was tested again since and that test took no shots, the box says the shots are from
   an earlier run.
 - **Which build:** `cdp.mjs shot` stamps the test app's build commit into each PNG, and the app
-  reads it back, so a shot of the wrong build shows. Several branches share the test app.
+  reads it back, so a shot of the wrong build shows. Each card has its own test app (card #147),
+  but a freed test app keeps its last card's build until the next card installs into it.
 - **Kept:** every run stays on the card; a new test run adds to it and never replaces one. The
   field is `evidence`, which only the app writes (sessions and `kb update` can't).
 - **Disk use:** up to 30 MB a run in the data folder's `evidence` folder, never pruned.
@@ -1167,9 +1203,10 @@ filter box, so pills combine (every term must match). A pill with nothing to sho
 
 One long-running Claude Code session for the whole board. It routes new cards (size, model,
 effort, split), checks a card that reaches Human test against its Done-when checks and its
-verdicts, takes the stuck-session Monitor's findings, and merges finished kanban-app branches onto
-the integration branch with the card-merger. It never writes code, never pushes and never moves a
-card into Ship it.
+verdicts, and takes the stuck-session Monitor's findings. It never writes code, never pushes and
+never moves a card into Ship it. It doesn't merge this app's own cards onto an integration branch
+any more (card #148): each is tested in its own test app and ships alone, and a stack's lead
+integrates its own children.
 
 - **Start it** with the **Router** button in the board's header ("Start Router" before the first
   start). Nothing changes on the board until you do. Its panel docks on the right: a digest when

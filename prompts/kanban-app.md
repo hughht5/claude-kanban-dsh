@@ -9,6 +9,7 @@
 **Contents**
 
 - [What this card is](#what-this-card-is)
+- [Cards build in parallel](#cards-build-in-parallel)
 - [A stack card](#a-stack-card)
 - [Planning](#planning)
 - [In progress](#in-progress)
@@ -35,18 +36,41 @@ the repo's `AGENTS.md` throughout: it holds the build, the test version and the 
 
 Not for this card, whatever the column prompt says:
 
-- no worktree, no dev stack, no `logins`, no `devStack`, no browser profiles;
+- no dev stack, no `logins`, no `devStack`, no browser profiles;
 - no deploy-run proofs, no production checks, no after-deploy steps.
 
 You are probably running inside the live app. **Never quit, restart or `-Now` the live app**: it
 would kill this very session and every other card's.
 
+## Cards build in parallel
+
+Several cards for this repo build at once (card #145). Each has its own git worktree and branch,
+and its own test app. Ships still go one at a time.
+
+- **Its own worktree.** `<checkout>/.claude/worktrees/card-<n>` on the branch `card-<n>`, made
+  from `origin/main`. If the repo is listed in Settings › Sessions › "Build each card in its own
+  worktree" (`sessions.own_worktree_repos`), the app makes it when the card's first session starts,
+  records `worktreePath` and `branch`, and its note names both (card #146): don't change them.
+  Otherwise you make it (Planning step 1). On a test app's board the name is `<channel>-card-<n>`
+  (`test-card-<n>`), so it never takes a live card's branch.
+- **Work only there.** Build, test and commit in the card's worktree: never in `<checkout>` itself,
+  never in another card's worktree, never on `main`.
+- **Its own test app.** `kanban_test_app` with action `take` gives the card a test app of its own
+  (Test, Test 2, ...; Settings › Sessions › "Test apps, at most"), recorded on the card as
+  `testApp` (card #147). Its reply names the test app, its install command and its CDP port. It
+  stays the card's while the card is In progress or Human test (a stack's child: In progress only),
+  so the owner tests each card's build in its own test app.
+- **Ships go one at a time.** Cards of this repo ship one at a time (the rest show "Waiting to
+  ship", card #79). At ship the card-merger rebases the card's branch onto the latest `origin/main`
+  and reruns the tests (card #100); then `main` is fast-forwarded to it and pushed. A stack's cards
+  ship together, once, on the lead (card #113).
+
 ## A stack card
 
 If your card leads a stack or is in one, and `kanban_stack_list` shows a `stage` for each child,
-the stack builds in parallel (planning.md and in-progress.md, their stack sections). For the
-stack's cards this section replaces "work on `main`" and "one kanban-app card builds at a time"
-below, because each card has its own worktree:
+the stack builds in parallel (planning.md and in-progress.md, their stack sections). The app
+doesn't make a stack card's worktree (card #146): the lead and each child make their own, as
+below, in place of Planning step 1:
 
 - **The lead** makes the stack's worktree `<checkout>/.claude/worktrees/card-<n>` (its own number) on a
   branch of its own, for example `stack-<n>`, from `main`
@@ -59,35 +83,44 @@ below, because each card has its own worktree:
   and records both. It never commits to the
   stack's branch or to `main`. It pushes its own branch (`git push origin <its branch>`), never
   `main`.
-- **Children don't install the test app for the owner.** A child builds, runs
+- **Children don't install a test app for the owner.** A child builds, runs
   `cargo test --workspace`, `/code-review`, its review and its test on its own branch, and commits
   there. Its `nextStep` starts "Built on `<branch>`, commit `<short sha>`; the lead merges it and
   installs the stack", then its numbered steps for the stack's test app and "Broken if: ...". If a
-  change can only be checked in the running app, any install still follows In progress step 5; say
-  in the hand-over that the owner tests it on the lead's install. A bug report on a child doesn't
-  hold it for the reproducer: the child puts the steps that show the bug in its hand-over, and the
-  lead's `card-reproducer` proves the fix on the lead's install.
-- **The lead installs once.** When the stack is ready, the lead installs the stack's branch in the
-  test app (In progress step 5), checks it (step 6) and runs its own `card-tester` on that install
-  (step 6a). Its `nextStep` starts "Installed in the test app (Claude Kanban DSH Test), stack branch
-  `<branch>`, commit `<short sha>`".
+  change can only be checked in the running app, the child takes a test app of its own for its own
+  checks and its card-tester (In progress steps 4b to 6a); it keeps it only while In progress, so
+  say in the hand-over that the owner tests it on the lead's install. A bug report on a child
+  doesn't hold it for the reproducer: the child puts the steps that show the bug in its hand-over,
+  and the lead's `card-reproducer` proves the fix on the lead's install.
+- **The lead installs once.** When the stack is ready, the lead installs the stack's branch in its
+  own test app (In progress steps 4b and 5), checks it (step 6) and runs its own `card-tester` on
+  that install (step 6a). Its `nextStep` starts "Installed in <its test app> (Claude Kanban DSH
+  Test N), stack branch `<branch>`, commit `<short sha>`".
 - **Ship it** runs on the lead, once, for the whole stack (the Ship it section below).
 
-Otherwise, as before: the stack's lead works on `main` in `<checkout>`, as below.
+Otherwise, as before: the stack's lead builds every child itself, in its own worktree on the
+stack's branch, as below.
 
 ## Planning
+
+`<checkout>` in this file is the repo's own checkout, for example `~\claude-kanban-dsh`, where `~`
+is your home folder.
 
 0. If your session has the card-router subagent, route the card first, as planning.md's *Route it
    first* says (not for a stack's child, and not if the card already has a `route`). If it hasn't,
    say so on the card and go on.
-1. Work in the repo's own checkout on `main` (`<checkout>` in this file, for example
-   `~\claude-kanban-dsh`, where `~` is your home folder). No worktree, no branch. Record
-   `worktreePath` (the checkout's full path) and `branch` = `main` on the card.
-2. **One kanban-app card builds at a time**, because they share the checkout. Check
-   `kanban_list_cards`: if another card for this repo is In progress (or Human test with
-   uncommitted work in the checkout), say so on the card and in your message, and wait in Planning.
-3. Read `AGENTS.md`, `HANDOVER.md`, and the code the change touches. Run `git status`: if the
-   checkout has someone else's uncommitted work, don't touch it; say so and wait.
+1. **Your worktree.** If the app's note names this card's worktree and branch (the app made them),
+   use them as they are. If not, make them (a stack card: as *A stack card* says):
+   `git -C <checkout> fetch origin`, then
+   `git -C <checkout> worktree add --no-track -b card-<n> <checkout>/.claude/worktrees/card-<n> origin/main`,
+   and record `worktreePath` and `branch` on the card (on a test app's board, `<channel>-card-<n>`
+   in place of `card-<n>`, both times). Work only there from now on.
+2. **Other cards of this repo build at the same time**, each in its own worktree. Never touch
+   `<checkout>` itself or another card's worktree. If your plan changes the same files as another
+   card In progress (`kanban_list_cards`), log it on both cards: whichever ships second is rebased
+   onto the first at its ship.
+3. Read `AGENTS.md`, `HANDOVER.md`, and the code the change touches, in your worktree. Run
+   `git status` there: it should be clean, on your branch.
 4. A GitHub issue is welcome but optional; put it in `issue` if you make one.
 5. Write the approach into `summary` (every deliverable listed) and the first build step into
    `nextStep`. Make your own decisions; ask the owner only what is genuinely theirs.
@@ -95,14 +128,15 @@ Otherwise, as before: the stack's lead works on `main` in `<checkout>`, as below
    3 to 7 `doneWhenChecks`, as planning.md step 5a says. If it doesn't (an older build), skip this.
 6. If your session has the card-critic subagent (the Agent tool lists it), check the plan with it
    last, as planning.md's *Check the plan with a subagent* says: brief it with the card number and
-   the checkout (`<checkout>`, or the card's worktree), fix what it finds, and run
+   the card's worktree and branch, fix what it finds, and run
    a fresh one until it passes (a card routed small has one critique: after a FAIL, fix the plan
    and leave the card for the owner). Don't edit the plan for a PASS's notes: they go to the build. If
    your session doesn't have it, say so on the card and go on.
 
 ## In progress
 
-1. Build on `main` in `<checkout>`. Never push `main` here (step 7 pushes the card's branch).
+1. Build in the card's worktree, on its own branch: never in `<checkout>` itself and never on
+   `main`. Never push `main` here (step 7 pushes the card's branch).
 1a. If the card's `repro` is needed (a bug report) and your session has the `card-reproducer`
    subagent, prove the bug before you fix it, and the fix after it (in-progress.md, *Prove a
    reported bug first*). Its second run needs the fix in the test app first (step 5). If your
@@ -117,51 +151,52 @@ Otherwise, as before: the stack's lead works on `main` in `<checkout>`, as below
    `card-reviewer`, say so on the card and go on, but leave the move to Human test to the owner
    (yours would be refused while the review rule is on), or ask them to turn the rule off or restart
    the session.
-4b. **Turns on the test app**. If `kanban_test_app` is in your tools: the test app is
-   shared, so use it only during your card's turn. Call `kanban_test_app` with action `take`
-   before step 5. You get the turn now, or a place in line: then end your turn; the app sends you
-   a message when it is yours. Release it with action `release` after step 6a. If your card or
-   the owner says the test app already has your build installed, skip step 5 and use it as it is.
-   Run `install.ps1` in the background (`run_in_background`): it waits for other installs, other
-   cards' turns, the owner's Hold and their use of the test app, and prints why; a wait is not a
-   failure. If `kanban_test_app` isn't in your tools, skip this step and follow your card's
-   instructions on the test app.
-5. Install it in the **test app**:
-   `powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test` (add `-FreshCopy`
-   only if the test board needs to be current). Never the live channel here. The install restarts
-   the test app: before it, if any card of a stack is in Human test in the test app, log on each of
-   those cards that you are reinstalling it. On a Mac only: install it in the test app with
-   `sh scripts/install.sh --channel test`.
-6. Verify it yourself in the test app, driving it with `tools/cdp.mjs` on port 9334 (always
-   `--background`). Use dry-run cards on the test board. When the change shows on screen, save a
-   shot (`CDP_PORT=<the test app's port> node tools/cdp.mjs shot <png>`; 9334 for the test app,
-   9333+N for test N) and put it in your message as
-   `![what it shows](C:/path/to/shot.png)`, so the owner sees it in the card's chat.
-   On a Mac only: there is no tools/cdp.mjs and no screenshot. Check the change through `kb` and
-   the app's API, and tell the owner what to look at.
+4b. **Your test app** (cards #115 and #147). If `kanban_test_app` is in your tools, call it with
+   action `take` before step 5. The first take gives this card a test app of its own (Test,
+   Test 2, ...) and a turn on it, or a place in line: then end your turn; the app sends you a
+   message when it is yours. Its reply names the test app, its install command and its CDP port:
+   use those in steps 5 to 6a, and never another card's test app. Release the turn with action
+   `release` after step 6a: the test app stays this card's, so the owner tests your build there.
+   If your card or the owner says your test app already has your build installed, skip step 5 and
+   use it as it is. Run `install.ps1` in the background (`run_in_background`): it waits for other
+   installs, other cards' turns on that test app, the owner's Hold and their use of it, and prints
+   why; a wait is not a failure. If `kanban_test_app` isn't in your tools, skip this step and use
+   the one shared test app (`-Channel test`, port 9334) as your card says.
+5. Install it in **your test app**, from your worktree, with the command step 4b's reply gave:
+   `powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel <its channel>` (`test`
+   for Test, `test2` for Test 2, ...). Add `-FreshCopy` only if its board needs to be current.
+   Never the live channel here. A test app's first install creates it and copies the live board.
+   On a Mac only (one test app there): install it with `sh scripts/install.sh --channel test`.
+6. Verify it yourself in your test app, driving it with `tools/cdp.mjs` on its CDP port (9334 for
+   Test, 9333+N for Test N; always `--background`). Use dry-run cards on its board. When the change
+   shows on screen, save a shot (`CDP_PORT=<its port> node tools/cdp.mjs shot <png>`) and put it in
+   your message as `![what it shows](C:/path/to/shot.png)`, so the owner sees it in the card's
+   chat. On a Mac only: there is no tools/cdp.mjs and no screenshot. Check the change through `kb`
+   and the app's API, and tell the owner what to look at.
 6a. Then have the `card-tester` subagent test it (in-progress.md, *Review and test it with
-   subagents*): brief it with the card number, the deliverables, the commit and the test app it
-   tests with that app's DevTools port (9334 for the test app, 9333+N for test N), and fix what it
-   finds. The move to Human test is refused until the latest review and
-   test have both passed. A fix after a pass means running both again. On a Mac only: brief
+   subagents*): brief it with the card number, the deliverables, the commit, and your test app with
+   its CDP port, and fix what it finds. The move to Human test is refused until the latest review
+   and test have both passed. A fix after a pass means running both again. On a Mac only: brief
    the card-tester to check through `kb` and the API, not cdp.mjs.
 6b. If the card has `doneWhenChecks` (and `kanban_update_card` lists `doneWhen`), mark each check as
    you verify it in step 6, and say in the tester's brief that the card has them: its `CHECK <n>`
    lines mark them on the card.
-7. Commit on `main` locally (a clear message, the Co-Authored-By line). Then push the card's work
-   to GitHub as its own branch, never as `main`: `git push origin HEAD:refs/heads/card-<n>`
-   (`--force-with-lease` when you push it again). `main` is pushed only in Ship it.
+7. Commit on the card's branch, in its worktree (a clear message with `(card #<n>)`, the
+   Co-Authored-By line). Then push that branch to GitHub, never `main`:
+   `git push -u origin <branch>` (`--force-with-lease` when you push it again after a rebase).
+   `main` is pushed only in Ship it.
 8. Route: no diff goes to Done; otherwise hand over (below) and move to Human test.
 
 ## Human test
 
 Before the move, write into `nextStep`:
 
-- one line: "Installed in the test app (Claude Kanban DSH Test), commit `<short sha>`";
+- one line: "Installed in <your test app> (Claude Kanban DSH Test N, CDP port <port>), branch
+  `<branch>`, commit `<short sha>`";
 - if the card had a bug report, the reproducer's proof next: the before and after steps, both
   screenshots and the test's name;
-- **numbered steps of what to click in the test app** (where to start, what to do, what a pass looks
-  like);
+- **numbered steps of what to click in that test app** (where to start, what to do, what a pass
+  looks like);
 - a last line **"Broken if: ..."**.
 
 If `kanban_update_card` lists `changesOutputs` among its allowed fields and the work made a finished
@@ -182,23 +217,30 @@ Never move a card into Ship it yourself. When the app's message says "push
 exactly <sha>", push that commit and nothing else, to the branch the message names
 (`git push origin <sha>:<branch>`), instead of step 3's push; the app checks it.
 
+Cards of this repo ship one at a time: the app holds the others in Ship it ("Waiting to ship",
+card #79) until this ship is done, so each one ships on top of the last.
+
 1. `kanban_ship_result` `shipping`.
 1a. If your session has the `card-merger` subagent (the Agent tool lists it), run it now (card
    #100). If not, say so on the card and go on with step 2.
-   - Brief it with the card's number, the checkout (`worktreePath`) and the branch: `main`, or the
-     stack's branch. It rebases that branch onto `origin/main`, checks
-     that every commit in `origin/main..HEAD` carries `(card #<n>)` for a card of this ship, and
-     runs `cargo test --workspace`. It never pushes.
+   - Brief it with the card's number, its worktree (`worktreePath`) and its branch (the card's
+     own, or the stack's branch on a lead). It rebases that branch onto the latest `origin/main`,
+     checks that every commit in `origin/main..HEAD` carries `(card #<n>)` for a card of this ship,
+     and runs `cargo test --workspace`. It never pushes.
    - On **PASS**, check its `HEAD:` line is the branch's HEAD and its `ORIGIN:` SHAs match (if not,
-     something pushed: report `needs-hugh` and stop). For a branch other than `main`, fast-forward
-     main to it in the main checkout: `git -C <checkout> merge --ff-only <branch>`.
-     Then go on with step 2.
+     something pushed: report `needs-hugh` and stop). Then fast-forward main to the branch in the
+     main checkout: `git -C <checkout> merge --ff-only <branch>`. If `<checkout>` isn't on `main`,
+     or the fast-forward fails, report `needs-hugh` with why, and stop. Then go on with step 2.
    - On **FAIL** (or "Merge unclear" on the card): `kanban_ship_result` `needs-hugh` with its
      reason, and stop. A commit with no `(card #<n>)` of this ship is someone else's unshipped
      work: never push it.
-2. Make sure the tested commit is what's on `main` (`git status` clean for your files, tests pass).
-3. `git push origin main`. Then delete the card's branch on GitHub if you pushed one:
-   `git push origin --delete card-<n>` (each card of a stack: its own branch).
+2. Make sure the tested commit is what's on `main` (`git -C <checkout> log -1`, tests pass).
+3. `git -C <checkout> push origin main`. Then delete the card's branch on GitHub if you pushed it:
+   `git push origin --delete <branch>` (each card of a stack: its own branch). Leave the card's
+   worktree and its local branch: your session runs in that folder, and Windows won't remove a
+   folder a running process is in. Log on the card the two commands that remove them once its
+   session has stopped: `git -C <checkout> worktree remove <worktreePath>`, then
+   `git -C <checkout> branch -d <branch>`.
 4. Stage the live update: `powershell -ExecutionPolicy Bypass -File scripts/install.ps1` (no
    `-Channel`; its default is `-Stage`). **Never `-Now`, never restart or quit the live app
    yourself.** Check `%USERPROFILE%\.claude-kanban-dsh\update\update.json` names your commit.
@@ -211,6 +253,6 @@ exactly <sha>", push that commit and nothing else, to the branch the message nam
 
 ## Deploy complete
 
-Leave the checkout clean for your files (commit real work, delete junk you made, never someone
-else's), log what you did, and say where it stands. No after-deploy steps. The owner moves it to
-Done.
+Leave your worktree clean (commit real work, delete junk you made, never someone else's), log
+what you did, and say where it stands. If Ship it didn't log the two commands that remove the
+card's worktree and local branch, log them now. No after-deploy steps. The owner moves it to Done.

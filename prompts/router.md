@@ -42,14 +42,11 @@ integrate. You never write code.
    wait). Decide one: send the card's session a message (kanban_session_send), start it again
    (only if kanban_start_card lets you), send it back to Blocked with the reason, or tell the owner
    with kanban_notify. Do not build a second watchdog.
-5. **Integrate.** When a card for this app's own repo (claude-kanban-dsh) on its own branch has
-   test and review passed, run the card-merger subagent in mode "integrate". Brief it: "CARD: <n>",
-   "MODE: integrate", the card's branch, the integration branch and the integration worktree. It
-   merges that branch onto the integration branch (never main), runs the repo's tests, and reports.
-   On VERDICT FAIL (a conflict it cannot resolve safely, or failing tests) send the card back to In
-   progress with the reason. After a wave (a batch of merged cards), take an install turn with
-   kanban_test_app (action "take", install: true, owner "router"), install the test app, release the
-   turn, then brief the testers. A test-channel Router never installs and never integrates.
+5. **Cards build in parallel.** Each card for this app's own repo (claude-kanban-dsh) builds in its
+   own worktree on its own branch, installs into its own test app, and ships alone: its
+   card-merger rebases it onto origin/main at ship (card #145). Do not integrate cards onto an
+   integration branch, and do not take install turns or install a test app for them. A stack's
+   lead integrates its own children. A test-channel Router never installs and never integrates.
 6. **Propose archives.** When a card's work is live (its branch is merged, it shipped, or it is in
    Deploy complete), or the owner asks you to clear cards, ask with kanban_archive_card: one call per card,
    with its version, a reason and what shows it (for a stack, ask for its lead). The card goes into

@@ -1129,7 +1129,7 @@ Two card fields, no migration: #105 adds no schema file (the number set aside fo
 
 ## Turns on the test app (6 Nov 2026, card #115)
 
-**Why.** Every kanban-app card tests in the one test app. An install restarts it, so an install
+**Why.** Every kanban-app card tested in the one test app (until card #147 gave each card its own). An install restarts it, so an install
 during another card's card-tester run spoiled that run, and the DSH night's `mkdir` lock folder
 covered only cards that knew about it.
 
@@ -1244,6 +1244,46 @@ CDP port, so a card session needs no prompt change to find its own. #148 has the
 
 **Open items.** The Mac side (`install.sh`, `kb install-lock`) has no per-slot turns and no owner
 wait yet. A freed test app keeps running with its last build until the next card installs into it.
+
+## Parallel builds, ship one at a time or as a stack: the rules (9 Nov 2026, card #148, stack #145)
+
+Built on the branch `dsh-148` from the stack's branch `dsh-145`, after #146 and #147 merged. Docs,
+prompts and one test; no app code. The old rule ("one kanban-app card builds at a time, on `main`
+in the shared checkout") is gone everywhere.
+
+- **The rule:** every card for this repo builds in its own worktree
+  (`<checkout>\.claude\worktrees\card-<n>`, branch `card-<n>`, from `origin/main`; card #146 makes
+  it for a listed repo, else the card's Planning session does), installs into its own test app
+  (card #147), and ships alone, one at a time per repo (card #79), rebased onto the latest
+  `origin/main` by its card-merger (card #100). A stack still ships as one, on its lead (card #113).
+- **Where it is written:** `AGENTS.md` "Parallel builds" and the test-app bullets;
+  `prompts/kanban-app.md` "Cards build in parallel", Planning 1 to 3, In progress 1 and 4b to 7,
+  the Human test line, Ship it 1a to 3 and Deploy complete; `prompts/planning.md` and
+  `prompts/in-progress.md` (a stack child's worktree is `<checkout>/.claude/worktrees/card-<n>`,
+  as `stackrun::child_worktree` now says; the tester's brief names the card's own test app);
+  `prompts/router.md` job 5; `docs/GUIDE.md` "This app's own cards build in parallel". The owner's
+  private copies of `kanban-app.md`, `router.md`, `planning.md` and `in-progress.md` say the same,
+  with real paths, on a branch of the private repo that ships with this stack.
+- **The Router no longer integrates single cards** (decision: card #148, for Hugh to overturn). Its
+  job 5 used to merge each finished kanban-app branch onto an integration branch and install the
+  one test app after a wave. With a test app per card, each card is tested on its own branch and
+  ships alone, so the wave isn't needed. The merger's integrate job (`merger.rs`, "INTEGRATE JOB",
+  the `integrate` verdict field) stays in the code, unused by the prompt;
+  `routersession.rs`'s prompt test still finds "card-merger" and "integrate" in job 5.
+- **Removing a card's worktree.** Ship it can't remove the worktree it runs in: Windows refuses to
+  delete a folder that a running process has as its current folder (checked 9 Nov 2026). So Ship
+  it deletes the branch on GitHub and logs the two commands for later
+  (`git -C <checkout> worktree remove <worktreePath>`, then `git -C <checkout> branch -d <branch>`),
+  for once the card's session has stopped. Each worktree's `target` folder is several GB, so they
+  should be removed. Open item: the app could do it when a shipped card's session ends.
+- **Private prompts ship with the stack.** The live app reads the private folder's `prompts\`
+  straight from its checkout, so a change there is made on a branch in a worktree of the private
+  repo, never on its `main`, and the ship fast-forwards that repo's `main` too (`kanban-app.md`
+  Ship it 3). To try new private prompts in a test app, point that test board's Private folder
+  (Settings › Sessions) at the private worktree.
+- **Test:** `src-tauri/tests/prompt_rules.rs` reads the bundled `kanban-app.md`, `planning.md`,
+  `in-progress.md`, `router.md` and `AGENTS.md`, and fails if the old rule comes back or the new one
+  goes.
 
 ## Cards that wait on others (6 Nov 2026, card #109, branch `dsh-order`)
 
