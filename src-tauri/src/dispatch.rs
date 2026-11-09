@@ -1622,13 +1622,17 @@ pub fn run(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(400));
         let live = app.state::<Arc<Sessions>>().inner().clone();
-        for (card_id, gave_up) in live.nudge() {
-            if gave_up {
-                if let Ok(mut store) = app.state::<Board>().0.lock() {
-                    let _ = store.add_log(&card_id, &format!("The session didn't take a message after {} tries; the chat shows it with Send again", crate::sessions::TYPE_TRIES), "the app");
-                }
-            } else if let Ok(mut store) = app.state::<Board>().0.lock() {
-                let _ = store.add_log(&card_id, &format!("Typed a message into the session again: Claude hadn't taken it {} s after it was typed", crate::sessions::RETYPE_AFTER.as_secs()), "the app");
+        for (card_id, step) in live.nudge() {
+            let after = crate::sessions::RETYPE_AFTER.as_secs();
+            use crate::sessions::Retry;
+            let line = match step {
+                Retry::Wait => continue,
+                Retry::GiveUp => format!("The session didn't take a message after {} tries; the chat shows it with Send again", crate::sessions::TYPE_TRIES),
+                Retry::Enter => format!("Pressed Enter again for a message in the session's prompt: Claude hadn't taken it {after} s after it was typed"),
+                Retry::Retype => format!("Typed a message into the session again: Claude hadn't taken it {after} s after it was typed"),
+            };
+            if let Ok(mut store) = app.state::<Board>().0.lock() {
+                let _ = store.add_log(&card_id, &line, "the app");
             }
             let _ = app.emit("session-changed", card_id);
         }

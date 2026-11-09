@@ -196,7 +196,22 @@ at a quiet idle prompt (`retry_step`; never into a question dialog or mid-turn),
 The retype clears the prompt first with `retype_bytes`: Ctrl+U clears only the current line in
 the TUI (tried: a 3-line paste plus Ctrl+U plus a new paste sent lines 1-2 of the old one), so it
 sends Ctrl+U and Backspace once per line plus two. After `TYPE_TRIES` (3) it goes to
-`Live::untaken`, logged on the card. While a message is unconfirmed or untaken, nothing else is
+`Live::untaken`, logged on the card.
+Card #175 (9 Nov 2026): retyping could leave the text in the prompt two or three times over.
+Seen on a busy test app: after a resume the TUI read its input a minute late, so every retype
+queued another copy behind the first (it then took the first by itself, after the app had given
+up); and at an idle prompt the text sat there until one more bare Enter sent it. So `retry_step`
+now looks first: if the terminal has printed nothing since the message was first typed
+(`RetryCheck::drawn`, `last_out` against `Typed::first`), the TUI hasn't read it yet and the app
+waits, spending no tries, up to `DRAW_WAIT` (3 min); if the prompt box shows it (`prompt_holds`:
+its first 40 characters, or "[Pasted text #" for a long paste, read off the vt100 screen), it
+presses Enter alone (`Retry::Enter`, logged "Pressed Enter again ..."); only an empty prompt,
+or one holding two copies, gets the retype. A placeholder counts only for a message long
+enough to be collapsed (more than 2 lines or 800 characters), so Hugh's own paste isn't sent.
+A `UserPromptSubmit` whose prompt opens like the `untaken` message clears it (`same_start`),
+so a message the TUI took after the give-up no longer shows "Not sent". Known limit: output
+the TUI prints without reading its input (a resume redrawing the conversation) counts as
+`drawn`; an empty prompt then still gets the retype, as before. While a message is unconfirmed or untaken, nothing else is
 typed at the prompt (`free`, `takes_typing`'s `unconfirmed`) and the session isn't paused.
 `stop_all` puts an unconfirmed or untaken message back in `pending`, so a restart types it after
 the resume. `session_info` gives the panel `waitingText` (the `pending` payload, the app's own

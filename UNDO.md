@@ -935,3 +935,7 @@ UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 co
 | `prompts\kanban-app.md` In progress step 6, `AGENTS.md` Hard rules, README, HANDOVER, PLAN, `src-tauri\tests\prompt_rules.rs` | The same revert |
 | The private folder's `prompts\kanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
 | To keep the rule but let one more repo in or out | Edit `REPOS` in `nobrowser.rs` |
+
+## A typed message left in the prompt gets Enter, not another copy (9 Nov 2026, card #175)
+
+No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #175 commit>`, then stage the live update. Files: `src-tauri\src\sessions.rs` (`retry_step`, `RetryCheck`, `prompt_text`, `prompt_holds`, `DRAW_WAIT`, `nudge`, `Typed::first`), `src-tauri\src\dispatch.rs` (the log line), `HANDOVER.md`.
