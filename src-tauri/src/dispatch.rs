@@ -205,9 +205,11 @@ pub fn build_notes_for(card: &Card, from: &str) -> Option<String> {
 /// the card (card #151; card #97's plan critique note before it): one line each, saying whether it
 /// is the card's own choice or the board's default it follows. None when they are all on.
 pub fn subagents_note(store: &Store, card: &Card, column: &str) -> Option<String> {
+    // Card #161: a card in Planning that isn't sized runs no card-router (Hugh's defaults).
+    let not_sized = (column == "Planning" && card.column == "Planning").then(|| crate::presize::unsized_note(store, card)).flatten();
     let off = store.subagents_off_in(card, column);
     if off.is_empty() {
-        return None;
+        return not_sized;
     }
     let lines: Vec<String> = off
         .iter()
@@ -216,7 +218,11 @@ pub fn subagents_note(store: &Store, card: &Card, column: &str) -> Option<String
             format!("- {} ({whose}): {}", s.name, s.skip)
         })
         .collect();
-    Some(format!("Hugh has these subagents off on this card. Don't run them; only he turns them back on (the card's details).\n{}", lines.join("\n")))
+    let text = format!("Hugh has these subagents off on this card. Don't run them; only he turns them back on (the card's details).\n{}", lines.join("\n"));
+    Some(match not_sized {
+        Some(u) => format!("{text}\n\n{u}"),
+        None => text,
+    })
 }
 
 /// The message for the app's own move of `card` (already moved) from `from`, when it moved the
@@ -1696,15 +1702,44 @@ mod tests {
     }
 
     #[test]
+    fn a_planning_card_that_isnt_sized_is_told_to_run_no_card_router() {
+        // Card #161: Hugh's "If it's off, it should be off".
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let plain = card(json!({ "title": "T", "subagents": { "router": true } }), "Planning");
+        // On, and not being sized (its session already runs, say): not sized later.
+        let n = subagents_note(&s, &plain, "Planning").unwrap();
+        assert!(n.contains("isn't sized: the app didn't size it before this session started") && n.contains("Don't run the card-router") && n.contains("no route and no restart"), "{n}");
+        assert!(!n.contains("Hugh has these subagents off"), "{n}");
+        // Off: the setting's reason, in the move, held-move and app-move messages.
+        s.set_page_setting(kanban_store::SIZE_FIRST_KEY, "off").unwrap();
+        let n = subagents_note(&s, &plain, "Planning").unwrap();
+        assert!(n.contains("\"Size cards before their session starts\" is off"), "{n}");
+        assert!(move_message(&s, &plain, "Backlog", false).contains("Don't run the card-router"));
+        assert!(app_move_message(&s, &plain, "Backlog", "x").contains("Don't run the card-router"));
+        // Not for a routed card, a stack's child, another column, or one with its card-router off
+        // (that has its own line, never both).
+        assert!(subagents_note(&s, &card(json!({ "title": "T", "route": { "size": "small" } }), "Planning"), "Planning").is_none());
+        assert!(subagents_note(&s, &card(json!({ "title": "T", "stackOf": 3 }), "Planning"), "Planning").is_none());
+        assert!(subagents_note(&s, &card(json!({ "title": "T" }), "In progress"), "In progress").is_none());
+        let off = subagents_note(&s, &card(json!({ "title": "T", "subagents": { "router": false } }), "Planning"), "Planning").unwrap();
+        assert!(off.contains("- card-router (off for this card)") && !off.contains("isn't sized"), "{off}");
+        // With its critic off too: both notes, the off list first.
+        let both = subagents_note(&s, &card(json!({ "title": "T", "subagents": { "router": true, "critic": false } }), "Planning"), "Planning").unwrap();
+        assert!(both.find("- card-critic").unwrap() < both.find("isn't sized").unwrap(), "{both}");
+    }
+
+    #[test]
     fn a_session_is_told_which_subagents_are_off_in_its_column() {
         let dir = tempfile::tempdir().unwrap();
         let mut s = Store::open(dir.path().join("b.db")).unwrap();
         // All on: nothing to say, in any column.
-        let all = card(json!({ "title": "T", "subagents": { "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": true, "merger": true } }), "Planning");
+        // Routed, so card #161's "not sized" note doesn't come into it (its own test below).
+        let all = card(json!({ "title": "T", "route": { "size": "normal" }, "subagents": { "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": true, "merger": true } }), "Planning");
         for col in ["Planning", "In progress", "Ship it", "Human test"] {
             assert!(subagents_note(&s, &all, col).is_none(), "{col}");
         }
-        let some = card(json!({ "title": "T", "subagents": { "router": true, "critic": false, "reproducer": true, "reviewer": false, "tester": true, "merger": false } }), "Planning");
+        let some = card(json!({ "title": "T", "route": { "size": "normal" }, "subagents": { "router": true, "critic": false, "reproducer": true, "reviewer": false, "tester": true, "merger": false } }), "Planning");
         let n = subagents_note(&s, &some, "Planning").unwrap();
         assert!(n.contains("- card-critic (off for this card): skip the planning prompt's card-critic step. Your move to In progress isn't held for it."), "{n}");
         assert!(!n.contains("card-router") && !n.contains("card-reviewer"), "{n}");

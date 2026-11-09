@@ -830,6 +830,13 @@ effort, how big the card is (stack A, card #98, 6 Nov 2026).
 - **Once per card:** a card keeps its route. **Route again** in the panel (Planning only) clears
   it and asks the session to run the router again. A stack's child is never routed: its lead plans
   it.
+- **Sizing first, or not at all** (cards #159 and #161): with Settings › Sessions › "Size cards
+  before their session starts" on (the default), the app sizes the card with one quick call just
+  before its session starts, so the session starts on the route's model and effort. A card is never
+  sized later inside its session. With the setting **off**, no card is sized: no card-router run,
+  no route, no restart, and every session runs on your defaults for its column (the Route row says
+  "Not sized: sizing is off", and Route again is gone). The same if the quick call fails: that
+  card's session runs on your defaults. Routes already on cards stay.
 
 ## The stuck-session monitor
 

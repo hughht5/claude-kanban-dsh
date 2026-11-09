@@ -810,6 +810,14 @@ Docs, prompts and one test; no app code, no data. PowerShell 5.1 commands.
 | The bundled `prompts\planning.md` step 1 (a card that already has a route goes on from step 3) | The same revert |
 | The owner's private `prompts\planning.md`, the same line | Revert the card #159 commit in the private repo |
 
+## Sizing off means no sizing (9 Nov 2026, card #161, branch `card-161`)
+
+| Change | Undo |
+|---|---|
+| `presize.rs` (`unsized_why`, `unsized_note`, the failure note and `failed_line`, `TURNED_OFF`), `dispatch::subagents_note`'s Planning note, `router::record_with`'s refusal while off and `router::again_blocker`, `session_cmds::route_again`, the panel's Route row (`board.js` `sizeFirstOff`), the Settings help texts, `tools/ui-tests/sizing.test.mjs` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #161 commits>`, then stage the live update as usual (`powershell -ExecutionPolicy Bypass -File scripts\install.ps1`). No data changed: nothing to clean up |
+| The bundled `prompts\planning.md` (*Route it first*: skip it when the card isn't sized) | The same revert |
+| The owner's private `prompts\planning.md` and `prompts\kanban-app.md`, the same rule | Revert the card #161 commit in the private repo |
+
 ## One merge lane per repo, the backend (9 Nov 2026, card #160, branch `card-160`)
 
 PowerShell 5.1 commands. `<checkout>` is the checkout named in the merge-lane setting, `<repo>` its `owner/name`.

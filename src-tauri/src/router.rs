@@ -227,6 +227,15 @@ pub fn on_stop(app: &AppHandle, row_id: &str, body: &Value) {
     let board = app.state::<Board>();
     let Ok(mut store) = board.0.lock() else { return };
     let Some(own) = crate::agents::own_or_named(app, &store, row_id, parse_route(text).card) else { return };
+    // Card #161: a session sizes its card only when Hugh's Route again asked it to.
+    if let Ok(card) = target_card(&store, &own, parse_route(text).card) {
+        if store.size_first() && !asked(&card) {
+            let _ = store.add_log(&card.id, NOT_ASKED, BY);
+            drop(store);
+            let _ = app.emit("cards-changed", ());
+            return;
+        }
+    }
     record(&mut store, &own, text, agent_id);
     drop(store);
     let _ = app.emit("cards-changed", ());
@@ -249,6 +258,12 @@ pub fn record_with(store: &mut Store, own: &Card, text: &str, agent_id: &str, be
             return None;
         }
     };
+    // Card #161: with sizing off no card is sized, so a card-router run anyway sets no route
+    // (and the app restarts nothing for one).
+    if !store.size_first() {
+        let _ = store.add_log(&card.id, OFF_NOT_RECORDED, BY);
+        return None;
+    }
     if let Some(old) = route_of(&card) {
         let size = old.get("size").and_then(Value::as_str).unwrap_or("?");
         let _ = store.add_log(&card.id, &format!("Not recorded: card #{} is already routed ({size}). A card is routed once; Route again in its panel clears the route.", card.number), BY);
@@ -269,6 +284,9 @@ pub fn record_with(store: &mut Store, own: &Card, text: &str, agent_id: &str, be
         patch.insert(crate::presize::SIZING_KEY.into(), Value::Null);
     }
     patch.insert(ROUTE_KEY.into(), rec);
+    if card.fields.get(ASKED_KEY).is_some_and(|v| !v.is_null()) {
+        patch.insert(ASKED_KEY.into(), Value::Null);
+    }
     if card.fields.get(CLEARED_KEY).is_some_and(|v| !v.is_null()) {
         patch.insert(CLEARED_KEY.into(), Value::Null);
     }
@@ -566,6 +584,36 @@ pub fn went_on(store: &mut Store, card_id: &str) {
 }
 
 
+/// The card field Route again sets (card #161): `{at}`. Only then may the card's session size it
+/// with its card-router; a recorded route removes it.
+pub const ASKED_KEY: &str = "routeAsked";
+
+/// Did Hugh's Route again ask the card's session to size it (and no route came yet)?
+pub fn asked(card: &Card) -> bool {
+    card.fields.get(ASKED_KEY).is_some_and(Value::is_object)
+}
+
+/// The log line for a card-router report from a session that Route again didn't ask (card #161).
+pub const NOT_ASKED: &str = "Not recorded: a card is sized only by the app just before its session starts, or by Hugh's Route again, so this card-router run sets no route. The card's session runs on Hugh's defaults (no restart).";
+
+/// The log line for a card-router report while sizing is off (card #161).
+pub const OFF_NOT_RECORDED: &str = "Not recorded: Hugh's setting \"Size cards before their session starts\" is off, so no card is sized. The card has no route and its session runs on his defaults (no restart).";
+
+/// Why Hugh's Route again can't run on `card`, or None when it can (card #98; card #161: not
+/// while sizing is off).
+pub fn again_blocker(store: &Store, card: &Card) -> Option<&'static str> {
+    if card.column != "Planning" {
+        return Some("Route again works on a card in Planning");
+    }
+    if card.stack_of().is_some() {
+        return Some("a stack's child isn't routed: its lead plans it");
+    }
+    if !store.size_first() {
+        return Some("sizing is off (Settings › Sessions › Size cards before their session starts), so cards aren't routed and run on your defaults");
+    }
+    None
+}
+
 /// What Route again sends the card's session.
 pub fn again_message(card: &Card) -> String {
     format!(
@@ -841,6 +889,42 @@ mod tests {
         assert!(!go_on_due(&s, &c));
         s.set_page_setting(kanban_store::SMALL_GO_ON_KEY, "on").unwrap();
         assert!(go_on_due(&s, &c));
+    }
+
+    #[test]
+    fn with_sizing_off_no_route_is_recorded_and_route_again_is_refused() {
+        // Card #161: "If it's off, it should be off."
+        let (_d, mut s) = board();
+        let c = mk(&mut s, "Planning");
+        let report = format!("CARD: #{}
+ROUTE: small
+MODEL: claude-sonnet-5-5
+EFFORT: low
+CHECK: 5 min
+REASON: x", c.number);
+        assert_eq!(again_blocker(&s, &c), None);
+        s.set_page_setting(kanban_store::SIZE_FIRST_KEY, "off").unwrap();
+        assert!(record(&mut s, &c, &report, "a1").is_none());
+        assert!(record_with(&mut s, &c, &report, "a1", true).is_none(), "nor the app's own call's late reply");
+        let got = s.get(&c.id).unwrap();
+        assert!(route_of(&got).is_none());
+        assert!(s.log(&c.id).unwrap().iter().any(|l| l.text == OFF_NOT_RECORDED));
+        // No route, so nothing to restart onto: the session stays on the column's values.
+        let set = settings_for(&s, &got);
+        assert_eq!((set.model_from, set.effort_from), ("column", "column"));
+        assert!(again_blocker(&s, &got).unwrap().contains("sizing is off"));
+        // A Route again's ask is the one way a session sizes its card; a recorded route removes it.
+        assert!(!asked(&got));
+        let mut patch = Patch::new();
+        patch.insert(ASKED_KEY.into(), json!({ "at": "2026-11-09T00:00:00Z" }));
+        let got = s.update(&got.id, got.version, &patch, HUGH).unwrap();
+        assert!(asked(&got));
+        // On again: recorded as before.
+        s.set_page_setting(kanban_store::SIZE_FIRST_KEY, "on").unwrap();
+        let rec = record(&mut s, &got, &report, "a1").unwrap();
+        assert!(!asked(&rec), "the ask is used up");
+        let ip = mk(&mut s, "In progress");
+        assert_eq!(again_blocker(&s, &ip), Some("Route again works on a card in Planning"));
     }
 
     #[test]

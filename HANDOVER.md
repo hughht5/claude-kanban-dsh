@@ -457,6 +457,40 @@ rounds on test-script details. Built in `~\claude-kanban-dsh-144` on `dsh-144`.
   (`the_in_progress_message_ends_with_the_critics_build_notes`), `crates/store/tests/critique.rs`
   (`a_small_cards_one_critique_survives_a_plan_edit`).
 
+## Sizing off means no sizing (9 Nov 2026, card #161)
+
+- Hugh (9 Nov): "If it's off, it should be off. It shouldn't do it later. It should just go with
+  my defaults." A card is sized only by `presize` before its session starts (setting on), or by
+  Hugh's Route again. Otherwise no card-router run, no route, no restart: Hugh's column defaults.
+- **The note:** `presize::unsized_why` / `unsized_note`: a Planning card with no route, not a
+  stack's child, its card-router on, and not being sized now (no `sizing` mark, not `in_flight`)
+  is told "Card #n isn't sized: <why>. Don't run the card-router ..." (why: the setting is off, or
+  the app didn't size it before this session started). `dispatch::subagents_note` adds it in
+  Planning, so the move, held-move and app-move messages carry it; a card with its card-router off
+  keeps the old line only. A move that starts a sizing computes its message while the card is in
+  flight, so it has no note; `presize::start_after` then queues `presize::note` (routed) or the
+  unsized note (failed), merged into the first, still-waiting message.
+- **Failure:** `failed_line` says the session starts on Hugh's defaults and isn't sized later.
+- **Refusals:** `router::record_with` records nothing while the setting is off
+  (`OFF_NOT_RECORDED`), for the subagent and for a pre-size reply that lands after it was turned
+  off (`presize::TURNED_OFF`). While on, `router::on_stop` records an in-session card-router's
+  route only when Hugh's Route again asked for it (`routeAsked {at}`, set by `route_again`,
+  removed by the recorded route; else `NOT_ASKED` is logged), so a session that routes anyway
+  (the board Router's free-text start, say) causes no restart. `router::again_blocker`: Route
+  again is refused while off.
+- **UI:** `board.js` `sizeFirstOff` (read with `get_setting`, again on `settings-changed`): the
+  Route row says "Not sized: sizing is off (Settings › Sessions)" and has no Route again. The
+  Settings help for the setting and for the small-card go-on say what off does.
+- **Prompts:** the bundled and private `planning.md` (*Route it first*) and the private
+  `kanban-app.md` (Planning step 0): skip routing when the app's message says the card isn't sized.
+- Changed from #159: a card entering Planning while its session already runs is no longer routed
+  in-session (with the restart); it gets the note. Unchanged: Route again while on, and existing
+  routes (they still apply after the setting is turned off, so no session restarts).
+- **Tests:** `presize.rs` (`a_planning_card_is_unsized_unless_it_is_routed_or_being_sized`, the
+  failed line), `dispatch.rs` (`a_planning_card_that_isnt_sized_is_told_to_run_no_card_router`),
+  `router.rs` (`with_sizing_off_no_route_is_recorded_and_route_again_is_refused`),
+  `tools/ui-tests/sizing.test.mjs`.
+
 ## Sizing a card before its session starts (9 Nov 2026, card #159)
 
 - **`presize.rs`**, behind the setting `sessions.size_before_start` (`Store::size_first`, a
@@ -477,7 +511,8 @@ rounds on test-script details. Built in `~\claude-kanban-dsh-144` on `dsh-144`.
   has `sizing`; the face shows "Sizing…" in the route chip's place (`board.js` `sizingOf`).
 - A failed call (no claude.exe, a timeout, an error result, no ROUTE line) logs
   `failed_line`, clears the mark and starts the session with no route: the planning prompt's
-  card-router routes it, with the old restart. `resume_at_start` sizes again a card left marked
+  card-router routed it, with the old restart (card #161: now its session runs on Hugh's defaults
+  and is told not to route it). `resume_at_start` sizes again a card left marked
   by an app restart.
 - Not changed: Route again, and `restart_if_due`'s switch back to the column's values when a
   card leaves In progress.

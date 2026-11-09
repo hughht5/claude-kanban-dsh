@@ -35,7 +35,10 @@ usage). There is no other board.
 ## Route it first
 
 Do this only if your session has the card-router subagent (the Agent tool lists `card-router`).
-If it doesn't, say so on the card in one log line and go on to *Plan it*.
+If it doesn't, say so on the card in one log line and go on to *Plan it*. Skip this section, with
+no log line, when the app's message says the card isn't sized (the sizing setting is off, or the
+app didn't size it before the session started, card #161): plan it as usual, as a normal card. The
+session runs on the column's defaults, with no route and no restart.
 
 1. Read your card. Skip this section if it is a child in a stack (it has `stackOf`): a child is
    planned by its lead. If the card already has a `route` (the app may have sized it before your

@@ -47,7 +47,7 @@ pub const TODO_TOOLS_KEY: &str = "sessions.todo_tools";
 /// Whether the app sizes a card (the card-router's route) with one quick call of its own just
 /// before the card's session starts in Planning or In progress, so the session starts on the
 /// route's model and effort and is never restarted onto them (card #159): "on" (the default) or
-/// "off" (the card's session routes it with its card-router subagent, as before).
+/// "off" (no card is sized: no card-router run, no route, no restart; Hugh's defaults, card #161).
 pub const SIZE_FIRST_KEY: &str = "sessions.size_before_start";
 
 /// Hugh's on/off rules for the app's subagents and sessions: "on" (the default) or "off". One

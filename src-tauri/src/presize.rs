@@ -3,15 +3,16 @@
 //! or In progress, the app sizes the card itself with one quick `claude -p` call that runs the
 //! card-router's own rules (`router::RULES`), records the route on the card, and only then starts
 //! the session, on the route's model and effort. The session is never restarted onto its route.
-//! Off: the card's session routes it with its card-router subagent, as before (card #98).
+//! Off: no card is sized at all, and sessions run on Hugh's defaults (card #161). A card is
+//! never sized later inside its session, except by Hugh's Route again.
 //!
 //! - Only for a move (a column's auto-spawn), the board Router's start and Hugh's Start a new
 //!   session (`blocker`); a card with no route, not a stack's child, with its card-router on, and
 //!   no live session.
 //! - While it sizes, the card carries `sizing` (`{at, mode, why}`) and every start of it waits
 //!   (`Begun::Sizing`), as a start waits under the cap: its messages are typed once it starts.
-//! - A call that fails never stops the start: the session starts with no route, and its planning
-//!   prompt routes it as before.
+//! - A call that fails never stops the start: the session starts on Hugh's defaults with no
+//!   route, and its Planning message says not to run the card-router (`unsized_note`, card #161).
 //! - After an app restart, a card still marked `sizing` is sized again and started
 //!   (`resume_at_start`).
 
@@ -233,10 +234,45 @@ pub fn record(store: &mut Store, card_id: &str, text: &str) -> Result<Card, Stri
     }
 }
 
-/// The log line for a call that failed: why, and what happens instead.
+/// The log line for a call that failed: why, and what happens instead (card #161: the session
+/// starts on Hugh's defaults and the card isn't sized later).
 pub fn failed_line(why: &str) -> String {
-    format!("Couldn't size it before its session started: {why}. Its session starts without a route, and routes it with the card-router, as before.")
+    format!("Couldn't size it before its session started: {why}. Its session starts on Hugh's defaults with no route, and the card isn't sized later (no card-router run, no restart).")
 }
+
+/// Why a card in Planning isn't sized (card #161), or None when it is or will be: its card-router
+/// runs nowhere else, so its session is told not to run it. Due when the card has no route,
+/// isn't a stack's child, has its card-router on (off has its own line, `dispatch::subagents_note`)
+/// and isn't being sized now. `sizing_now`: the app is sizing it (`in_flight`).
+pub fn unsized_why(store: &Store, card: &Card, sizing_now: bool) -> Option<&'static str> {
+    if card.archived || card.column != "Planning" || router::route_of(card).is_some() || card.stack_of().is_some() || !store.subagent_on(card, "router") || router::asked(card) {
+        return None;
+    }
+    // Being sized now: the sizing's own note follows it (`start_after`), whatever the setting.
+    if sizing_now || sizing_of(card).is_some() {
+        return None;
+    }
+    if !store.size_first() {
+        return Some("Hugh's setting \"Size cards before their session starts\" is off, so no card is sized");
+    }
+    Some("the app didn't size it before this session started, and a card isn't sized later")
+}
+
+/// The note a Planning session gets for a card that isn't sized (card #161).
+pub fn unsized_text(card: &Card, why: &str) -> String {
+    format!(
+        "Card #{n} isn't sized: {why}. Don't run the card-router: skip the planning prompt's *Route it first* and plan it as usual (as a normal card). This session runs on Hugh's defaults for the column, with no route and no restart.",
+        n = card.number
+    )
+}
+
+/// `unsized_text` when `unsized_why` finds the card isn't sized.
+pub fn unsized_note(store: &Store, card: &Card) -> Option<String> {
+    unsized_why(store, card, in_flight(&card.id)).map(|why| unsized_text(card, why))
+}
+
+/// The log line for a pre-size reply that came back after Hugh turned the setting off.
+pub const TURNED_OFF: &str = "Hugh turned the setting to size cards before their session starts off while it was sizing";
 
 /// The cards still marked as being sized, with the start each waited for (`mode`, `why`).
 pub fn pending(store: &Store) -> Vec<(Card, String, String)> {
@@ -449,6 +485,8 @@ fn run_and_start(app: &AppHandle, card_id: &str, mode: &str, why: &str) {
     let board = app.state::<Board>();
     let Ok(mut store) = board.0.lock() else { return };
     let secs = started.elapsed().as_secs();
+    // Card #161: off is off, also for a call that was under way when Hugh turned it off.
+    let reply = reply.and_then(|text| if store.size_first() { Ok(text) } else { Err(TURNED_OFF.to_string()) });
     let routed = match reply.and_then(|text| record(&mut store, card_id, &text)) {
         Ok(c) => {
             let _ = store.add_log(card_id, &format!("Sized before its session started, in {secs} s: the session starts on the route's model and effort"), BY);
@@ -482,6 +520,12 @@ fn start_after(app: &AppHandle, live: &Sessions, store: &mut Store, card_id: &st
     }
     if routed && card.column == "Planning" {
         let _ = store.queue(card_id, "message", &note(&card));
+    } else if !routed {
+        // Card #161: not sized, so its session isn't to size it later. Merged into the start's
+        // first message, still waiting, so the session reads it before it routes anything.
+        if let Some(n) = unsized_note(store, &card) {
+            let _ = store.queue(card_id, "message", &n);
+        }
     }
 }
 
@@ -663,13 +707,39 @@ mod tests {
         let c = s.get(&c.id).unwrap();
         assert!(sizing_of(&c).is_none() && router::route_of(&c).is_none());
         assert!(s.log(&c.id).unwrap().iter().any(|l| l.text.starts_with("Route unclear:")));
-        assert!(failed_line("no answer after 3 minutes").contains("routes it with the card-router, as before"));
+        let l = failed_line("no answer after 3 minutes");
+        assert!(l.contains("starts on Hugh's defaults with no route") && l.contains("isn't sized later") && !l.contains("routes it with the card-router"), "{l}");
         // A reply naming another card isn't recorded on it.
         let other = mk(&mut s, json!({ "title": "O", "column": "Planning" }));
         mark(&mut s, &c, "new", "move").unwrap();
         assert!(record(&mut s, &c.id, &format!("CARD: #{}\nROUTE: small", other.number)).is_err());
         assert!(router::route_of(&s.get(&other.id).unwrap()).is_none());
         assert!(sizing_of(&s.get(&c.id).unwrap()).is_none());
+    }
+
+    #[test]
+    fn a_planning_card_is_unsized_unless_it_is_routed_or_being_sized() {
+        // Card #161: sized only before its session starts; otherwise Hugh's defaults.
+        let (_d, mut s) = board();
+        let c = mk(&mut s, json!({ "title": "T", "column": "Planning" }));
+        assert!(unsized_why(&s, &c, false).unwrap().contains("didn't size it before this session started"));
+        assert_eq!(unsized_why(&s, &c, true), None, "being sized now: the sizing's own note follows");
+        let marked = mark(&mut s, &c, "new", "move").unwrap();
+        assert_eq!(unsized_why(&s, &marked, false), None, "marked as being sized");
+        clear(&mut s, &c.id);
+        let routed = mk(&mut s, json!({ "title": "T", "column": "Planning", "route": { "size": "small" } }));
+        assert_eq!(unsized_why(&s, &routed, false), None);
+        let ip = mk(&mut s, json!({ "title": "T", "column": "In progress" }));
+        assert_eq!(unsized_why(&s, &ip, false), None, "only Planning routes");
+        let off = mk(&mut s, json!({ "title": "T", "column": "Planning", "subagents": { "router": false } }));
+        assert_eq!(unsized_why(&s, &off, false), None, "its card-router off has its own line");
+        s.set_page_setting(kanban_store::SIZE_FIRST_KEY, "off").unwrap();
+        let c = s.get(&c.id).unwrap();
+        assert!(unsized_why(&s, &c, false).unwrap().contains("is off"), "off is off");
+        assert_eq!(unsized_why(&s, &c, true), None, "a call still under way adds the note itself when it ends: never twice");
+        let t = unsized_text(&c, "why");
+        assert!(t.contains(&format!("Card #{} isn't sized: why.", c.number)) && t.contains("Don't run the card-router") && t.contains("*Route it first*"), "{t}");
+        assert!(unsized_note(&s, &c).is_some());
     }
 
     #[test]

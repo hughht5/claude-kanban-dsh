@@ -439,11 +439,8 @@ fn queue_msg(store: &mut Store, card_id: &str, text: &str, hugh: bool) -> Result
 fn route_again(app: AppHandle, board: State<Board>, card_id: String) -> CmdResult<Value> {
     let mut store = board.0.lock().map_err(CmdError::other)?;
     let card = store.get(&card_id).map_err(CmdError::other)?;
-    if card.column != "Planning" {
-        return Err(CmdError::other("Route again works on a card in Planning"));
-    }
-    if card.stack_of().is_some() {
-        return Err(CmdError::other("a stack's child isn't routed: its lead plans it"));
+    if let Some(why) = router::again_blocker(&store, &card) {
+        return Err(CmdError::other(why));
     }
     // Nothing would run the router for a card whose conversation is in the desktop app.
     let live = app.state::<Arc<sessions::Sessions>>().inner().clone();
@@ -454,6 +451,8 @@ fn route_again(app: AppHandle, board: State<Board>, card_id: String) -> CmdResul
     let old = card.clone();
     let mut patch = Patch::new();
     patch.insert(kanban_store::ROUTE_KEY.into(), Value::Null);
+    // Card #161: the one way a session may size its card.
+    patch.insert(router::ASKED_KEY.into(), json!({ "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true) }));
     // What the session may still run on, so the dispatcher takes it back to the card's own values.
     if let Some(r) = router::route_of(&old) {
         patch.insert(router::CLEARED_KEY.into(), json!({ "model": r.get("model"), "effort": r.get("effort") }));
@@ -462,10 +461,13 @@ fn route_again(app: AppHandle, board: State<Board>, card_id: String) -> CmdResul
     let started = match send_to_session(&app, &mut store, &card_id, &router::again_message(&card), None) {
         Ok(s) => s,
         Err(e) => {
-            // Put the route back: nothing will run the router.
-            if let (Some(r), Ok(now)) = (router::route_of(&old).cloned(), store.get(&card_id)) {
+            // Put the route back: nothing will run the router. And take the ask away (card #161).
+            if let Ok(now) = store.get(&card_id) {
                 let mut back = Patch::new();
-                back.insert(kanban_store::ROUTE_KEY.into(), r);
+                back.insert(router::ASKED_KEY.into(), Value::Null);
+                if let Some(r) = router::route_of(&old).cloned() {
+                    back.insert(kanban_store::ROUTE_KEY.into(), r);
+                }
                 let _ = store.update(&card_id, now.version, &back, router::HUGH);
             }
             return Err(CmdError::other(format!("couldn't reach the session, so the route is kept: {e}")));
