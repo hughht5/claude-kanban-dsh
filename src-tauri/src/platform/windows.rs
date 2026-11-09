@@ -303,12 +303,14 @@ const KB_HOLDERS: &str = include_str!("../../../scripts/kb-holders.ps1");
 /// install folder, then start the app again whatever the installer did, so Hugh is never left
 /// without the board. It starts in front, not with `--background`: Hugh clicked Restart now, so
 /// he is looking at the board and expects it back. Each step is logged to `log`.
+/// With `background` (a test app's Restart now, card #135) the app starts with `--background`,
+/// behind whatever is in front; otherwise it comes back in front.
 ///
 /// Before the start it writes `restart-result.json` beside the log, as the Mac helper does
 /// (card #134): UTF-8 with no byte-order mark, `{ok, kind, error, at}`. The installer's exit 3
 /// (hooks.nsh: the app is installed but kb.exe is still the old one) is kind "kb", with the
 /// processes holding kb.exe as its error; any other failure is kind "install".
-pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path) -> String {
+pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path, background: bool) -> String {
     let result = ps_quote(&log.with_file_name("restart-result.json").display().to_string());
     let kb = ps_quote(&install_dir.join("kb.exe").display().to_string());
     let log = ps_quote(&log.display().to_string());
@@ -317,6 +319,7 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
     let d_arg = ps_quote(&format!("/D={}", install_dir.display()));
     let dir = ps_quote(&install_dir.display().to_string());
     let exe = ps_quote(&app_exe.display().to_string());
+    let bg = if background { " -ArgumentList '--background'" } else { "" };
     let body = format!(
         "$ErrorActionPreference = 'Continue'\n\
          $log = {log}\n\
@@ -348,7 +351,7 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
          elseif ($code -ne $null) {{ Result $false 'install' \"The installer exited with code $code\" }}\n\
          elseif ($p) {{ Result $false 'install' 'The installer gave no exit code' }}\n\
          Note ('Starting ' + {exe})\n\
-         Start-Process -FilePath {exe} -WorkingDirectory {dir}\n\
+         Start-Process -FilePath {exe} -WorkingDirectory {dir}{bg}\n\
          Note 'Done'\n"
     );
     format!("{KB_HOLDERS}\n{body}")
@@ -445,6 +448,7 @@ mod tests {
             Path::new(r"C:\Users\o'neil\Programs\Claude Kanban DSH"),
             Path::new(r"C:\Users\o'neil\Programs\Claude Kanban DSH\claude-kanban-dsh.exe"),
             Path::new(r"C:\Users\o'neil\.claude-kanban-dsh\update\restart.log"),
+            false,
         );
         assert!(s.contains("Wait-Process -Id 42"));
         assert!(s.contains(r"'/D=C:\Users\o''neil\Programs\Claude Kanban DSH'"));
@@ -460,7 +464,7 @@ mod tests {
     /// the install's kb.exe, and the helper still fits on a command line once encoded.
     #[test]
     fn helper_writes_a_result() {
-        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\u\restart.log"));
+        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\u\restart.log"), false);
         assert!(s.contains(r"$result = 'C:\a b\u\restart-result.json'"));
         assert!(s.contains("UTF8Encoding $false"), "no byte-order mark");
         assert!(s.contains("function Get-KbHolders"), "kb-holders.ps1 is embedded");
@@ -480,7 +484,7 @@ mod tests {
         // Windows' process ids are multiples of 4, so 3 is never a running process.
         let pid = 3;
         let log = t.path().join("restart.log");
-        let s = update_helper(pid, &t.path().join("no-setup.exe"), t.path(), &t.path().join("no-app.exe"), &log);
+        let s = update_helper(pid, &t.path().join("no-setup.exe"), t.path(), &t.path().join("no-app.exe"), &log, false);
         let file = t.path().join("helper.ps1");
         std::fs::write(&file, s).unwrap();
         Command::new("powershell.exe")
@@ -527,16 +531,29 @@ mod tests {
     fn helper_parses_as_powershell() {
         let t = tempfile::tempdir().unwrap();
         let file = t.path().join("helper.ps1");
-        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"));
-        std::fs::write(&file, s).unwrap();
-        let cmd = format!(
-            "$e=$null;$t=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('{}',[ref]$t,[ref]$e);$e.Count",
-            file.display()
-        );
-        let Ok(out) = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &cmd]).output() else {
-            return; // no PowerShell here
-        };
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "parse errors in:\n{}", std::fs::read_to_string(&file).unwrap());
+        for background in [false, true] {
+            let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"), background);
+            std::fs::write(&file, s).unwrap();
+            let cmd = format!(
+                "$e=$null;$t=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('{}',[ref]$t,[ref]$e);$e.Count",
+                file.display()
+            );
+            let Ok(out) = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &cmd]).output() else {
+                return; // no PowerShell here
+            };
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "parse errors in:\n{}", std::fs::read_to_string(&file).unwrap());
+        }
+    }
+
+    /// A test app's Restart now starts the app with --background, after the installer (card #135).
+    #[test]
+    fn helper_starts_a_test_app_in_the_background() {
+        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"), true);
+        let start = s.rfind(r"Start-Process -FilePath 'C:\a b\App\x.exe'").expect("the app's start");
+        let line = s[start..].lines().next().unwrap();
+        assert!(line.ends_with("-ArgumentList '--background'"), "{line}");
+        assert!(s.find("'/S'").unwrap() < start, "the installer runs first");
+        assert_eq!(s.matches("--background").count(), 1, "only the app's start");
     }
 
     #[test]

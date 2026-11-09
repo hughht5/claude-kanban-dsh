@@ -11,10 +11,12 @@
 #
 #   -Stage (the default for the live app) builds, then leaves the installer in the data
 #   folder's update\ folder (%USERPROFILE%\.claude-kanban-dsh\update, or .claude-kanban-dsh-test\update)
-#   with an update.json beside it (version, commit, built_at, installer, install_dir, app_exe).
+#   with an update.json beside it (version, commit, built_at, installer, install_dir, app_exe,
+#   channel; and background: true on a test channel, card #135).
 #   The running app is not touched. Within 30 seconds it shows "Update ready" along the top of
 #   the board; Restart now there suspends the sessions, installs silently and reopens the app
-#   in the background, and the sessions that were mid-turn resume. A first install can't be
+#   (in front for live; in the background for a test app, card #135), and the sessions that
+#   were mid-turn resume. A first install can't be
 #   staged: use -Now.
 #
 #   -Now (the default for the test copy) is the old behaviour, steps 1 to 7 below: it quits the
@@ -797,6 +799,9 @@ if ($Mode -eq 'stage') {
         app_exe     = $AppExe
         channel     = $Channel
     }
+    # A test app's Restart now starts it again behind whatever is in front, so a tester's
+    # click never takes Hugh's focus (card #135). Never for live: Hugh clicked, so it opens in front.
+    if ($Channel -ne 'live') { $Info['background'] = $true }
     # Written beside it and moved into place, so the app never reads half a file.
     $Json = Join-Path $UpdateDir 'update.json'
     $Tmp  = "$Json.tmp"

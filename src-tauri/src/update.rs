@@ -4,7 +4,8 @@
 //! staged build is newer than itself it tells the page ("update-ready"), which shows a banner.
 //! Restart now suspends every session as tray > Quit does, hands the install to a detached
 //! helper that waits for this process to exit, runs the installer silently and starts the app
-//! again in front (Hugh clicked for it, so it isn't a background start), and exits. The next
+//! again in front (Hugh clicked for it, so it isn't a background start; a test app's staged
+//! update asks for `--background`, card #135, so a tester's click never takes focus), and exits. The next
 //! start resumes the sessions that were mid-turn (restart recovery), as after any quit.
 //!
 //! Each channel has its own data folder, so the test app only ever sees test updates.
@@ -37,6 +38,17 @@ pub struct Staged {
     pub install_dir: Option<String>,
     #[serde(default)]
     pub app_exe: Option<String>,
+    /// Start the app again with `--background` after Restart now (card #135). Only a test
+    /// channel's stage writes it, and only a test build honours it (`restart_in_background`).
+    #[serde(default)]
+    pub background: bool,
+}
+
+/// Whether Restart now starts the app behind whatever is in front: only when the staged
+/// update asks for it and this is a test build. A live app always comes back in front, as
+/// Hugh clicked for it, whatever its update.json says (card #135).
+pub fn restart_in_background(staged: &Staged, channel: &str) -> bool {
+    staged.background && channel != "live"
 }
 
 /// What the page is told: this build, and the staged update if one is ready and not put off.
@@ -224,6 +236,7 @@ pub fn update_restart(app: AppHandle) -> Result<(), String> {
         &install_dir,
         &app_exe,
         &dir.join("restart.log"),
+        restart_in_background(&staged, kanban_store::channel()),
     );
     crate::platform::spawn_detached(&script)?;
     // The stops take a moment each, so they run off the command's thread, as tray > Quit's do.
@@ -271,6 +284,27 @@ mod tests {
         assert!(ready_now(t.path()).is_some(), "2099 is newer than this build");
         write(t.path(), &setup, "2000-01-01T00:00:00Z");
         assert!(ready_now(t.path()).is_none(), "older than this build");
+    }
+
+    #[test]
+    fn background_is_for_test_builds_only() {
+        let t = tempfile::tempdir().unwrap();
+        let setup = t.path().join("setup.exe");
+        std::fs::write(&setup, b"MZ").unwrap();
+        write(t.path(), &setup, "2099-01-01T00:00:00Z");
+        let old = read_staged(t.path()).expect("staged");
+        assert!(!old.background, "an update.json without the field is a front start");
+        let j = serde_json::json!({
+            "version": "0.1.0", "commit": "abc123", "built_at": "2099-01-01T00:00:00Z",
+            "installer": setup.display().to_string(), "channel": "test", "background": true,
+        });
+        std::fs::write(t.path().join("update.json"), format!("\u{feff}{j}")).unwrap();
+        let bg = read_staged(t.path()).expect("staged");
+        assert!(bg.background);
+        assert!(restart_in_background(&bg, "test"));
+        assert!(restart_in_background(&bg, "test2"));
+        assert!(!restart_in_background(&bg, "live"), "live always comes back in front");
+        assert!(!restart_in_background(&old, "test"));
     }
 
     #[test]

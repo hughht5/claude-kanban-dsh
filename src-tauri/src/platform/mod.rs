@@ -19,8 +19,9 @@
 //! - `work_area(w)`, `virtual_screen(w)`, `place_window(w, rect, background)`, `hide_window(w)`:
 //!   where the board window goes, and hiding it to the tray.
 //! - `on_quit_signal(app, quit)`: the install script asks the running app to quit cleanly.
-//! - `update_helper(pid, installer, install_dir, app_exe, log)` and `spawn_detached(script)`:
-//!   Restart now's helper, which installs the staged update once the app has exited.
+//! - `update_helper(pid, installer, install_dir, app_exe, log, background)` and `spawn_detached(script)`:
+//!   Restart now's helper, which installs the staged update once the app has exited
+//!   (`background`: start it with `--background`, a test app's Restart now, card #135).
 //! - `file_url_path(s)`: the local path in a `file://` URL.
 //! - `at_start()`, `builder(b)` and `on_run_event(app, event)`: hooks main.rs calls at start-up,
 //!   on the app's builder before its plugins, and on every run event, so a system that needs
