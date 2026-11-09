@@ -409,7 +409,13 @@ fn strip_wrappers(s: &str) -> String {
             None => break,
         }
     }
-    out = out.replace("</pasted_content>", "");
+    // Its closing tag may carry the id too (`</pasted_content id="7263">`, Claude Code 2.1.319).
+    while let Some(i) = out.find("</pasted_content") {
+        match out[i..].find('>') {
+            Some(j) => out.replace_range(i..i + j + 1, ""),
+            None => break,
+        }
+    }
     // A slash command reads as the command itself.
     if let (Some(a), Some(b)) = (out.find("<command-name>"), out.find("</command-name>")) {
         let name = out[a + 14..b].trim().to_string();
@@ -1722,5 +1728,24 @@ mod tests {
         assert!(!call_settled_in(&p, "b", false));
         std::fs::write(&p, format!("{asking}\n{}\n", result("b", r#""ok""#, false))).unwrap();
         assert!(call_settled_in(&p, "b", false));
+    }
+
+    #[test]
+    fn a_pasted_message_with_an_id_on_its_closing_tag_splits_into_the_apps_parts() {
+        // Claude Code wraps a message of several lines with an id on both tags (card #153).
+        let line = r#"{"type":"user","message":{"content":"\n\n<pasted_content id=\"7263\">\nHugh reported a bug on card #152 (Report a bug):\n\nthe chip is the wrong colour\n\nThe app set the repro of card #152 to needed (a bug report).\n</pasted_content id=\"7263\">\n"}}"#;
+        let mut e = parse_line(line);
+        assert_eq!(e[0].text, "Hugh reported a bug on card #152 (Report a bug):\n\nthe chip is the wrong colour\n\nThe app set the repro of card #152 to needed (a bug report).");
+        let apps = vec!["The app set the repro of card #152 to needed (a bug report).".to_string(), "Hugh reported a bug on card #152 (Report a bug):".to_string()];
+        mark_app_parts(&mut e, &apps);
+        let parts: Vec<(bool, &str)> = e[0].parts.as_ref().expect("split").iter().map(|p| (p.auto, p.text.as_str())).collect();
+        assert_eq!(
+            parts,
+            vec![
+                (true, "Hugh reported a bug on card #152 (Report a bug):"),
+                (false, "the chip is the wrong colour"),
+                (true, "The app set the repro of card #152 to needed (a bug report)."),
+            ]
+        );
     }
 }
