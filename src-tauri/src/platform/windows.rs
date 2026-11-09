@@ -309,6 +309,8 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
     let dir = ps_quote(&install_dir.display().to_string());
     let exe = ps_quote(&app_exe.display().to_string());
     let bg = if background { " -ArgumentList '--background'" } else { "" };
+    // restart.log names the flag too, so a tester can see it there.
+    let bg_note = if background { " + ' --background'" } else { "" };
     format!(
         "$ErrorActionPreference = 'Continue'\n\
          $log = {log}\n\
@@ -321,7 +323,7 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
            $p = Start-Process -FilePath {setup} -ArgumentList '/S', {d_arg} -Wait -PassThru\n\
            Note \"Installer exit code $($p.ExitCode)\"\n\
          }} catch {{ Note \"Installer failed to start: $_\" }}\n\
-         Note ('Starting ' + {exe})\n\
+         Note ('Starting ' + {exe}{bg_note})\n\
          Start-Process -FilePath {exe} -WorkingDirectory {dir}{bg}\n\
          Note 'Done'\n"
     )
@@ -457,7 +459,8 @@ mod tests {
         let line = s[start..].lines().next().unwrap();
         assert!(line.ends_with("-ArgumentList '--background'"), "{line}");
         assert!(s.find("'/S'").unwrap() < start, "the installer runs first");
-        assert_eq!(s.matches("--background").count(), 1, "only the app's start");
+        assert_eq!(s.matches("--background").count(), 2, "the app's start and its log line");
+        assert!(s.contains(r"Note ('Starting ' + 'C:\a b\App\x.exe' + ' --background')"), "restart.log names the flag");
     }
 
     #[test]
