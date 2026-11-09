@@ -284,7 +284,8 @@ The icon, the pinning to the top and the tray count are as before.
 A card that rose to the top because it needed you keeps its place once its need clears (card
 #132): open it, read it or answer it, and it stays exactly where it is instead of dropping down the
 column. A card that needs you later goes above it. It stays until it moves to another column, you
-drag a card in that column, or it needs you again. A drag still lands exactly where you drop it.
+drag it somewhere else, or it needs you again. A drag still lands exactly where you drop it, also
+among the cards at the top, and the other cards there keep their places.
 The board remembers these places across a reload or a restart.
 
 The app hides secrets before any of this reaches the board: a link keeps only its host and first
