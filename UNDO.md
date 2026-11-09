@@ -741,6 +741,6 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 | Change | Undo |
 |---|---|
 | Held places in `ui\needs.js` (`pinFirst`, `loadNeeds`, `holdOf`, `pruneHolds`, `endHolds`, `heldIn`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #132 commit>`. The board's `localStorage` key `wb.heldPlaces` stays in the WebView profile; an older build ignores it |
-| `placeCard` in `ui\board.js` works on the column as shown and numbers it when a card is pinned or held | Same revert. Card `order` values a drag wrote stay, as after any drag |
+| `placeCard` in `ui\board.js` works on the column as shown; a drop among the pinned cards sets held places instead of writing orders | Same revert. Card `order` values a drag wrote stay, as after any drag |
 | `tools\ui-tests\order.test.mjs`, the `storage` option of `boot` in `tools\ui-tests\harness.mjs` | Same revert |
 | `docs\GUIDE.md`, `HANDOVER.md` text | Same revert |
