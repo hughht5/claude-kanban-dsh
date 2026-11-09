@@ -581,6 +581,14 @@ its own test app, ship one by one or together if stacked):
   its checkout, so editing its `main` would change every live session before the code ships. The
   private branch ships with the stack.
 
+## Card #162: the reviewer and the tester run together (9 Nov 2026)
+
+- **Both run at once, after the install, and a pass counts only if it started after the other's
+  latest FAIL** (Hugh: "Could these two be run in parallel?", yes). The app compares the times on
+  the two records (`startedAt`, `failedAt`), not commits: it works for every repo, where card
+  #104's snapshot is only for listed ones. A run whose start the app didn't see counts from its
+  verdict's time.
+
 ## Card #160: one merge lane per repo (9 Nov 2026)
 
 Hugh's ask (agreed): replace the per-card card-merger at ship with one merger per repo, a merge

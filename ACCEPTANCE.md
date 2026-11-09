@@ -203,6 +203,20 @@ Run on dry-run card #29 (main account, low effort). Toasts and the tray are nati
 | 105.8 | Sessions and `kb` can set the fields | `tools.rs` `done_when_fields_are_updatable`; `kb` `done_when_fields_pass_through_update` |
 | 105.9 | The status rule gives each of the five states | In the test app, `tools/cdp.mjs eval` calling `doneWhenStatus` on a fixture card per state (no JavaScript test runner in this repo) |
 
+## Card #162: the reviewer and the tester run together (9 Nov 2026)
+
+| # | Test | How |
+|---|---|---|
+| 162.1 | A record keeps `startedAt` (the run's start, else the verdict's time) and `failedAt` (its latest FAIL, carried on by later records) | `crates/store/tests/pair.rs` `a_record_keeps_when_its_run_started_and_when_it_last_failed` |
+| 162.2 | A test pass started before the reviewer's latest FAIL doesn't count; one started after does; the same for a review pass and the tester's FAIL | `a_test_pass_that_started_before_the_reviewers_fail_doesnt_count`, `a_review_pass_that_started_before_the_testers_fail_doesnt_count` |
+| 162.3 | A record with no `startedAt` counts from its `at`; no times, or no FAIL, hold nothing | `a_record_with_no_start_falls_back_to_its_verdict_time` |
+| 162.4 | The move into In progress clears `failedAt` with the round; a stop in Blocked keeps it | `the_move_into_in_progress_resets_failed_at_with_the_round` |
+| 162.5 | A card session's move to Human test or Deploy complete is refused for a stale pass, saying which to run again and when the other failed; only while both subagents are on, not while either is capped | `src-tauri/src/agents.rs` `a_pass_that_started_before_the_others_fail_is_refused` |
+| 162.6 | A stack lead's own stale pass holds its stack, only while both its rules are on | `pair.rs` `a_leads_own_stale_pass_holds_its_stack_only_while_both_are_on` |
+| 162.7 | Every Agent call of a PASS/FAIL agent notes its start, with a place only for a listed repo | `agents.rs` `a_verdict_counts_only_for_work_unchanged_while_its_agent_ran` |
+| 162.8 | The prompts install first, then start both in one message; no agent text says the review comes first | `src-tauri/tests/prompt_rules.rs` `the_reviewer_and_the_tester_run_together_after_the_install`, `no_agent_text_says_the_review_comes_first` |
+| 162.9 | In a test app: a dry-run card's session runs both together; a review FAIL fixed while the test passes is refused at the move to Human test, and a fresh tester lets it through | By hand, in the card's test app |
+
 ## Card #160: one merge lane per repo (9 Nov 2026)
 
 | # | Test | How |

@@ -360,14 +360,61 @@ reset), `RULE_KEYS` and `PAGE_SETTINGS` (if it has a switch); `stacks.rs` `stack
 - **UI:** `ui/board.js` `CHECKS` (one entry per verdict field: the panel row, the chip words, the
   columns), `checkChip`, `checkRows`; `testChip` returns every check's chip. `ui/settings.js`
   `SUBAGENT_RULES` and `ruleBox`.
-- **Prompts:** `in-progress.md` "Review and test it with subagents" (review first, then test);
-  `kanban-app.md` 4a (review before the install), 5 (log on a stack's Human test cards before a
+- **Prompts:** `in-progress.md` "Review and test it with subagents" (review first, then test,
+  until card #162 ran them together); `kanban-app.md` 4a (review before the install, until #162), 5 (log on a stack's Human test cards before a
   reinstall), 6a. Every new step says what to do if the session has no such subagent.
 - **Tests:** `agents.rs` (the verdict, the rounds and cap, every agent defined and fenced, `find`,
   `target_card`, both rules and each switch), `reviewer.rs`, `tester.rs`, `configwatch.rs` (a
   fake home folder), `sessions.rs` (every agent passed; the command line under 30,000
   characters), `crates/store/tests/auto.rs` (the reset, the setting), `crates/store/tests/stacks.rs`
   (`a_ready_stack_waits_for_the_leads_own_test_and_review`).
+- Since card #162 the review and the test run together, after the install (below).
+
+## The reviewer and the tester run together (9 Nov 2026, card #162)
+
+Hugh's question: "Could these two be run in parallel?" Yes. The reviewer reads the diff and the
+tester tries the installed build; neither needs the other's result.
+
+- **Prompts:** `in-progress.md` *Review and test it together* replaces *Review it first* and
+  *Then test it*: install first, then two Agent calls in one message (`card-reviewer`,
+  `card-tester`, both `run_in_background: true`), wait for both notifications; on any FAIL from
+  either, fix, reinstall and run both again. The reproducer's flow (before the fix, and after the
+  fix is installed) stays before the pair. `kanban-app.md` 4a no longer reviews before the
+  install; 6a runs both. The stack sections say a child's review and test run together. The
+  reviewer's and tester's descriptions and gate texts (`reviewer.rs`, `tester.rs`) say "together"
+  and no longer "before the card-tester".
+- **Records:** every `test` and `review` record (and every other PASS/FAIL agent's) keeps
+  `startedAt` and `failedAt` (`kanban_store::stamp_times`, called in `agents::record_check` next
+  to `carry_cap`). `startedAt` is when that run's Agent call started: `agents::on_pre_tool` now
+  notes a `Start { at, place }` for every card's PASS/FAIL agent run, keyed as before by (session
+  row, agent), oldest first; `place` is card #104's snapshot, only for a card in a listed repo
+  (so `placeMoved` is set only when a place was taken). When no start was seen, `startedAt` is the
+  verdict's `at`. `failedAt` is the latest FAIL's `at`, carried on by later records; the move into
+  In progress resets the record to `{state: needed}`, which drops it with `round`.
+- **The rule:** `kanban_store::stale_passes` (`crates/store/src/pair.rs`) finds a `passed` test
+  whose `startedAt` (else `at`) is before the review's `failedAt`, and the same the other way
+  round. `agents::stale_pass` is the gate, last in `GATES`, so `move_refused` (the
+  `kanban_move_card` tool, the held-move path, the monitor) refuses the moves `not_passed` holds
+  (from a column before Human test into Human test or Deploy complete). Only while both subagents
+  are on for the card (`Store::subagent_on`); not for a lead whose children's reviews stand in
+  for its own, nor while either record is capped (`capped_hold` speaks then). The message names
+  the FAIL's time and which to run again ("The reviewer failed at 14:05, after this test started
+  (14:02): the fix wasn't tested. Run the card-tester again."), in local time (`hhmm`).
+- **A stack's lead:** `stacks.rs` `lead_missing` holds a ready stack for a stale pass of the
+  lead's own, while both its rules are in the list and on ("subagent test (started before the
+  reviewer failed at 14:05)"). A child's merge (`stackrun.rs`) doesn't read the two records: it
+  starts when the child reaches Human test, and that move is the child's own session's, held by
+  `move_refused` like any other card's.
+- **Known limits:** starts and stops are paired oldest first per (session, agent), as for card
+  #104, so a lead running two testers at once for two children may pair them the wrong way round.
+  A run started after a FAIL but before the fix was made still counts: the rule compares times,
+  not commits (card #104's snapshot does that, for listed repos only). Records from before this
+  build have no `failedAt`, so an old FAIL holds nothing.
+- **Tests:** `crates/store/tests/pair.rs` (the stamps, both directions, the fallback, the reset,
+  the lead's hold), `agents.rs` `a_pass_that_started_before_the_others_fail_is_refused` (the gate,
+  through `move_refused`, the switches, the cap), `agents.rs` `a_verdict_counts_only_for_work_unchanged_while_its_agent_ran`
+  (a start with no place), `src-tauri/tests/prompt_rules.rs` (the prompts' order, and no agent
+  text saying the review comes first).
 
 ## The plan critique before building (6 Nov 2026, card #97)
 
@@ -748,7 +795,8 @@ Built on the branch `dsh-112` (worktree `~\kanban-app-112`), from `dsh-agents` a
   Markdown allowed, `bug_lines`), and `human-test-fail`, which card #102's Fail calls (the
   router's call: in Human test, Fail is the bug report, not Report a bug). Keep that signature.
   The card-reviewer's BUG lines aren't a trigger (code review's finding, card #112): it reads the
-  diff before the install, so there is nothing to reproduce yet. `mark_needed` logs what happens
+  diff, not the installed app (since card #162 it runs beside the tester, after the install), so
+  the session fixes its finding in the review-and-test loop. `mark_needed` logs what happens
   to the report, not the note: each caller logs the note itself ("Hugh found a problem", the FAIL
   line, "Hugh reported a bug", #102's "Failed in Human test"). With the rule off it only logs.
   `needed_record`: one open round per card (needed, reproduced or unclear); a report in an open

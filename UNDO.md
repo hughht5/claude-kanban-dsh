@@ -866,3 +866,13 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test
 |---|---|
 | The chat's to-do box (`ui\steps.js` `stepsChat`, `ui\steps.css`, the `#p-todo` row in `ui\panel.js` and `ui\panel.css`) and the worded TaskCreate/TaskUpdate/TaskGet lines (`src-tauri\src\transcript.rs` `key_input`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #158 commit>`, then stage the live update as usual. Nothing is stored but the fold, `localStorage["panel.todo"]` in the app's WebView, which an older build never reads |
 | The docs (HANDOVER.md, docs\GUIDE.md, this file) | The same revert |
+## The reviewer and the tester run together (9 Nov 2026, card #162, parallel review and test)
+
+PowerShell 5.1 commands. No migration and no new setting.
+
+| Change | Undo |
+|---|---|
+| The rule: `agents::stale_pass` in `GATES` (`src-tauri\src\agents.rs`), `kanban_store::stale_passes` (`crates\store\src\pair.rs`) and the stack lead's hold in `lead_missing` (`crates\store\src\stacks.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 code commit>`, then stage the live update as usual. To stop the hold without a build, untick the card-reviewer or the card-tester for the card (the rule needs both on) |
+| `startedAt` and `failedAt` on the `test` and `review` records (and the other PASS/FAIL agents'), and `agents::on_pre_tool` noting every run's start | The same revert. The fields are harmless left on cards: an older build never reads them, and the next move into In progress drops them |
+| The prompts: `prompts\in-progress.md` *Review and test it together*, `prompts\kanban-app.md` In progress 4a and 6a and its stack section; the reviewer's and tester's descriptions and gate texts (`reviewer.rs`, `tester.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 prompts commit>`. The owner's private prompts change in the private repo: revert the card #162 commit there |
+| The tests (`crates\store\tests\pair.rs`, `src-tauri\tests\prompt_rules.rs`) and the docs (HANDOVER.md, README.md, docs\GUIDE.md, PLAN.md, ACCEPTANCE.md, this file) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 docs commit>`. Text only: nothing to stage |

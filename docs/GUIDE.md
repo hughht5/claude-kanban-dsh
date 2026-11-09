@@ -705,8 +705,9 @@ Every card is tested by an independent subagent before it reaches you in Human t
 Every card's diff is read by an independent reviewer before it reaches you in Human test (stack A,
 card #96, 6 Nov 2026), as well as tested.
 
-- Each card session the app starts also has a **card-reviewer** subagent, at high effort. Before the
-  tester, the session briefs it with the card number and where the change is. It reads the card's
+- Each card session the app starts also has a **card-reviewer** subagent, at high effort. Once the
+  build is installed, the session starts it and the tester together, and briefs it with the card
+  number and where the change is. It reads the card's
   own commits (those with `(card #n)` in their message) and the work not yet committed. It looks
   for a deliverable that isn't built, mistakes, risky changes (data loss, a migration without a
   backup or test, a delete, a secret, anything touching live), work the card didn't ask for, and
@@ -715,6 +716,14 @@ card #96, 6 Nov 2026), as well as tested.
 - The app records its verdict on the card, as it does the tester's. A card session's move into
   Human test (or Deploy complete) is refused until **both** the latest review and the latest test
   have passed, and the refusal says which is missing. Each move into In progress needs both again.
+- **Together** (card #162, 9 Nov 2026): the reviewer and the tester run at the same time, on the
+  installed build, and a FAIL from either means a fix and both again. The app holds the session
+  to it: the move to Human test is refused while the test's pass started before the reviewer's
+  latest FAIL (the fix wasn't tested), or the review's pass started before the tester's latest
+  FAIL (the fix wasn't reviewed). The refusal says which to run again and the time of the FAIL. It
+  applies only while both are on for the card, and to a stack's lead's own passes too. Each
+  record keeps when its run started and when it last failed (`startedAt`, `failedAt`); the move
+  into In progress clears them with the rest.
 - **Three FAILs:** the reviewer's third FAIL since the card came into In progress sends the card
   to Blocked, with the findings as its blocked reason, and its session is told to stop. From then
   on the session can't move it back into In progress or on to Human test, even if a later review
@@ -923,7 +932,7 @@ A bug reported on a card comes back to you with proof, not another round of test
   card #102's review bar lands), your **Report a bug** (the button beside Send, on an In progress
   card that isn't in a stack), or a card-tester FAIL that names a bug you could see (`- BUG:`). A
   plain message or your drag back isn't one, and nor is a reviewer's finding: the reviewer reads
-  the diff before anything is installed, so the session fixes it straight away.
+  the diff, not the running app, so the session fixes it in its review-and-test loop.
 - The app marks the card's bug as needing proof (**Bug to reproduce**). The card's session runs
   its **card-reproducer** subagent before it fixes anything. The reproducer reproduces the bug in
   the test app on dry-run cards, writes down the steps and takes a screenshot (**Bug reproduced**),
