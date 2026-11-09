@@ -49,7 +49,7 @@ class Fragment extends Node { constructor(doc) { super(doc); this.nodeType = 11;
 const elementsOf = (n) => n.childNodes.filter((c) => c instanceof Element);
 class Element extends Node {
   constructor(doc, tag) {
-    super(doc); this.tagName = tag.toUpperCase(); this.localName = tag.toLowerCase(); this.nodeType = 1; this.attrs = new Map(); this.style = {};
+    super(doc); this.tagName = tag.toUpperCase(); this.localName = tag.toLowerCase(); this.nodeType = 1; this.attrs = new Map(); this.style = { _v: {}, setProperty(k, v) { this._v[k] = String(v); }, getPropertyValue(k) { return this._v[k] ?? ""; }, removeProperty(k) { delete this._v[k]; } };
     const self = this;
     this.dataset = new Proxy({}, {
       get: (_, k) => (typeof k === "string" ? self.getAttribute("data-" + k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())) ?? undefined : undefined),
@@ -114,7 +114,7 @@ class Element extends Node {
   focus() { this.ownerDocument.activeElement = this; }
   blur() {}
   click() { const e = new Event("click", { bubbles: true }); this.dispatchEvent(e); }
-  getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }; }
+  getBoundingClientRect() { const w = this._w || 0; return { top: 0, left: 0, width: w, height: 0, bottom: 0, right: w }; }
   scrollIntoView() {}
   showModal() { this.open = true; } close() { this.open = false; }
 }
@@ -134,7 +134,7 @@ class Document extends Node {
   querySelector(s) { return this.querySelectorAll(s)[0] || null; }
 }
 export class Event {
-  constructor(type, o = {}) { this.type = type; this.bubbles = !!o.bubbles; this.defaultPrevented = false; this.target = null; }
+  constructor(type, o = {}) { this.type = type; this.bubbles = !!o.bubbles; this.defaultPrevented = false; this.target = null; this.clientX = o.clientX ?? 0; this.clientY = o.clientY ?? 0; this.button = o.button ?? 0; this.pointerId = o.pointerId ?? 1; this.timeStamp = o.timeStamp ?? 0; }
   preventDefault() { this.defaultPrevented = true; } stopPropagation() { this._stop = true; } stopImmediatePropagation() { this._stop = true; }
 }
 

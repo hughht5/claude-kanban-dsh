@@ -844,3 +844,11 @@ cd $env:USERPROFILE\claude-kanban-dsh
 git revert --no-edit <the #154 commit>
 powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test
 ```
+
+## Card #130: column widths you can drag (9 Nov 2026, branch `dsh-130`)
+
+| Change | Undo |
+|---|---|
+| `ui\colwidths.js` (the edges, the drag, the saved weights), its tag in `ui\index.html`, `.col` and `.colgrip` in `ui\board.css` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #130 commits>`. Columns go back to equal widths with a 240px floor |
+| `tools\cdp.mjs viewport`, the fake DOM's `style.setProperty`, pointer-event fields, window listeners and storage in `tools\ui-tests` | Same revert |
+| The widths you set | Stored in the board's WebView only (`localStorage` key `wb.colWeights`). Press an edge twice to reset them, or in DevTools: `localStorage.removeItem("wb.colWeights")`. A leftover key is harmless |

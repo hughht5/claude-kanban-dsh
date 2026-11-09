@@ -5,6 +5,7 @@
 //
 //   node tools/cdp.mjs eval "<expression>"            the port in CDP_PORT, else 9333
 //   CDP_PORT=9334 node tools/cdp.mjs shot <out.png> [light|dark] [css selector]
+//   CDP_PORT=9334 node tools/cdp.mjs viewport <w> <h> <js> [<js> ...]     (card #130; --file <script.js> for a js)
 //
 // shot (card #101):
 // - refuses when CDP_PORT isn't set, so a shot never comes from the live board by accident;
@@ -20,13 +21,13 @@
 //   then prints "saved <file> (...)" and "build <commit>".
 // The hiding style, its marks and the emulated colour scheme are undone in a finally, also on a
 // failure. Every refusal or failure prints why and exits 1.
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const USAGE =
-  'usage: node tools/cdp.mjs eval "<js>"   or   CDP_PORT=9334 node tools/cdp.mjs shot <out.png> [light|dark] [css selector]';
+  'usage: node tools/cdp.mjs eval "<js>"   or   CDP_PORT=9334 node tools/cdp.mjs shot <out.png> [light|dark] [css selector]   or   CDP_PORT=9334 node tools/cdp.mjs viewport <w> <h> <js>...';
 const HIDE_ID = "cdp-shot-hide";
 // What a shot hides: the terminal, the chat pane and masked inputs.
 const HIDE = [".xterm", ".chat", "input[type=password]"];
@@ -296,6 +297,27 @@ async function main(argv) {
       const r = await cdp.send("Runtime.evaluate", { expression: args[0], awaitPromise: true, returnByValue: true }, 0);
       console.log(J(r.result?.result?.value ?? r.result?.exceptionDetails ?? r, null, 2));
     } finally {
+      cdp.close();
+    }
+  } else if (cmd === "viewport") {
+    // card #130: ONE connection holds the emulated page size (it ends with the connection), so each
+    // js runs in it, and the size is cleared in a finally. `--file <script.js>` stands in for a js.
+    if (!process.env.CDP_PORT) throw new Fail("viewport needs CDP_PORT: 9334 for the test app");
+    const w = Number(args[0]), h = Number(args[1]);
+    if (!(w >= 100 && h >= 100)) throw new Fail("viewport needs a width and a height in px, then the js to run");
+    const steps = [];
+    for (let i = 2; i < args.length; i++) steps.push(args[i] === "--file" ? readFileSync(args[++i], "utf8") : args[i]);
+    if (!steps.length) throw new Fail("viewport needs some js to run");
+    const cdp = await connect(process.env.CDP_PORT);
+    try {
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+      for (const js of steps) {
+        const r = await cdp.send("Runtime.evaluate", { expression: js, awaitPromise: true, returnByValue: true }, 30000);
+        console.log(J(r.result?.result?.value ?? r.result?.exceptionDetails ?? r, null, 2));
+      }
+    } finally {
+      try { await cdp.send("Emulation.clearDeviceMetricsOverride", {}, 5000); }
+      catch (e) { console.error(`Couldn't clear the page size: ${e.message}; reload the page`); }
       cdp.close();
     }
   } else {

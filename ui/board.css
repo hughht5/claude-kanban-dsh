@@ -45,8 +45,11 @@ h1{font-size:18px;font-weight:600;margin:0;text-wrap:balance}
 input,select,textarea,button{font:inherit;color:inherit}
 input[type=search]{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:220px;max-width:100%}
 .board{flex:1;min-height:0;display:flex;gap:10px;overflow-x:auto;padding-bottom:8px}
-.col{flex:1 0 240px;min-width:0;display:flex;flex-direction:column;background:transparent;border-radius:8px;min-height:120px}
+.col{flex:var(--w,1) 0 calc(var(--w,1)*160px);min-width:160px;position:relative;display:flex;flex-direction:column;background:transparent;border-radius:8px;min-height:120px}
 .col.over{background:var(--accent-soft)}
+/* Column width edge (card #130, colwidths.js): in the 10px gap right of a column. */
+.colgrip{position:absolute;top:0;bottom:0;right:-8px;width:6px;border-radius:3px;cursor:col-resize;z-index:2;touch-action:none}
+.colgrip:hover,body.resizing .colgrip{background:var(--accent);opacity:.55}
 .dropline{flex:0 0 auto;height:2px;margin:-5px 0;border-radius:2px;background:var(--accent);pointer-events:none}
 .colhead{display:flex;align-items:center;gap:8px;padding:2px 2px 4px;margin-bottom:4px;font-size:12.4px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .colhead .n{font-family:var(--mono);font-weight:500}
@@ -162,7 +165,7 @@ textarea,select.colsel{background:var(--bg);border:1px solid var(--line);border-
 .log time{font-family:var(--mono);font-size:11px;color:var(--muted);display:block}
 h3{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
 .hidden-secret{color:var(--bad);font-style:italic}
-@media (max-width:640px){.filter{margin-left:0;width:100%} input[type=search]{width:100%} .col{flex-basis:78vw}}
+@media (max-width:640px){.filter{margin-left:0;width:100%} input[type=search]{width:100%} .col{flex:0 0 78vw;min-width:0} .colgrip{display:none}}
 @media (prefers-reduced-motion:no-preference){dialog#addDlg[open]{animation:pop .14s ease-out}@keyframes pop{from{transform:translateY(8px) scale(.985);opacity:.6}}}
 /* Cards that need Hugh (needs.js): pinned to the top of their column, with an icon per reason. */
 .need{display:inline-flex;vertical-align:-2px;margin-right:6px;width:14px;height:14px}
