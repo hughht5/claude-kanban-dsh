@@ -2198,7 +2198,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut s = Store::open(dir.path().join("b.db")).unwrap();
         let p = |v: Value| v.as_object().cloned().unwrap();
-        let mut put = |s: &mut Store, f: Value, by: &str| {
+        let put = |s: &mut Store, f: Value, by: &str| {
             let c = s.create(None, p(f), "Hugh (board)").unwrap();
             s.update(&c.id, c.version, &p(json!({ "column": "Human test" })), by).unwrap()
         };

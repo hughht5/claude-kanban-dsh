@@ -335,7 +335,13 @@ pub fn checkout_of(store: &Store, card: &Card) -> Option<String> {
 pub struct Start {
     pub at: String,
     pub place: Option<(String, crate::small::Snapshot)>,
+    /// The card its brief names (its `CARD: #n` line), if any: a lead testing two children runs
+    /// the same agent twice at once, and each verdict takes its own card's start (card #162).
+    pub card: Option<i64>,
 }
+
+/// A start older than this is dropped when a verdict takes one: its verdict never came (card #162).
+pub const START_MAX_AGE_HOURS: i64 = 6;
 
 /// Each of the app's PASS/FAIL agents' runs as they started, per session row and agent, oldest
 /// first. A verdict counts for the work only when it is still the same when the agent stops, so
@@ -357,7 +363,7 @@ pub fn on_pre_tool(app: &AppHandle, row_id: &str, body: &Value) {
     let named = body.pointer("/tool_input/prompt").and_then(Value::as_str).and_then(|p| parse_verdict(p).card);
     let checkout = app.state::<Board>().0.lock().ok().and_then(|s| own_or_named(app, &s, row_id, named).and_then(|c| checkout_of(&s, &c)));
     let place = checkout.and_then(|c| crate::small::snapshot(&c).ok().map(|snap| (c, snap)));
-    push_start(row_id, agent.name, Start { at, place });
+    push_start(row_id, agent.name, Start { at, place, card: named });
 }
 
 /// Adds a run's start to the list of `agent` in session `row_id`.
@@ -367,11 +373,20 @@ fn push_start(row_id: &str, agent: &str, start: Start) {
     }
 }
 
-/// The oldest start of `agent` in session `row_id`, taken off the list.
-fn take_start(row_id: &str, agent: &str) -> Option<Start> {
+/// The start of `agent` in session `row_id` for a verdict that names `card`, taken off the list:
+/// the oldest whose brief named that card, else the oldest whose brief named none (or any, for a
+/// verdict that names none). Starts older than `START_MAX_AGE_HOURS` before `now` are dropped
+/// first (card #162).
+fn take_start(row_id: &str, agent: &str, card: Option<i64>, now: chrono::DateTime<chrono::Utc>) -> Option<Start> {
     let mut g = STARTS.lock().ok()?;
     let list = g.as_mut()?.get_mut(&(row_id.to_string(), agent.to_string()))?;
-    (!list.is_empty()).then(|| list.remove(0))
+    let cutoff = now - chrono::Duration::hours(START_MAX_AGE_HOURS);
+    list.retain(|s| chrono::DateTime::parse_from_rfc3339(&s.at).map_or(false, |t| t.with_timezone(&chrono::Utc) >= cutoff));
+    let i = match card {
+        Some(n) => list.iter().position(|s| s.card == Some(n)).or_else(|| list.iter().position(|s| s.card.is_none()))?,
+        None => (!list.is_empty()).then_some(0)?,
+    };
+    Some(list.remove(i))
 }
 
 /// Where a verdict counts (card #104): the checkout, when the work was the same when its agent
@@ -475,7 +490,7 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
     // Card #105: a tester's CHECK lines (one per acceptance check), read before the board lock.
     let results = if check.agent == crate::tester::TESTER { crate::done_when::check_lines(text) } else { Vec::new() };
     // Taken first, so a report that isn't recorded doesn't leave its start for the next one.
-    let start = take_start(row_id, check.agent);
+    let start = take_start(row_id, check.agent, parse_verdict(text).card, chrono::Utc::now());
     let start_place = start.as_ref().and_then(|s| s.place.as_ref());
     let board = app.state::<Board>();
     // Where the verdict was given (card #104): found under the lock, read from git without it.
@@ -845,14 +860,40 @@ mod tests {
         assert_eq!(place_of(None, Some(r"C:\r"), Some(&a)), None, "no start seen");
         // Starts are taken oldest first, per session and agent; one with no place (a card in no
         // listed repo, card #162) is still a start, with its time.
-        let s1 = Start { at: "2026-11-09T10:00:00.000Z".into(), place: Some(start.clone()) };
-        let s2 = Start { at: "2026-11-09T10:01:00.000Z".into(), place: None };
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-09T11:00:00.000Z").unwrap().with_timezone(&chrono::Utc);
+        let s1 = Start { at: "2026-11-09T10:00:00.000Z".into(), place: Some(start.clone()), card: None };
+        let s2 = Start { at: "2026-11-09T10:01:00.000Z".into(), place: None, card: None };
         push_start("row-t", "card-tester", s1.clone());
         push_start("row-t", "card-tester", s2.clone());
-        assert_eq!(take_start("row-t", "card-tester"), Some(s1));
-        assert_eq!(take_start("row-t", "card-reviewer"), None);
-        assert_eq!(take_start("row-t", "card-tester"), Some(s2));
-        assert_eq!(take_start("row-t", "card-tester"), None);
+        assert_eq!(take_start("row-t", "card-tester", None, now), Some(s1));
+        assert_eq!(take_start("row-t", "card-reviewer", None, now), None);
+        assert_eq!(take_start("row-t", "card-tester", Some(4), now), Some(s2), "a brief that named no card");
+        assert_eq!(take_start("row-t", "card-tester", None, now), None);
+    }
+
+    /// Card #162: two runs of one agent at once (a lead testing two children) each get their own
+    /// card's start, whatever order the verdicts come in; and a start whose verdict never came is
+    /// dropped after `START_MAX_AGE_HOURS`, so it can't give a later verdict its time.
+    #[test]
+    fn each_verdict_takes_its_own_cards_start() {
+        let at = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().with_timezone(&chrono::Utc);
+        let now = at("2026-11-09T12:00:00.000Z");
+        let a = Start { at: "2026-11-09T11:00:00.000Z".into(), place: None, card: Some(11) };
+        let b = Start { at: "2026-11-09T11:01:00.000Z".into(), place: None, card: Some(12) };
+        push_start("row-lead", "card-tester", a.clone());
+        push_start("row-lead", "card-tester", b.clone());
+        assert_eq!(take_start("row-lead", "card-tester", Some(12), now), Some(b), "#12's verdict first");
+        assert_eq!(take_start("row-lead", "card-tester", Some(13), now), None, "no start named #13");
+        assert_eq!(take_start("row-lead", "card-tester", Some(11), now), Some(a));
+        // A lost start, seven hours old, then a fresh one: the verdict gets the fresh one.
+        let lost = Start { at: "2026-11-09T05:00:00.000Z".into(), place: None, card: Some(11) };
+        let fresh = Start { at: "2026-11-09T11:30:00.000Z".into(), place: None, card: Some(11) };
+        push_start("row-lead", "card-reviewer", lost);
+        push_start("row-lead", "card-reviewer", fresh.clone());
+        assert_eq!(take_start("row-lead", "card-reviewer", Some(11), now), Some(fresh));
+        assert_eq!(take_start("row-lead", "card-reviewer", None, now), None, "the lost one is gone");
+        // The brief's CARD line is read as the Router's is.
+        assert_eq!(parse_verdict("Test card #12 in its worktree.\nCARD: #12\nBranch card-12").card, Some(12));
     }
 
     #[test]
