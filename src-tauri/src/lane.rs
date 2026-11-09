@@ -93,24 +93,40 @@ pub fn checkout_of_lane_path(cwd: &str) -> Option<String> {
 // ---- Where a lane works: its checkout and its repo (card #162) ----
 
 /// The GitHub `owner/name` (lower case) a remote URL names, if it is GitHub's: https, ssh and
-/// scp forms, with or without `.git` and a user (a token in an https URL is never kept).
+/// scp forms, with or without `.git` and a user (a token in an https URL is never kept). The
+/// host is read where the URL puts it (`scheme://[user@]host[:port]/path`, or scp's
+/// `[user@]host:path`) and must be github.com (or www.github.com), any case.
 pub fn github_repo(url: &str) -> Option<String> {
     let u = url.trim();
-    let lower = u.to_ascii_lowercase();
-    let at = lower.find("github.com")?;
-    // github.com must be the host: at the start, or after `//`, `@` or `.`.
-    if at > 0 && !matches!(&lower[at - 1..at], "/" | "@" | ".") {
+    let (host, rest) = match u.find("://") {
+        Some(i) => {
+            let after = &u[i + 3..];
+            // The authority ends at the first `/`, `?` or `#`; only a path may follow it.
+            let slash = after.find(['/', '?', '#'])?;
+            if !after[slash..].starts_with('/') {
+                return None;
+            }
+            let auth = &after[..slash];
+            let host = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
+            let host = match host.rsplit_once(':') {
+                Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+                _ => host,
+            };
+            (host, &after[slash + 1..])
+        }
+        None => {
+            // scp form: no `/` before the `:` that ends the host.
+            let colon = u.find(':')?;
+            if u[..colon].contains('/') || u[..colon].contains('\\') {
+                return None;
+            }
+            let auth = &u[..colon];
+            (auth.rsplit_once('@').map_or(auth, |(_, h)| h), &u[colon + 1..])
+        }
+    };
+    if !host.eq_ignore_ascii_case("github.com") && !host.eq_ignore_ascii_case("www.github.com") {
         return None;
     }
-    let rest = &u[at + "github.com".len()..];
-    let rest = match rest.strip_prefix(':') {
-        // `ssh://host:22/owner/name`: a port. Else `git@host:owner/name` (scp form).
-        Some(r) => match r.find('/') {
-            Some(i) if i > 0 && lower.starts_with("ssh://") && r[..i].chars().all(|c| c.is_ascii_digit()) => &r[i + 1..],
-            _ => r,
-        },
-        None => rest.strip_prefix('/')?,
-    };
     let rest = rest.trim_end_matches('/');
     let rest = rest.strip_suffix(".git").unwrap_or(rest);
     let mut parts = rest.split('/');
@@ -1319,6 +1335,16 @@ mod tests {
             ("https://github.com/acme", None),
             ("https://github.com/acme/web/tree/main", None),
             ("C:/repos/origin.git", None),
+            // The host is where the URL puts it, never "github.com" further on.
+            ("https://git.example.com/github.com/acme/web.git", None),
+            ("https://example.com/x/github.com/acme/web", None),
+            ("git@git.example.com:github.com/acme/web.git", None),
+            ("ssh://git@example.com/github.com/acme/web.git", None),
+            ("https://github.com.evil.example/acme/web", None),
+            ("https://evil.example?x=@github.com/acme/web", None),
+            ("HTTPS://GitHub.COM/Acme/Web.git", Some("acme/web")),
+            ("git@GITHUB.com:acme/web", Some("acme/web")),
+            ("ssh://git@github.com:2222/acme/web", Some("acme/web")),
             ("", None),
         ] {
             assert_eq!(github_repo(url).as_deref(), want, "{url}");
