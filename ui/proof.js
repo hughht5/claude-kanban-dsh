@@ -162,7 +162,7 @@ function pfRow(it,withImages){
 function proofSectionHtml(c,withImages){
   const rows=pfItems(c).map(it=>pfRow(it,withImages)).filter(Boolean);
   if(!rows.length)return"";
-  return`<section class="pf" aria-label="Proof"><h4>Proof</h4>${withImages?`<div class="pf-grid">${rows.filter(r=>r.startsWith("<figure")).join("")}</div>`:""}${rows.filter(r=>!r.startsWith("<figure")).join("")}</section>`;
+  return`<section class="pf-sec" aria-label="Proof"><h4>Proof</h4>${withImages?`<div class="pf-grid">${rows.filter(r=>r.startsWith("<figure")).join("")}</div>`:""}${rows.filter(r=>!r.startsWith("<figure")).join("")}</section>`;
 }
 // The hand-over steps: secret-looking text stays hidden (stkMd's guard on the raw text); else its
 // paths become chips and file names, and the rest is drawn by stkMd as before.
@@ -257,7 +257,7 @@ function pfChip(btn){
 document.addEventListener("click",e=>{
   const t=e.target&&e.target.closest?e.target:null;if(!t)return;
   // A proof picture in the Chat view's Proof section (the review strip has its own handler).
-  const img=t.closest(".pf img.pf-img[src]");if(img&&!document.querySelector(".shotview")&&typeof openShot==="function"){e.preventDefault();e.stopPropagation();openShot(img);return}
+  const img=t.closest(".pf-sec img.pf-img[src]");if(img&&!document.querySelector(".shotview")&&typeof openShot==="function"){e.preventDefault();e.stopPropagation();openShot(img);return}
   const chip=t.closest("button.pf-chip");if(chip){e.preventDefault();e.stopPropagation();pfChip(chip);return}
   const o=t.closest("button[data-pf-open],button[data-pf-reveal]");
   if(o){e.preventDefault();e.stopPropagation();const reveal=o.hasAttribute("data-pf-reveal");pfOpenItem(o.getAttribute(reveal?"data-pf-reveal":"data-pf-open"),reveal);return}

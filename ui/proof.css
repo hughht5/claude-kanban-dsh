@@ -1,8 +1,8 @@
 /* A card's proof in Human test (card #125, ui/proof.js): its reports as folds, its other files as
    rows, its pictures as figures, and the file-name chips in the hand-over steps. Only board.css's
    tokens, so light and dark both work. */
-.pf{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13px}
-.pf>h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.pf-sec{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13px}
+.pf-sec>h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
 .pf-grid:empty{display:none}
 .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(150px,calc((100% - 8px) / 2)),1fr));gap:8px;min-width:0}
 .pf-grid .pf-fig{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -35,4 +35,4 @@ img.pf-img:not([src]){min-height:60px}
 .pf-chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .pf-short{font-family:var(--mono);font-size:.92em;border-bottom:1px dotted var(--muted);cursor:help}
 /* In the review view the section sits under the shots, above the verdicts (review-mode.css). */
-.panel.rv #p-det>.htbox>.pf{order:1}
+.panel.rv #p-det>.htbox>.pf-sec{order:1}
