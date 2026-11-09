@@ -83,7 +83,7 @@ The board is now in `%USERPROFILE%\.claude-kanban-dsh` and the app in `%USERPROF
 | Change | Undo |
 |---|---|
 | `scripts\install.ps1` stages by default for the live app: the installer and `update.json` go to `%USERPROFILE%\.claude-kanban-dsh\update\` (test: `.claude-kanban-dsh-test\update\`), and the running app isn't quit | Run it with `-Now` for the old behaviour. Delete the `update` folder to drop a staged update; it holds only build copies and `restart.log` |
-| The app reads that folder every 30 s and shows "Update ready" on the board. Restart now suspends the sessions, exits, and a hidden PowerShell helper installs silently and starts the app again with `--background` | Click Later, or delete `update\update.json`. If a restart goes wrong, read `update\restart.log` and start the app from its shortcut. Sessions are resumed by restart recovery as after any quit |
+| The app reads that folder every 30 s and shows "Update ready" on the board. Restart now suspends the sessions, exits, and a hidden PowerShell helper installs silently and starts the app again: in front for live, with `--background` for a test app (its staged `update.json` has `"background": true`, card #135) | Click Later, or delete `update\update.json`. If a restart goes wrong, read `update\restart.log` and start the app from its shortcut. Sessions are resumed by restart recovery as after any quit |
 | Build identity (`KANBAN_GIT_COMMIT`, `KANBAN_BUILT_AT`) compiled in by `src-tauri\build.rs` | `git revert` the commit |
 | Login buttons show the stack's branch, and when it's down a Restart stack command to paste into WSL. The app runs only `git rev-parse` in a Windows-drive checkout, never WSL or `dev-stack.sh` | `git revert` the commit |
 
@@ -922,3 +922,11 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 |---|---|
 | `src-tauri\windows\hooks.nsh`: the installer deletes old `kb.old-*.exe` copies, renames kb.exe to a free `kb.old-N.exe` (N up to 99), writes the new kb.exe, then deletes the moved copy if nothing runs it (or moves it back if the write failed); uninstall also deletes `kb.old-*.exe` and the emptied folder | `git revert` the card's commit. Leftover `kb.old-N.exe` files are only old copies, in the live folder and every test slot: `Get-ChildItem "$env:USERPROFILE\Programs\Claude Kanban DSH*\kb.old-*.exe" -ErrorAction SilentlyContinue \| Remove-Item -ErrorAction SilentlyContinue` (those still in use stay) |
 | `scripts\test-kb-locked.ps1` (new) | `Remove-Item scripts\test-kb-locked.ps1 -Confirm:$false` |
+
+## Card #135: a test app's Restart now starts it in the background (9 Nov 2026, branch `stack-133-135`)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\update.rs`: `Staged.background` (default false) and `restart_in_background`, true only for a test build; `update_restart` passes it to the helper | `git revert` the card's commit |
+| `src-tauri\src\platform\windows.rs`: `update_helper(..., background)` adds `-ArgumentList '--background'` to the app's start when true; `macos.rs` takes the flag and ignores it | Same revert |
+| `scripts\install.ps1 -Stage` and `scripts/install.sh --stage` write `"background": true` into `update.json` on a test channel only | Same revert. A staged test update already written keeps the field; an older build ignores it. To drop it: `Remove-Item "$env:USERPROFILE\.claude-kanban-dsh-test*\update\update.json" -ErrorAction SilentlyContinue` (test data only, never live) |

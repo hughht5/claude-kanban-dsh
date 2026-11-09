@@ -299,13 +299,16 @@ fn ps_quote(s: &str) -> String {
 /// install folder, then start the app again whatever the installer did, so Hugh is never left
 /// without the board. It starts in front, not with `--background`: Hugh clicked Restart now, so
 /// he is looking at the board and expects it back. Each step is logged to `log`.
-pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path) -> String {
+/// With `background` (a test app's Restart now, card #135) the app starts with `--background`,
+/// behind whatever is in front; otherwise it comes back in front.
+pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path, background: bool) -> String {
     let log = ps_quote(&log.display().to_string());
     let setup = ps_quote(&installer.display().to_string());
     // /D must come last and unquoted, even with spaces (NSIS).
     let d_arg = ps_quote(&format!("/D={}", install_dir.display()));
     let dir = ps_quote(&install_dir.display().to_string());
     let exe = ps_quote(&app_exe.display().to_string());
+    let bg = if background { " -ArgumentList '--background'" } else { "" };
     format!(
         "$ErrorActionPreference = 'Continue'\n\
          $log = {log}\n\
@@ -319,7 +322,7 @@ pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &P
            Note \"Installer exit code $($p.ExitCode)\"\n\
          }} catch {{ Note \"Installer failed to start: $_\" }}\n\
          Note ('Starting ' + {exe})\n\
-         Start-Process -FilePath {exe} -WorkingDirectory {dir}\n\
+         Start-Process -FilePath {exe} -WorkingDirectory {dir}{bg}\n\
          Note 'Done'\n"
     )
 }
@@ -415,6 +418,7 @@ mod tests {
             Path::new(r"C:\Users\o'neil\Programs\Claude Kanban DSH"),
             Path::new(r"C:\Users\o'neil\Programs\Claude Kanban DSH\claude-kanban-dsh.exe"),
             Path::new(r"C:\Users\o'neil\.claude-kanban-dsh\update\restart.log"),
+            false,
         );
         assert!(s.contains("Wait-Process -Id 42"));
         assert!(s.contains(r"'/D=C:\Users\o''neil\Programs\Claude Kanban DSH'"));
@@ -431,16 +435,29 @@ mod tests {
     fn helper_parses_as_powershell() {
         let t = tempfile::tempdir().unwrap();
         let file = t.path().join("helper.ps1");
-        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"));
-        std::fs::write(&file, s).unwrap();
-        let cmd = format!(
-            "$e=$null;$t=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('{}',[ref]$t,[ref]$e);$e.Count",
-            file.display()
-        );
-        let Ok(out) = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &cmd]).output() else {
-            return; // no PowerShell here
-        };
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "parse errors in:\n{}", std::fs::read_to_string(&file).unwrap());
+        for background in [false, true] {
+            let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"), background);
+            std::fs::write(&file, s).unwrap();
+            let cmd = format!(
+                "$e=$null;$t=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('{}',[ref]$t,[ref]$e);$e.Count",
+                file.display()
+            );
+            let Ok(out) = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &cmd]).output() else {
+                return; // no PowerShell here
+            };
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "parse errors in:\n{}", std::fs::read_to_string(&file).unwrap());
+        }
+    }
+
+    /// A test app's Restart now starts the app with --background, after the installer (card #135).
+    #[test]
+    fn helper_starts_a_test_app_in_the_background() {
+        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\r.log"), true);
+        let start = s.rfind(r"Start-Process -FilePath 'C:\a b\App\x.exe'").expect("the app's start");
+        let line = s[start..].lines().next().unwrap();
+        assert!(line.ends_with("-ArgumentList '--background'"), "{line}");
+        assert!(s.find("'/S'").unwrap() < start, "the installer runs first");
+        assert_eq!(s.matches("--background").count(), 1, "only the app's start");
     }
 
     #[test]

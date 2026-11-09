@@ -391,7 +391,10 @@ if [ "$MODE" = "stage" ]; then
         printf '  "installer": "%s",\n' "$(json_str "$ZIP")"
         printf '  "install_dir": "%s",\n' "$(json_str "$INSTALL_DIR")"
         printf '  "app_exe": "%s",\n' "$(json_str "$APP")"
-        printf '  "channel": "%s"\n' "$(json_str "$CHANNEL")"
+        printf '  "channel": "%s"' "$(json_str "$CHANNEL")"
+        # A test app's Restart now comes back behind whatever is in front (card #135); never live.
+        if [ "$CHANNEL" != "live" ]; then printf ',\n  "background": true'; fi
+        printf '\n'
         printf '}\n'
     } >"$JSON.tmp" || die "couldn't write $JSON.tmp"
     mv -f "$JSON.tmp" "$JSON" || die "couldn't write $JSON"

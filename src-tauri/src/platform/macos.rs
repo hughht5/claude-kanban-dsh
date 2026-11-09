@@ -555,8 +555,9 @@ fn bundle_of(p: &Path) -> PathBuf {
 
 /// A sh script that waits for the app (pid) to exit, swaps in the staged .app (a ditto zip),
 /// keeps the old one as update/previous.app and puts it back if the move fails, records the
-/// result in restart-result.json beside the log, and opens the app in front.
-pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path) -> String {
+/// result in restart-result.json beside the log, and opens the app in front. `background` (a
+/// test app's Restart now, card #135) isn't used on a Mac yet: the app still opens in front.
+pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path, _background: bool) -> String {
     let result = log.with_file_name("restart-result.json");
     text::update_helper_script(pid, installer, install_dir, &bundle_of(app_exe), log, &result)
 }
