@@ -25,7 +25,7 @@ const needClass=id=>needs[id]?" needs":"";
 // It ends when the card needs him again (the new need puts it on top), when it is seen in another
 // column, archived or gone (for good: moving back doesn't bring it back), when it entered its
 // column after the hold was made (a move out and back between two loads), or when Hugh drags it
-// (placeCard calls endHolds; a drop into the pinned cards ends the column's holds too). No hold is
+// (placeCard calls endHolds; a drop among the pinned cards gives it a hold there, holdPlaces). No hold is
 // made for a card that moved column while it needed him (it entered its column over MOVED_SLACK
 // after its need began), nor for one he dragged while it needed him (noHold): his move or drop
 // stands. Kept in localStorage, `wb.heldPlaces`, so a reload or a restart keeps them; without it,
@@ -37,6 +37,7 @@ const noHold=new Map(); // cardId -> the column he dragged it in while it needed
 const MOVED_SLACK=30000;
 try{const h=JSON.parse(localStorage.getItem(HELD_KEY)||"{}");if(h&&typeof h==="object"&&!Array.isArray(h))held=h}catch(e){}
 function saveHeld(){try{localStorage.setItem(HELD_KEY,JSON.stringify(held))}catch(e){}}
+const atMs=v=>typeof v==="number"?v:Date.parse(v||"")||0;
 const sinceOf=c=>typeof c.columnSince==="number"?c.columnSince:Date.parse(c.columnSince||"")||0;
 // The card's hold while it still counts, else null.
 function holdOf(c){
@@ -47,6 +48,24 @@ function holdOf(c){
 const isPinned=c=>!!needs[c.id]||!!holdOf(c);
 // The cards of a column that hold a place (placeCard's drag).
 const heldIn=col=>cards.filter(c=>colOf(c)===col&&!needs[c.id]&&holdOf(c)).map(c=>c.id);
+// A drop among the pinned cards (placeCard): `list` is the pinned cards as they should now show, top
+// first. Each card in it that doesn't need Hugh gets a hold whose time puts it in that place: between
+// the needs of the cards around it, which keep theirs. Times are numbers (ms), the needs' are ISO.
+// The top stays no later than the newest time already there, so a later need still goes above.
+function holdPlaces(list,col){
+  const now=Date.now(),t=list.map(c=>needs[c.id]?atMs(needs[c.id].at):null);
+  const had=list.map(c=>{const n=needs[c.id],h=holdOf(c);return n?atMs(n.at):h?atMs(h.at):null}).filter(x=>x!==null);
+  const top=had.length?Math.max(...had):now;
+  for(let i=0;i<t.length;){
+    if(t[i]!==null){i++;continue}
+    let j=i;while(j<t.length&&t[j]===null)j++;
+    const n=j-i+1,hi=i>0?t[i-1]:top+1,lo=j<t.length?t[j]:hi-n*1000,step=(hi-lo)/n;
+    for(let k=i;k<j;k++)t[k]=hi-step*(k-i+1);
+    i=j;
+  }
+  list.forEach((c,i)=>{if(!needs[c.id])held[c.id]={at:t[i],col,made:now}});
+  saveHeld();
+}
 function endHolds(ids){let ch=false;for(const id of ids)if(held[id]){delete held[id];ch=true}if(ch)saveHeld()}
 // Drops for good the holds that no longer count: card gone, archived, in another column or moved
 // back in since. Only once the board has its cards.
@@ -76,7 +95,7 @@ function pinFirst(list){
   const atOf=c=>{const n=needs[c.id];if(n)return n.at;const h=holdOf(c);return h?h.at:null};
   const top=list.filter(c=>atOf(c)!==null);
   if(!top.length)return list;
-  const at=c=>Date.parse(atOf(c)||"")||0;
+  const at=c=>atMs(atOf(c));
   top.sort((a,b)=>at(b)-at(a));
   return top.concat(list.filter(c=>atOf(c)===null));
 }

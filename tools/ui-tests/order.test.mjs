@@ -15,7 +15,8 @@ const fixture = () => ["a", "b", "c", "d"].map((id, i) => ({ id, number: 10 + i,
 // The page's own first load (list_cards, needs_you) settles before the test sets its cards.
 async function board({ storage = memStorage(), cards = fixture() } = {}) {
   const st = { needs: {} };
-  const b = boot({ storage, invoke: { list_cards: () => cards, needs_you: () => (typeof st.needs === "function" ? st.needs() : st.needs), update_card: () => ({ ok: true }) } });
+  const b = boot({ storage, invoke: { list_cards: () => cards, needs_you: () => (typeof st.needs === "function" ? st.needs() : st.needs), update_card: () => ({ ok: true }),
+    move_card: (a) => { const c = cards.find((x) => x.id === a.id); c.column = a.column; c.columnSince = new Date().toISOString(); return { ok: true }; } } });
   await new Promise((r) => setImmediate(r));
   b.show(cards);
   b.setNeeds = async (n) => { st.needs = n; await b.run("loadNeeds()"); };
@@ -108,16 +109,43 @@ test("a hold survives a fresh page with the same storage", async () => {
   assert.deepEqual(b2.order(), ["c", "a", "b", "d"]);
 });
 
-test("a drag among held cards lands where it was dropped and ends the column's holds", async () => {
+test("a drop among held cards lands where it was dropped, and nothing is written", async () => {
   const b = await board();
   await b.setNeeds({ c: { reason: "unread", at: iso(1) }, d: { reason: "unread", at: iso(2) } });
   await b.setNeeds({});
   assert.deepEqual(b.order(), ["c", "d", "a", "b"]);
   b.calls.splice(0);
   await b.run(`placeCard("b",${JSON.stringify(IP)},"d")`);
-  assert.deepEqual(b.held(), {}, "the drag ended the holds");
-  b.applyWrites();
   assert.deepEqual(b.order(), ["c", "b", "d", "a"]);
+  assert.equal(b.calls.filter(([c]) => c === "update_card").length, 0);
+  assert.deepEqual(Object.keys(b.held()).sort(), ["b", "c", "d"]);
+  // It stays there across a fresh read of the needs, and a later need still goes above it.
+  await b.setNeeds({ a: { reason: "unread", at: new Date().toISOString() } });
+  assert.deepEqual(b.order(), ["a", "c", "b", "d"]);
+});
+
+test("a drop between a held card and one that still needs him lands where it was dropped", async () => {
+  // The reviewer's case: c and d need Hugh, he opens c; the column shows c, d, a, b.
+  const b = await board();
+  await b.setNeeds({ c: { reason: "unread", at: iso(1) }, d: { reason: "unread", at: iso(2) } });
+  await b.setNeeds({ d: { reason: "unread", at: iso(2) } });
+  assert.deepEqual(b.order(), ["c", "d", "a", "b"]);
+  await b.run(`placeCard("b",${JSON.stringify(IP)},"d")`);
+  assert.deepEqual(b.order(), ["c", "b", "d", "a"]);
+  // Above everything, too.
+  await b.run(`placeCard("a",${JSON.stringify(IP)},"c")`);
+  assert.deepEqual(b.order(), ["a", "c", "b", "d"]);
+});
+
+test("a card dragged in from another column among the pinned cards lands where it was dropped", async () => {
+  const cards = fixture();
+  cards.push({ id: "x", number: 20, title: "x", column: "Planning", version: 1, updatedAt: iso(0), columnSince: iso(600) });
+  const b = await board({ cards });
+  await b.setNeeds({ c: { reason: "unread", at: iso(1) }, d: { reason: "unread", at: iso(2) } });
+  await b.setNeeds({});
+  await b.run(`placeCard("x",${JSON.stringify(IP)},"d")`);
+  assert.deepEqual(b.order(), ["c", "x", "d", "a", "b"]);
+  assert.deepEqual(b.order("Planning"), []);
 });
 
 test("a drop right below a card that needs Hugh lands exactly there", async () => {

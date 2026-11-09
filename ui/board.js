@@ -407,19 +407,27 @@ async function placeCard(id,col,beforeId){
     const last=vis.length?rest.findIndex(x=>x.id===vis[vis.length-1]):-1;idx=last+1}
   const same=colOf(c)===col;
   if(same&&full.findIndex(x=>x.id===id)===idx)return;
+  // Dropped among the pinned cards (needs.js, card #132): they show by their needs' times, not by
+  // order, so the dropped card and the held ones get holds that match the order shown; the cards that
+  // need Hugh keep theirs. One that needs him itself stays where its need puts it. Nothing is written.
+  if(idx<pinN){
+    if(!same){await moveCard(id,col);await load();const m=cards.find(x=>x.id===id);if(!m||colOf(m)!==col)return}
+    const arr=[...rest];arr.splice(idx,0,c);
+    holdPlaces(arr.slice(0,pinN+1).filter(x=>x.id!==id||!needs[id]),col);
+    if(needs[id])noHold.set(id,col);
+    render();if(same)status(`Reordered ${col}`);return;
+  }
   // A pinned card's order says nothing about where it shows, so a drop just below the pinned cards
-  // has no card above it; a drop among them numbers the whole column.
-  const into=idx<pinN,prev=idx>pinN?rest[idx-1]:null,next=rest[idx];
+  // has no card above it.
+  const prev=idx>pinN?rest[idx-1]:null,next=rest[idx];
   let order;
-  if(into||(prev&&!hasOrd(prev))||(next&&!hasOrd(next))||(prev&&next&&!(prev.order<next.order))){
-    // Dropped among the pinned cards, a neighbour has no order yet, or the orders run backwards:
-    // number the whole column as it is shown, with the moved card in its new place. A drop among the
-    // pinned cards ends the column's holds: their places are manual order now.
+  if((prev&&!hasOrd(prev))||(next&&!hasOrd(next))||(prev&&next&&!(prev.order<next.order))){
+    // A neighbour has no order yet, or the orders run backwards: number the whole column as it is
+    // shown, with the moved card in its new place.
     const arr=[...rest];arr.splice(idx,0,c);busy=true;
     const res=[];for(const [i,x] of arr.entries())res.push(x.id===id||(hasOrd(x)&&x.order===i+1)?true:await write(x.id,{order:i+1,orderCol:col},true));
     busy=false;if(res.includes(false))return;
     order=idx+1;
-    if(into)endHolds(heldIn(col));
   }else order=prev&&next?(prev.order+next.order)/2:next?next.order-1:prev?prev.order+1:1;
   // The dragged card's own place is his drop now: no hold, and none when its need clears.
   if(pins){endHolds([id]);if(needs[id])noHold.set(id,col)}
