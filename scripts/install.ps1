@@ -233,7 +233,7 @@ function Get-LockHolderText([string]$Path) {
 # The DSH lock folder's owner file: line 1 the owner, line 2 "pid <pid> <pidStart>" (older
 # writers leave out line 2).
 function Get-DshOwnerLines {
-    try { return @(([IO.File]::ReadAllText((Join-Path $DshLockDir 'owner'))) -split "`r?`n" | ForEach-Object { $_.Trim() }) }
+    try { return @(([IO.File]::ReadAllText((Join-Path $DshLockDir 'owner'))) -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
     catch { return @() }
 }
 

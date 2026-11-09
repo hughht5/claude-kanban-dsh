@@ -1288,15 +1288,18 @@ covered only cards that knew about it.
   (`take_now`, card #149): with nobody holding the turn and nothing outside the queue blocking,
   a take from a card first in line, or behind only paused cards, gets the turn in its reply.
   **A stopped card's turn (card #168):** when the turn is a card's (it holds it, or nobody does and
-  it is first in line `blocked` doesn't stop) and its session isn't running, `step` marks it
-  (`to_wake`, `woke_at` on its `Turn` or `Waiting`, once per turn or place) and the pump starts its
+  it is the first in line `blocked` doesn't stop, past cards whose wake ran out) and its session
+  isn't running, `step` marks it (`to_wake`, `woke_at` on its `Turn` or `Waiting`, once until its
+  session is seen running again: a live holder, or the card's own take, `ran`) and the pump starts its
   session (`wake`): its app conversation resumed, else a new one in its worktree, through
   `begin_session` (why "testapp"), so the cap and start queue apply. A conversation only in the
   desktop app is never started. For `WAKE_GRACE_MINUTES` (5) a woken card in line keeps the turn's
   place (`next` and `take_now` give it to nobody behind it); once its session runs, `next` gives
-  it the turn and its usual message. Then the line moves on, and it keeps its place. If the start
-  fails, the card's log says why: a held turn ends, and a place in line is
-  passed over at once (`wake_failed`). It asks again (a take) to be woken again. The status shows
+  it the turn and its usual message. Then the line moves on, and it keeps its place; a woken
+  holder whose session still isn't up loses the turn (`wake_ran_out`, `Ended::NoSession`). If the
+  start fails, the card's log says why: a held turn ends (with its ended message), and a place in
+  line is passed over at once (`wake_failed`). A new session (no app conversation) is first told
+  why it runs (`woke_new_message`). It asks again (a take) to be woken again. The status shows
   `waking` on the holder and line entries; the board shows "starting its session".
   `src-tauri/src/testapp.rs` runs it: the pump every 2 s from `dispatch::run` (its first run is the
   start-up check), the `kanban_test_app` tool, `kb testapp`, the page's commands. "Your turn" and

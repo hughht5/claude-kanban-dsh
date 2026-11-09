@@ -473,6 +473,12 @@ pub fn step(
             ended(&mut out, &t, &why, &card);
         }
     }
+    // A holder woken for its turn whose session didn't come up within the grace: the line
+    // moves on (card #168).
+    if let Some(t) = queue.wake_ran_out(now, |id| live.live.contains(id)) {
+        let why = Ended::NoSession(format!("didn't start within {} min", q::WAKE_GRACE_MINUTES));
+        ended(&mut out, &t, &why, &card);
+    }
     // Its turn came while its session was stopped: the pump starts it (card #168). Before
     // `next`, so the card behind it doesn't take the turn while its session starts.
     out.wake = queue.to_wake(now, |id| live.live.contains(id), |owner| seen.blocks(owner));
@@ -732,20 +738,41 @@ fn wake(app: &AppHandle, id: &str, slot: u32, now: DateTime<Utc>) {
     let Ok(mut store) = board.0.lock() else { return };
     let Ok(c) = store.get(id) else { return };
     let on = q::slot_label(slot);
-    let line = match wake_start(app, &mut store, &c) {
+    // Its session may have started since the pump looked (Hugh's Start, the start queue).
+    if app.state::<Arc<Sessions>>().is_live(id).is_some() {
+        return;
+    }
+    let line = match wake_start(app, &mut store, &c, slot) {
         Ok(done) => format!("Its turn on {on} came while its session was stopped: {done}"),
         Err(e) => {
             let mut queue = store.test_app_queue_for(slot).unwrap_or_default();
             let ended = queue.wake_failed(id, now);
             let _ = store.save_test_app_queue_for(slot, &queue);
+            if ended.is_some() {
+                // Heard when its session next runs, as every other end of a turn is.
+                let why = Ended::NoSession(format!("couldn't be started ({e})"));
+                let _ = store.queue(id, "message", &ended_message(&why.text()));
+            }
             let next = if ended.is_some() { "its turn ended, and the next in line gets it" } else { "it keeps its place, and the next in line gets the turn" };
             format!("Its turn on {on} came while its session was stopped, and the app couldn't start it ({e}): {next}")
         }
     };
     let _ = store.add_log(id, &line, "the app");
+    drop(store);
+    let _ = app.emit("cards-changed", ());
 }
 
-fn wake_start(app: &AppHandle, store: &mut Store, c: &kanban_store::Card) -> Result<String, String> {
+/// What a new session started for its turn hears first (card #168): it has no conversation to
+/// carry on, so it is told why it runs and where to start.
+pub fn woke_new_message(number: i64, column: &str, slot: u32) -> String {
+    format!(
+        "The app started this session for card #{number} because its turn on {} came while it had no session running. \
+The card is in {column}: read it (kanban_get_card), its log and nextStep, and carry on its column's work from there.",
+        q::slot_label(slot)
+    )
+}
+
+fn wake_start(app: &AppHandle, store: &mut Store, c: &kanban_store::Card, slot: u32) -> Result<String, String> {
     if c.archived || !q::TESTER_COLUMNS.contains(&c.column.as_str()) {
         return Err(format!("the card is in {}", c.column));
     }
@@ -754,10 +781,14 @@ fn wake_start(app: &AppHandle, store: &mut Store, c: &kanban_store::Card) -> Res
         return Err("its conversation is in the Claude desktop app, which the app never starts by itself; open the card and choose Resume in the app".into());
     }
     let mode = if app_convo.is_some() { "resume" } else { "new" };
-    Ok(match crate::begin_session(app, store, c, mode, "testapp")? {
+    let begun = crate::begin_session(app, store, c, mode, "testapp")?;
+    if mode == "new" {
+        let _ = store.queue(&c.id, "message", &woke_new_message(c.number, &c.column, slot));
+    }
+    Ok(match begun {
         crate::Begun::Started(_) if mode == "resume" => "the app resumed its session; it gets the turn once the session runs".into(),
         crate::Begun::Started(_) => "the app started a new session; it gets the turn once the session runs".into(),
-        crate::Begun::Queued(pos) => format!("the app asked to start its session, which waits under Hugh's cap (number {pos}); the line moves on after {} min if it hasn't started", q::WAKE_GRACE_MINUTES),
+        crate::Begun::Queued(pos) => format!("the app asked to start its session, which waits under Hugh's cap (number {pos}); if it hasn't started within {} min, the turn moves on to the next in line", q::WAKE_GRACE_MINUTES),
         crate::Begun::Sizing => "the app asked to start its session, which waits for the card to be sized".into(),
     })
 }
@@ -969,6 +1000,8 @@ pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now
             let ask = Ask::tester(id, c.number);
             let seen = shared.for_slot(slot);
             let t = queue.take_now(ask, now, |c| live.live.contains(c), |o| seen.blocks(o));
+            // Its own session asked, so it runs: a later stop may be woken again (card #168).
+            queue.ran(id);
             store.save_test_app_queue_for(slot, &queue).map_err(e)?;
             let app = q::slot_label(slot);
             let line = match &t {
@@ -1253,6 +1286,14 @@ mod tests {
         assert_eq!(s.wake.as_deref(), Some("a"));
         assert_eq!(slot_status(&queue, t(1), 60, &Seen::default(), &Live::default())["holder"]["waking"], true);
         assert_eq!(step(&mut queue, t(2), 60, &Seen::default(), &Live::default(), &card, 1).wake, None);
+        // Its session didn't come up within the grace: its turn ends, and it hears why.
+        let s = step(&mut queue, t(1 + q::WAKE_GRACE_MINUTES), 60, &Seen::default(), &Live::default(), &card, 1);
+        assert!(queue.holder.is_none());
+        assert!(s.logs.iter().any(|(id, l)| id == "a" && l.contains("its session was stopped and didn't start within 5 min")), "{:?}", s.logs);
+        assert!(s.messages.iter().any(|(id, m)| id == "a" && m.contains("Your turn on the test app ended")));
+        // A new session started for its turn is told where to start.
+        let m = woke_new_message(168, "Human test", 6);
+        assert!(m.contains("card #168") && m.contains("Test 6") && m.contains("Human test") && m.contains("kanban_get_card"), "{m}");
         // A card that left the testing columns is never woken: it leaves the line instead.
         let mut queue = TestAppQueue::default();
         queue.take(Ask::tester("z", 9), t(0), false);

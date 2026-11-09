@@ -840,12 +840,12 @@ Nothing on the board or in the data folders changed; the queue's JSON is the sam
 
 ## Card #168: a stopped card's session starts when its test-app turn comes (9 Nov 2026, branch `card-168`)
 
-Also carries card #149's fix (the rows above), cherry-picked onto this branch.
+Also carries card #149's fix (the rows above), cherry-picked onto this branch, and `Get-DshOwnerLines` in `scripts\install.ps1` now drops blank lines, as the app's `read_dsh` does.
 
 | Change | Undo |
 |---|---|
-| `crates\store\src\testapp.rs`: `WAKE_GRACE_MINUTES`, `woke_at` on `Turn` and `Waiting` (left out of the JSON when empty), `Waiting::waking`, `TestAppQueue::to_wake` and `wake_failed`; `next` and `take_now` give nobody behind a waking card the turn | `git -C ~\claude-kanban-dsh revert --no-edit <the card #168 commit>`, then stage the live update |
-| `src-tauri\src\testapp.rs`: `step` returns `wake`, `run` returns the wakes, the pump's `wake` starts the card's session (`begin_session`, why "testapp"); the status's `waking` on the holder and line entries | Same revert |
+| `crates\store\src\testapp.rs`: `WAKE_GRACE_MINUTES`, `woke_at` on `Turn` and `Waiting` (left out of the JSON when empty), `Waiting::waking`, `TestAppQueue::to_wake`, `wake_failed`, `wake_ran_out` and `ran`, `Ended::NoSession`; `next` and `take_now` give nobody behind a waking card the turn | `git -C ~\claude-kanban-dsh revert --no-edit <the card #168 commit>`, then stage the live update |
+| `src-tauri\src\testapp.rs`: `step` returns `wake`, `run` returns the wakes, the pump's `wake` starts the card's session (`begin_session`, why "testapp"; `woke_new_message` for a new one); the status's `waking` on the holder and line entries | Same revert |
 | `ui\testapp.js`: "starting its session" in the popover and "starting" on the tile chip; `tools\ui-tests\testapp.test.mjs` | Same revert |
 | AGENTS.md, HANDOVER.md, PLAN.md, this file | Same revert. Text only |
 

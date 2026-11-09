@@ -621,8 +621,9 @@ session's, for Hugh to overturn):
 - **5 minutes' grace** (`WAKE_GRACE_MINUTES`): a woken card keeps the turn's place while its
   session starts, so the card behind can't jump it; after that the line moves on, so a start
   waiting under the cap, or one that hangs, never stalls the line. It keeps its place.
-- **Once per turn or place**, never retried: a start that fails ends a held turn and passes a
-  place over at once, logged. Its next take (its session runs then) clears the mark.
+- **Once per stop**, never retried: a start that fails ends a held turn and passes a place over
+  at once, logged. Seeing its session run again (a live holder, its own take) clears the mark.
+  A woken holder gets the same grace, then loses the turn.
 - **A card Hugh stopped is woken too.** To stop a card testing, move it out of In progress or
   Human test.
 - **Card #149 folded in.** Its unshipped fix (d4d4b42) was cherry-picked onto this branch, its

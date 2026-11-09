@@ -108,10 +108,29 @@ pub struct Waiting {
     pub woke_at: Option<String>,
 }
 
+/// A wake stamped less than WAKE_GRACE_MINUTES ago (card #168).
+fn within_grace(woke_at: Option<&str>, now: DateTime<Utc>) -> bool {
+    woke_at.and_then(parse).map_or(false, |w| now - w < Duration::minutes(WAKE_GRACE_MINUTES))
+}
+
 impl Waiting {
     /// Its session is being started for its turn, within WAKE_GRACE_MINUTES (card #168).
     pub fn waking(&self, now: DateTime<Utc>) -> bool {
-        self.woke_at.as_deref().and_then(parse).map_or(false, |w| now - w < Duration::minutes(WAKE_GRACE_MINUTES))
+        within_grace(self.woke_at.as_deref(), now)
+    }
+
+    /// Could be given the turn now, or holds its place while its session starts: an install,
+    /// a card whose session is live, or one being woken (card #168); never one `blocked` stops.
+    /// The one rule `next` and `take_now` share (card #149).
+    fn can_have(&self, now: DateTime<Utc>, live: &impl Fn(&str) -> bool, blocked: &impl Fn(&str) -> bool) -> bool {
+        !blocked(&self.who.owner) && (self.who.card_id.as_deref().map_or(true, live) || self.waking(now))
+    }
+}
+
+impl Turn {
+    /// Its session is being started for this turn, within WAKE_GRACE_MINUTES (card #168).
+    pub fn waking(&self, now: DateTime<Utc>) -> bool {
+        within_grace(self.woke_at.as_deref(), now)
     }
 }
 
@@ -148,6 +167,8 @@ pub enum Ended {
     NotStarted,
     /// An install that stopped asking while it waited.
     GaveUp,
+    /// A card given the turn while its session was stopped, whose session didn't start (card #168).
+    NoSession(String),
 }
 
 impl Ended {
@@ -160,6 +181,7 @@ impl Ended {
             Ended::Installed => "the install has started the test app again".into(),
             Ended::NotStarted => format!("its install didn't start within {INSTALL_START_MINUTES} min"),
             Ended::GaveUp => format!("it stopped asking for {INSTALL_WAIT_MINUTES} min"),
+            Ended::NoSession(e) => format!("its session was stopped and {e}"),
         }
     }
 }
@@ -209,7 +231,7 @@ impl TestAppQueue {
         // Where it stands, or would stand: an install behind the installs, a tester at the back.
         let i = place.map(|p| p - 1).unwrap_or_else(|| if ask.kind == INSTALL { self.line.iter().take_while(|x| x.who.kind == INSTALL).count() } else { self.line.len() });
         // A card ahead whose session is being started for its turn counts too (card #168).
-        let ahead_can = self.line[..i].iter().any(|w| (w.who.card_id.as_deref().map_or(true, &live) || w.waking(now)) && !blocked(&w.who.owner));
+        let ahead_can = self.line[..i].iter().any(|w| w.can_have(now, &live, &blocked));
         if self.holder.is_none() && !ahead_can && !blocked(&ask.owner) {
             if place.is_some() {
                 self.line.remove(i);
@@ -219,8 +241,6 @@ impl TestAppQueue {
         }
         if let Some(p) = place {
             self.line[p - 1].seen_at = Some(at);
-            // It asked again, so its session runs: a later stop may be woken again.
-            self.line[p - 1].woke_at = None;
             return Take::Waiting(p);
         }
         self.next_seq += 1;
@@ -305,7 +325,7 @@ impl TestAppQueue {
         if self.holder.is_some() {
             return None;
         }
-        let i = self.line.iter().position(|w| !blocked(&w.who.owner) && (w.who.card_id.as_deref().map_or(true, &live) || w.waking(now)))?;
+        let i = self.line.iter().position(|w| w.can_have(now, &live, &blocked))?;
         if self.line[i].who.card_id.as_deref().is_some_and(|id| !live(id)) {
             return None;
         }
@@ -320,16 +340,47 @@ impl TestAppQueue {
     /// yet (card #168): the holder, or with nobody holding it the first in line `blocked`
     /// doesn't stop. It is stamped as woken (once per turn or place), and the app starts its
     /// session. An install, a live card, or one woken already gives None.
+    /// A holder whose session runs is cleared, so a later stop in the same turn is woken again.
+    /// In line, cards whose wake ran out or failed are passed over, as `next` passes them.
     pub fn to_wake(&mut self, now: DateTime<Utc>, live: impl Fn(&str) -> bool, blocked: impl Fn(&str) -> bool) -> Option<String> {
         if let Some(h) = self.holder.as_mut() {
-            let id = h.who.card_id.clone().filter(|id| !live(id) && h.woke_at.is_none())?;
+            let id = h.who.card_id.clone()?;
+            if live(&id) {
+                h.woke_at = None;
+                return None;
+            }
+            if h.woke_at.is_some() {
+                return None;
+            }
             h.woke_at = Some(stamp(now));
             return Some(id);
         }
-        let w = self.line.iter_mut().find(|w| !blocked(&w.who.owner))?;
-        let id = w.who.card_id.clone().filter(|id| !live(id) && w.woke_at.is_none())?;
-        w.woke_at = Some(stamp(now));
-        Some(id)
+        for w in self.line.iter_mut().filter(|w| !blocked(&w.who.owner)) {
+            let Some(id) = w.who.card_id.clone().filter(|id| !live(id)) else { return None };
+            if w.woke_at.is_none() {
+                w.woke_at = Some(stamp(now));
+                return Some(id);
+            }
+            if w.waking(now) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// The holder is a card woken more than WAKE_GRACE_MINUTES ago whose session still isn't
+    /// live (card #168): its turn ends (returned), so the line moves on.
+    pub fn wake_ran_out(&mut self, now: DateTime<Utc>, live: impl Fn(&str) -> bool) -> Option<Turn> {
+        let h = self.holder.as_ref()?;
+        let id = h.who.card_id.as_deref()?;
+        (h.woke_at.is_some() && !h.waking(now) && !live(id)).then(|| self.holder.take()).flatten()
+    }
+
+    /// The card's own session took again, so it runs: a later stop may be woken again.
+    pub fn ran(&mut self, card_id: &str) {
+        if let Some(w) = self.line.iter_mut().find(|w| w.who.card_id.as_deref() == Some(card_id)) {
+            w.woke_at = None;
+        }
     }
 
     /// The app couldn't start `card_id`'s session for its turn (card #168): a holder's turn
@@ -1022,8 +1073,19 @@ mod tests {
         assert_eq!(q.to_wake(t(20), stopped, FREE), None, "never woken twice for one place");
         // Asking again (its session runs) clears it, so a later stop is woken again.
         q.force();
-        q.take_now(card(2), t(21), stopped, |_| true);
+        q.ran("card-2");
         assert_eq!(q.to_wake(t(22), stopped, FREE).as_deref(), Some("card-2"));
+        // A card behind one whose wake ran out is woken in its turn.
+        let mut q = TestAppQueue::default();
+        for n in 1..=4 {
+            q.take(card(n), t(0), false);
+        }
+        q.force();
+        let up = |id: &str| id == "card-4";
+        assert_eq!(q.to_wake(t(1), up, FREE).as_deref(), Some("card-2"));
+        assert_eq!(q.to_wake(t(2), up, FREE), None, "#3 waits while #2 starts");
+        assert_eq!(q.to_wake(t(1 + WAKE_GRACE_MINUTES), up, FREE).as_deref(), Some("card-3"));
+        assert!(q.next(t(1 + WAKE_GRACE_MINUTES), up, FREE).is_none(), "#4 doesn't jump the waking #3");
     }
 
     #[test]
@@ -1034,6 +1096,16 @@ mod tests {
         let none_live = |_: &str| false;
         assert_eq!(q.to_wake(t(1), none_live, FREE).as_deref(), Some("card-1"));
         assert_eq!(q.to_wake(t(1), none_live, FREE), None);
+        assert!(q.holder.as_ref().unwrap().waking(t(1)));
+        // Once its session runs the mark clears, so a stop later in the turn is woken again.
+        assert_eq!(q.to_wake(t(2), ALL_LIVE, FREE), None);
+        assert!(q.holder.as_ref().unwrap().woke_at.is_none());
+        assert_eq!(q.to_wake(t(3), none_live, FREE).as_deref(), Some("card-1"));
+        // Its session didn't start within the grace: its turn ends.
+        assert!(q.wake_ran_out(t(3 + WAKE_GRACE_MINUTES - 1), none_live).is_none());
+        assert!(q.clone().wake_ran_out(t(3 + WAKE_GRACE_MINUTES), ALL_LIVE).is_none(), "it came up in time");
+        let mut q2 = q.clone();
+        assert_eq!(q2.wake_ran_out(t(3 + WAKE_GRACE_MINUTES), none_live).map(|h| h.who.label), Some("#1".into()));
         // An install holder has no session to start.
         let mut i = TestAppQueue::default();
         i.take(Ask::install("router", "wave 3"), t(0), false);
