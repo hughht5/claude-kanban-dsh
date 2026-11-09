@@ -474,6 +474,34 @@ mod tests {
         assert!(kanban_app.contains("--ff-only"));
     }
 
+    /// Card #160: both ship prompts have the merge lane's step: ask with kanban_merge, and on a
+    /// PASS check the branch, reset to the lane's commit and check the range-diff before pushing.
+    #[test]
+    fn both_ship_prompts_have_the_merge_lane_step() {
+        let ship_it = include_str!("../../prompts/ship-it.md");
+        let kanban_app = include_str!("../../prompts/kanban-app.md");
+        for (name, text) in [("ship-it.md", ship_it), ("kanban-app.md", kanban_app)] {
+            let plain = text.replace(['*', '`'], "").to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(plain.contains("if the app's note says this repo ships through its merge lane"), "{name}'s lane step isn't conditional on the app's note");
+            for must in ["kanban_merge", "git range-diff", "git reset --hard", "git status --porcelain", "git rev-parse HEAD", "needs-hugh"] {
+                assert!(text.contains(must), "{name}'s lane step doesn't say {must}");
+            }
+            assert!(plain.contains("don't run the card-merger"), "{name} doesn't say to skip the card-merger for a lane");
+            assert!(plain.contains("merge lane"), "{name} doesn't name the merge lane");
+        }
+    }
+
+    /// Card #160: the lane's own rules say it never pushes and works detached, and never moves a
+    /// branch, so a FAIL leaves every branch where it was.
+    #[test]
+    fn the_merge_lane_rules_never_push_and_work_detached() {
+        let lane = include_str!("../../prompts/merge-lane.md");
+        let plain = lane.replace(['*', '`'], "");
+        for must in ["Never push", "detached", "git checkout --detach", "git branch -f", "update-ref", "kanban_merge_result"] {
+            assert!(plain.contains(must), "merge-lane.md doesn't say {must}");
+        }
+    }
+
     #[test]
     fn the_integrate_job_is_its_own_mode_and_record() {
         assert!(is_integrate("did it\nMODE: integrate\nCARD: #4\nVERDICT: PASS"));
