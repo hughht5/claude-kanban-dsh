@@ -933,5 +933,5 @@ UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 co
 | `src-tauri\src\nobrowser.rs`; `Plan.no_browser` set in `session_cmds.rs`; `settings_json` adds `permissions.deny` and `mcp_json` drops the headless chrome-devtools for this repo's cards (`sessions.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #172 commit>`, then stage the update. Sessions already running keep their settings until they restart |
 | The card-tester and card-reproducer prompts (`tester.rs`, `repro.rs`): no computer use and no browser for this repo's cards; the tester's evidence step names `hughht5/claude-kanban-dsh` too | The same revert |
 | `prompts\kanban-app.md` In progress step 6, `AGENTS.md` Hard rules, README, HANDOVER, PLAN, `src-tauri\tests\prompt_rules.rs` | The same revert |
-| The private folder's `promptskanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
+| The private folder's `prompts\kanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
 | To keep the rule but let one more repo in or out | Edit `REPOS` in `nobrowser.rs` |
