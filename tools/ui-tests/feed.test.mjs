@@ -259,3 +259,19 @@ test("a tab turns back into the session it opens", () => {
   assert.equal(F.runningKind(RUN, "tester").id, "a1", "the running tester");
   assert.equal(F.runningKind(RUN, "critic"), null, "none running: the drawer opens the latest from the feed");
 });
+
+test("the tab of what the session pane shows is marked, and only it (card #173)", () => {
+  const F = load().AgentsFeed;
+  const on = (open) => [...F.runningHtml(RUN, { now, open }).matchAll(/data-open="([^"]+)"[^>]*aria-current="true"/g)].map((m) => m[1]);
+  assert.deepEqual(on(null), [], "nothing open: no mark");
+  assert.deepEqual(on({ kind: "router" }), ["router"]);
+  assert.deepEqual(on({ kind: "lane", key: "lane:owner/old", repo: "owner/old" }), ["lane:1"]);
+  assert.deepEqual(on({ kind: "card", cardId: "card-12", num: 12 }), ["card:0"]);
+  assert.deepEqual(on({ kind: "sub", cardId: "card-12", id: "a1", type: "card-tester" }), ["agent:tester", "sub:0:0"], "a subagent: its kind's tab and its own");
+  assert.deepEqual(on({ kind: "sub", cardId: "card-12", id: "gone", type: "card-critic" }), ["agent:critic"], "a finished one: its kind's tab");
+  assert.deepEqual(on({ kind: "outside", id: "o-1" }), ["out:0"]);
+  assert.deepEqual(on({ kind: "card", cardId: "card-99" }), [], "a session not in the list: no mark");
+  const h = F.runningHtml(RUN, { now, open: { kind: "router" } });
+  assert.match(h, /class="rn-tab ag-router on" data-open="router" title="[^"]*· open now"/);
+  assert.match(F.runningHtml(RUN, { now, monitor: true, open: { kind: "router" } }), /class="rn-tab ag-monitor on"[^>]*aria-pressed="true"/, "the Monitor's own mark is kept");
+});

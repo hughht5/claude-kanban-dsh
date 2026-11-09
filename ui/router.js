@@ -189,7 +189,10 @@ function openPane(src){
   pane.busyTick=setInterval(drawBusy,1000);
   // A card panel already open moves to the left of this one.
   fitCardPanel();
+  paneChanged();
 }
+// The Agents drawer marks the tab of what this pane shows (card #173).
+function paneChanged(){try{window.dispatchEvent(new CustomEvent("session-pane"))}catch(e){}}
 // `swap`: another session opens in its place at once, so the board keeps its margin.
 function closePane(swap){
   if(!pane)return;
@@ -200,6 +203,7 @@ function closePane(swap){
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
   if(swap===true){drawButton();return}
+  paneChanged();
   document.body.classList.remove("router-open");if(!document.body.classList.contains("agents-open"))document.body.classList.remove("rpane-open");
   document.documentElement.style.removeProperty("--rpane-w"); // the board margins fall back to 380 px
   fitCardPanel();

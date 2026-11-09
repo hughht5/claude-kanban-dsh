@@ -1035,3 +1035,11 @@ PowerShell 5.1 commands. No data changes: no migration, no new setting, nothing 
 | Two read-only store queries, `card_sessions` and `own_claude_ids` (`crates\store\src\sessions.rs`, tests in `crates\store\tests\running.rs`) | Same revert. They read; nothing is written |
 | `ui\router.js` (the session pane), `ui\agents-feed.js` (Running now, the count, agent buttons), `ui\router.css`, `ui\agents-feed.css` | Same revert |
 | Docs: `docs\GUIDE.md`, `HANDOVER.md`, this section; tests in `tools\ui-tests\feed.test.mjs`, `crates\store\tests\feed.rs` | Same revert |
+
+## Card #173: the Agents drawer marks the open tab (9 Nov 2026, branch `card-173`)
+
+UI only: no data, setting or migration.
+
+| Change | Undo |
+|---|---|
+| `ui\agents-feed.js` (`openMatch`, `runningHtml`'s `open`, the `session-pane` listener), `ui\router.js` (`paneChanged`), `ui\agents-feed.css` (`.rn-tab[aria-current]`), its test in `tools\ui-tests\feed.test.mjs`, notes in `HANDOVER.md` and `docs\GUIDE.md` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #173 commit>` |

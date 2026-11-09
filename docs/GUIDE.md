@@ -1246,7 +1246,9 @@ The Agents pane keeps its feed, with the agents along its top as tabs to jump in
   **Agents** button is this list, kept current with the pane closed.
 
 Whatever you click opens in the Router's panel, the way the Router opens: its live log beside its
-chat.
+chat. The tab of what that panel shows is marked (card #173), so you can see which one you're in;
+a subagent marks its own tab and its agent's. The mark moves when you open another and goes when
+you close the panel.
 
 - **A card session:** its chat takes messages and images, its questions are answered there, and
   it has a Terminal tab. If the card's own panel already shows its terminal, the Terminal tab

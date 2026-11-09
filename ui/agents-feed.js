@@ -266,9 +266,22 @@
     return out;
   }
   const runningOf=(r,k)=>(r.cards||[]).reduce((n,c)=>n+(c.subagents||[]).filter(s=>agentOf(s.agentType)===k).length,0);
+  // Card #173: opts.open is what the session pane shows (window.sessionPaneShows()); its tab is
+  // marked (.on, aria-current), and so is the agent tab of its kind when it is a subagent.
+  function openMatch(r,open,o){
+    if(!o||!o.kind||!open)return false;const p=String(open).split(":");
+    if(p[0]==="router")return o.kind==="router";
+    if(p[0]==="lane"){const l=lanesOf(r)[+p[1]];return o.kind==="lane"&&!!l&&l.key===o.key}
+    if(p[0]==="card"){const c=(r.cards||[])[+p[1]];return o.kind==="card"&&!!c&&c.cardId===o.cardId}
+    if(p[0]==="sub"){const c=(r.cards||[])[+p[1]],s=c&&(c.subagents||[])[+p[2]];return o.kind==="sub"&&!!s&&s.id===o.id}
+    if(p[0]==="out"){const x=(r.outside||[])[+p[1]];return o.kind==="outside"&&!!x&&x.id===o.id}
+    if(p[0]==="agent")return o.kind==="sub"&&agentOf(o.type)===p[1];
+    return false;
+  }
   function runningHtml(r,opts){
-    r=r||{};const now=opts&&opts.now,monitorOn=!!(opts&&opts.monitor);
-    const tab=(open,cls,body,title,extra)=>`<button type="button" class="rn-tab ${cls}" data-open="${esc(open)}" title="${esc(title)}"${extra||""}>${body}</button>`;
+    r=r||{};const now=opts&&opts.now,monitorOn=!!(opts&&opts.monitor),shown=opts&&opts.open;
+    const tab=(open,cls,body,title,extra)=>{const on=openMatch(r,open,shown);
+      return`<button type="button" class="rn-tab ${cls}${on?" on":""}" data-open="${esc(open)}" title="${esc(title+(on?" · open now":""))}"${on?` aria-current="true"`:""}${extra||""}>${body}</button>`};
     const agents=[];
     agents.push(tab("router","ag-router",`${dot(r.router?r.router.state:"off")}Router`,r.router?`Open the Router (${STATE_WORD[r.router.state]||r.router.state})`:"Open the Router (not running)"));
     const lanes=lanesOf(r);
@@ -304,7 +317,7 @@
     return null;
   }
 
-  root.AgentsFeed={AGENTS,WORD,THROTTLE_MS,agentOf,agentWord,timeParts,textHtml,rowHtml,rowsHtml,itemKey,mergeOlder,mergeNewer,throttle,norm,sessionTarget,runningHtml,runningSource,runningKind,lanesOf};
+  root.AgentsFeed={AGENTS,WORD,THROTTLE_MS,agentOf,agentWord,timeParts,textHtml,rowHtml,rowsHtml,itemKey,mergeOlder,mergeNewer,throttle,norm,sessionTarget,runningHtml,runningSource,runningKind,lanesOf,openMatch};
   root.mountAgentsFeed=mountAgentsFeed;
 
   // The header's "Agents" drawer: a right-docked pane (rpane.css), not a <dialog>, so Human test
@@ -393,9 +406,12 @@
     const c=btn.querySelector(".rn-count"),n=running&&running.count||0;
     if(c){c.hidden=!n;c.textContent=String(n)}
     btn.title=`What runs now, and what the agents did (Ctrl+Shift+A)${n?`: ${n} running now`:""}`;
-    if(pane){const box=pane.querySelector("#ap-run"),h=runningHtml(running||{},{monitor:monitorOnly});if(box&&box.dataset.h!==h){box.innerHTML=h;box.dataset.h=h}}
+    const shows=typeof window.sessionPaneShows==="function"?window.sessionPaneShows():null;
+    if(pane){const box=pane.querySelector("#ap-run"),h=runningHtml(running||{},{monitor:monitorOnly,open:shows});if(box&&box.dataset.h!==h){box.innerHTML=h;box.dataset.h=h}}
   }
   pollRunning();
+  // The marks follow the session pane as it opens, swaps and closes (router.js, card #173).
+  window.addEventListener("session-pane",()=>drawRunning());
   let tick=0;setInterval(()=>{tick++;if(isOpen()||tick%2===0)pollRunning()},5000);
   window.addEventListener("keydown",e=>{
     if(e.key==="Escape"&&isOpen()&&!e.defaultPrevented){
