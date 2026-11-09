@@ -372,10 +372,11 @@ pub fn settings_json(p: &Plan) -> Value {
             v["statusLine"] = serde_json::json!({ "type": "command", "command": format!("\"{}\" status", kb.display()) });
         }
         v["permissions"] = serde_json::json!({ "allow": ["mcp__kanban"] });
-        if p.no_browser {
-            // A deny rule here holds the session and every subagent it runs (card #172).
-            v["permissions"]["deny"] = serde_json::json!(crate::nobrowser::deny_rules());
-        }
+    }
+    if p.no_browser {
+        // A deny rule here holds the session and every subagent it runs (card #172), with or
+        // without the app's API.
+        v["permissions"]["deny"] = serde_json::json!(crate::nobrowser::deny_rules());
     }
     v
 }
@@ -2002,6 +2003,9 @@ mod tests {
         assert_eq!(s["permissions"]["allow"], serde_json::json!(["mcp__kanban"]), "the board's tools stay allowed");
         // Another repo's card keeps its browser.
         assert!(settings_json(&api_plan(false))["permissions"].get("deny").is_none());
+        // Without the app's API too.
+        let bare = settings_json(&Plan { no_browser: true, ..plan(None) });
+        assert!(bare["permissions"]["deny"].as_array().is_some_and(|d| d.len() == crate::nobrowser::SERVERS.len()), "{bare}");
     }
 
     #[test]
