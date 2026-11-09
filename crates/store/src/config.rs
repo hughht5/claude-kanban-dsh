@@ -59,9 +59,9 @@ pub const RULE_KEYS: &[&str] = &[
     SMALL_GO_ON_KEY,
     REPRO_RULE_KEY,
     TODO_TOOLS_KEY,
-    // Card #151: the card-router's and card-merger's defaults for a new card.
+    // Card #151: the card-router's default for a new card. (The card-merger's,
+    // `sessions.merger_at_ship`, went with card #162: a saved value is ignored.)
     crate::ROUTER_RULE_KEY,
-    crate::MERGER_RULE_KEY,
     // Card #159: size a card before its session starts.
     SIZE_FIRST_KEY,
 ];
@@ -84,14 +84,13 @@ pub const PAGE_SETTINGS: &[&str] = &[
     REPRO_RULE_KEY,
     SMALL_REPOS_KEY,
     OWN_WORKTREE_REPOS_KEY,
-    // Card #160: the repos that ship through one merge lane, and the lanes' model and effort.
-    crate::lanes::MERGE_LANE_REPOS_KEY,
+    // Card #160: the merge lanes' model and effort. (Its repo list, `sessions.merge_lane_repos`,
+    // went with card #162: every repo ships through its lane, and a saved list is ignored.)
     crate::lanes::LANE_MODEL_KEY,
     crate::lanes::LANE_EFFORT_KEY,
     TODO_TOOLS_KEY,
-    // Card #151: the card-router's and card-merger's defaults for a new card.
+    // Card #151: the card-router's default for a new card.
     crate::ROUTER_RULE_KEY,
-    crate::MERGER_RULE_KEY,
     // Card #159: size a card before its session starts.
     SIZE_FIRST_KEY,
     // The Router (card #119): its model, effort and whether it may start cards.
@@ -203,8 +202,8 @@ pub fn check_own_worktree_repos(json: &str) -> Result<Vec<OwnWorktreeRepo>> {
     Ok(out)
 }
 
-/// One `{repo, checkout}` row of a repo list (the own-worktree list, card #146, and the
-/// merge-lane list, card #160), trimmed and checked: the repo `owner/name` and not in `seen`, the
+/// One `{repo, checkout}` row of a repo list (the own-worktree list, card #146), trimmed and
+/// checked: the repo `owner/name` and not in `seen`, the
 /// checkout an absolute path to a git checkout.
 pub(crate) fn check_repo_checkout(n: usize, repo: &str, checkout: &str, seen: &[&str]) -> Result<(String, String)> {
     let repo = repo.trim();
@@ -585,7 +584,6 @@ impl Store {
             },
             SMALL_REPOS_KEY => serde_json::to_string(&check_small_repos(value)?)?,
             OWN_WORKTREE_REPOS_KEY => serde_json::to_string(&check_own_worktree_repos(value)?)?,
-            crate::lanes::MERGE_LANE_REPOS_KEY => serde_json::to_string(&crate::lanes::check_merge_lane_repos(value)?)?,
             crate::lanes::LANE_MODEL_KEY => match value.trim() {
                 v if ROUTER_MODELS.contains(&v) => v.to_string(),
                 _ => return Err(Error::Invalid(format!("the merge lanes' model is one of {}", ROUTER_MODELS.join(", ")))),
@@ -658,7 +656,7 @@ pub fn page_default(key: &str) -> Result<String> {
         STUCK_CHECK_KEY => STUCK_CHECK_DEFAULT.to_string(),
         crate::STACK_RULE_KEY => "all".to_string(),
         k if RULE_KEYS.contains(&k) => "on".to_string(),
-        SMALL_REPOS_KEY | OWN_WORKTREE_REPOS_KEY | crate::lanes::MERGE_LANE_REPOS_KEY => "[]".to_string(),
+        SMALL_REPOS_KEY | OWN_WORKTREE_REPOS_KEY => "[]".to_string(),
         crate::lanes::LANE_MODEL_KEY => crate::lanes::LANE_MODEL_DEFAULT.to_string(),
         crate::lanes::LANE_EFFORT_KEY => crate::lanes::LANE_EFFORT_DEFAULT.to_string(),
         crate::router::ROUTER_MODEL_KEY => crate::router::ROUTER_MODEL_DEFAULT.to_string(),

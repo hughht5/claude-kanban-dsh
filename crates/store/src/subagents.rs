@@ -1,6 +1,6 @@
 //! Hugh's choice of the app's subagents for each card (card #151). Every card carries its own
-//! on/off for each of the six (`subagents` = `{router, critic, reviewer, tester, reproducer,
-//! merger}`), set from the board's defaults when it is made: the Settings switches, one setting
+//! on/off for each of the five (`subagents` = `{router, critic, reviewer, tester, reproducer}`),
+//! set from the board's defaults when it is made: the Settings switches, one setting
 //! each (four of them the board-wide rules they replace, so the critic stays off where Hugh had
 //! turned it off). Hugh's Add card may send its own choice; his card details change it. Card
 //! sessions, the Router and `kb` can't: the field isn't in kanban_update_card's list, and
@@ -9,9 +9,12 @@
 //!
 //! The app's holds read the card's choice (`Store::subagent_on`): the plan critique before In
 //! progress, the reviewer, tester and reproducer before Human test, a stack lead's own test and
-//! review. The router and the merger hold nothing; their sessions are told to skip them. The
-//! merger's choice is for the card's ship only: a stack's lead still merges each child with the
-//! card-merger (card #113's merge job), because the stack is ready only once they are merged.
+//! review. The router holds nothing; its session is told to skip it.
+//!
+//! Card #162: the card-merger is no longer one of them (there were six). Every ship's merge goes
+//! through its repo's merge lane (`lane.rs`); a stack's lead still merges each child with the
+//! card-merger (card #113's merge job). A card made before #162 may hold a `merger` key: it is
+//! ignored, and a choice that names it has it dropped (`RETIRED`), not refused.
 
 use crate::{Card, Error, Result, Store, CRITIC_RULE_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, TEST_RULE_KEY};
 use serde_json::{Map, Value};
@@ -21,11 +24,11 @@ pub const SUBAGENTS_KEY: &str = "subagents";
 /// The board's default for the card-router on a new card: does its session route it first in
 /// Planning? "on" (the default, as before card #151) or "off".
 pub const ROUTER_RULE_KEY: &str = "sessions.router_in_planning";
-/// The board's default for the card-merger on a new card: does its Ship it session run it before
-/// the push? "on" (the default, as before card #151) or "off".
-pub const MERGER_RULE_KEY: &str = "sessions.merger_at_ship";
+/// Keys a card or an older page may still hold that are no longer the card's subagents: the
+/// card-merger's (card #162). A choice that names one has it dropped.
+pub const RETIRED: [&str; 1] = ["merger"];
 
-/// One of the six, in the order the board shows them.
+/// One of the five, in the order the board shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Subagent {
     /// Its key in the card's `subagents`.
@@ -40,13 +43,12 @@ pub struct Subagent {
     pub skip: &'static str,
 }
 
-pub const SUBAGENTS: [Subagent; 6] = [
+pub const SUBAGENTS: [Subagent; 5] = [
     Subagent { key: "router", name: "card-router", setting: ROUTER_RULE_KEY, column: "Planning", skip: "skip the planning prompt's card-router step (route it first) and go on with the plan." },
     Subagent { key: "critic", name: "card-critic", setting: CRITIC_RULE_KEY, column: "Planning", skip: "skip the planning prompt's card-critic step. Your move to In progress isn't held for it." },
     Subagent { key: "reproducer", name: "card-reproducer", setting: REPRO_RULE_KEY, column: "In progress", skip: "don't run it. A bug report on the card is logged, and doesn't hold your move to Human test." },
     Subagent { key: "reviewer", name: "card-reviewer", setting: REVIEW_RULE_KEY, column: "In progress", skip: "skip the subagent review. Your move to Human test isn't held for it." },
     Subagent { key: "tester", name: "card-tester", setting: TEST_RULE_KEY, column: "In progress", skip: "skip the subagent test, and test it yourself. Your move to Human test isn't held for it." },
-    Subagent { key: "merger", name: "card-merger", setting: MERGER_RULE_KEY, column: "Ship it", skip: "skip the Ship it prompt's card-merger step: bring the branch up to date with origin/main yourself and run the tests before the push." },
 ];
 
 /// The subagent with this key ("tester"), or this name ("card-tester").
@@ -61,6 +63,8 @@ pub fn clean_subagents(v: &Value) -> Result<Map<String, Value>> {
     let Value::Object(m) = v else {
         return Err(Error::Invalid(format!("subagents is an object of true or false for each of {}, like {{\"tester\": false}}", keys())));
     };
+    // Card #162: a retired key from an older page is dropped, not refused.
+    let m: &Map<String, Value> = &m.iter().filter(|(k, _)| !RETIRED.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
     for (k, x) in m {
         if subagent(k).filter(|s| s.key == k).is_none() {
             return Err(Error::Invalid(format!("\"{k}\" isn't one of the subagents ({})", keys())));
@@ -131,10 +135,11 @@ mod tests {
         for bad in [json!({ "card-tester": false }), json!({ "tester": "off" }), json!({ "planner": true }), json!(null), json!(["tester"]), json!(true)] {
             assert!(clean_subagents(&bad).is_err(), "{bad}");
         }
-        assert_eq!(SUBAGENTS.iter().map(|s| s.key).collect::<Vec<_>>(), ["router", "critic", "reproducer", "reviewer", "tester", "merger"]);
-        assert_eq!(subagent("card-merger").map(|s| s.key), Some("merger"));
-        assert_eq!(subagent("merger").map(|s| s.name), Some("card-merger"));
+        assert_eq!(SUBAGENTS.iter().map(|s| s.key).collect::<Vec<_>>(), ["router", "critic", "reproducer", "reviewer", "tester"]);
         assert!(subagent("card-planner").is_none());
+        // Card #162: the card-merger is no card subagent now. An older page's `merger` is dropped.
+        assert!(subagent("card-merger").is_none() && subagent("merger").is_none());
+        assert_eq!(Value::Object(clean_subagents(&json!({ "merger": false, "tester": true })).unwrap()), json!({ "tester": true }));
     }
 
     /// The page keeps its own copy of the table, with the labels (`ui/subagents.js`): the same
@@ -148,16 +153,19 @@ mod tests {
             let i = js[at..].find(&row).unwrap_or_else(|| panic!("ui/subagents.js has no row {row} after the last one"));
             at += i + row.len();
         }
-        for (field, key) in [("test", "tester"), ("review", "reviewer"), ("critique", "critic"), ("repro", "reproducer"), ("merge", "merger")] {
+        for (field, key) in [("test", "tester"), ("review", "reviewer"), ("critique", "critic"), ("repro", "reproducer")] {
             assert!(js.contains(&format!("{field}:\"{key}\"")), "SUBAGENT_OF_CHECK lacks {field}");
         }
+        // Card #162: the page has no card-merger row.
+        assert!(!js.contains("card:\"merger\"") && !js.contains("sessions.merger_at_ship"), "ui/subagents.js still has the card-merger");
     }
 
     #[test]
     fn an_update_changes_only_the_keys_it_names() {
         let old = json!({ "router": true, "critic": false, "tester": true });
         assert_eq!(merged(Some(&old), &json!({ "tester": false })).unwrap(), json!({ "router": true, "critic": false, "tester": false }));
-        assert_eq!(merged(None, &json!({ "merger": false })).unwrap(), json!({ "merger": false }));
+        // Card #162: an old card's stored `merger` stays as it was (ignored); a new one is dropped.
+        assert_eq!(merged(Some(&json!({ "merger": true })), &json!({ "merger": false, "critic": true })).unwrap(), json!({ "merger": true, "critic": true }));
         assert!(merged(Some(&old), &json!({ "tester": 0 })).is_err());
     }
 }

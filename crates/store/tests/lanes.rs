@@ -1,9 +1,13 @@
-//! The merge lanes (card #160): their own append-only sessions, the opt-in repo list, the
-//! lanes' model and effort, and the jobs the cards' `merge` records hold.
+//! The merge lanes (cards #160, #162): their own append-only sessions, the lanes' model and
+//! effort, the jobs the cards' `merge` records hold, and card #160's repo list, which card #162
+//! made ignored (every repo ships through its lane).
 
-use kanban_store::{lane_key, lane_repo, merge_state, page_default, MergeLaneRepo, Patch, Store, LANE_EFFORT_KEY, LANE_MODEL_KEY, MERGE_KEY, MERGE_LANE_REPOS_KEY, MERGE_STATES, MERGE_WAITING, PAGE_SETTINGS};
+use kanban_store::{lane_key, lane_repo, merge_state, page_default, Patch, Store, LANE_EFFORT_KEY, LANE_MODEL_KEY, MERGE_KEY, MERGE_STATES, MERGE_WAITING, PAGE_SETTINGS};
 use rusqlite::Connection;
 use serde_json::{json, Value};
+
+/// Card #160's merge-lane repo list, gone with card #162.
+const OLD_LIST_KEY: &str = "sessions.merge_lane_repos";
 
 fn patch(v: Value) -> Patch {
     v.as_object().cloned().unwrap()
@@ -13,13 +17,6 @@ fn board() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
     let s = Store::open(dir.path().join("board.db")).unwrap();
     (dir, s)
-}
-
-/// A folder that looks like a git checkout (it has a .git), for the list's check.
-fn checkout(dir: &tempfile::TempDir, name: &str) -> String {
-    let p = dir.path().join(name);
-    std::fs::create_dir_all(p.join(".git")).unwrap();
-    p.display().to_string()
 }
 
 #[test]
@@ -103,38 +100,38 @@ fn lane_keys_are_the_repo_lower_cased() {
     assert_eq!(lane_repo("card-12"), None);
 }
 
+/// Card #162: there is no merge-lane repo list. The page can't read or set it; a board where
+/// card #160's build saved one keeps the value as it was (an older build still reads it), and
+/// nothing in this build reads it.
 #[test]
-fn the_list_is_empty_by_default_and_checked_like_the_own_worktree_list() {
+fn the_old_repo_list_is_no_setting_and_a_saved_one_is_kept_as_it_was() {
     let (dir, mut s) = board();
-    assert!(PAGE_SETTINGS.contains(&MERGE_LANE_REPOS_KEY));
-    assert_eq!(page_default(MERGE_LANE_REPOS_KEY).unwrap(), "[]");
-    assert!(s.merge_lane_repos().is_empty());
-    assert!(s.merge_lane_repo_for("acme/web").is_none());
-    let co = checkout(&dir, "repo");
-    let good = json!([{ "repo": " acme/web ", "checkout": format!(" {co}/ ") }]).to_string();
-    let stored = s.set_page_setting_by(MERGE_LANE_REPOS_KEY, &good, "Hugh (settings)").unwrap();
-    let want = vec![MergeLaneRepo { repo: "acme/web".into(), checkout: co.clone() }];
-    assert_eq!(serde_json::from_str::<Vec<MergeLaneRepo>>(&stored).unwrap(), want);
-    assert_eq!(s.merge_lane_repo_for("ACME/Web"), Some(want[0].clone()));
-    assert!(s.merge_lane_repo_for("acme/api").is_none());
-    assert!(s.merge_lane_repo_for(" ").is_none());
-    assert_eq!(s.setting_log(MERGE_LANE_REPOS_KEY, 5).unwrap().len(), 1);
-    let not_git = dir.path().join("plain");
-    std::fs::create_dir_all(&not_git).unwrap();
-    for bad in [
-        "{broken".to_string(),
-        json!([{ "repo": "web", "checkout": co }]).to_string(),
-        json!([{ "repo": "acme/web", "checkout": "relative/path" }]).to_string(),
-        json!([{ "repo": "acme/web", "checkout": not_git.display().to_string() }]).to_string(),
-        json!([{ "repo": "acme/web", "checkout": co }, { "repo": "ACME/web", "checkout": co }]).to_string(),
-        json!([{ "repo": "acme/web" }]).to_string(),
-    ] {
-        assert!(s.set_page_setting(MERGE_LANE_REPOS_KEY, &bad).is_err(), "{bad}");
-    }
-    assert_eq!(s.merge_lane_repos(), want, "a refused list keeps the saved one");
-    // A saved value that no longer parses counts as none: ships use the card-merger.
-    s.set_setting(MERGE_LANE_REPOS_KEY, "{broken").unwrap();
-    assert!(s.merge_lane_repos().is_empty());
+    assert!(!PAGE_SETTINGS.contains(&OLD_LIST_KEY));
+    assert!(page_default(OLD_LIST_KEY).is_err());
+    let co = dir.path().join("co");
+    std::fs::create_dir_all(co.join(".git")).unwrap();
+    let list = json!([{ "repo": "acme/web", "checkout": co.display().to_string() }]).to_string();
+    assert!(s.set_page_setting(OLD_LIST_KEY, &list).is_err(), "the page can't set it now");
+    // As card #160's build left it: kept, never cleared.
+    s.set_setting(OLD_LIST_KEY, &list).unwrap();
+    drop(s);
+    let s = Store::open(dir.path().join("board.db")).unwrap();
+    assert_eq!(s.setting(OLD_LIST_KEY).unwrap(), Some(list));
+    // The lanes' own settings are still the page's.
+    assert!(PAGE_SETTINGS.contains(&LANE_MODEL_KEY) && PAGE_SETTINGS.contains(&LANE_EFFORT_KEY));
+}
+
+#[test]
+fn the_lanes_seen_are_each_repos_newest_session_on_this_channel() {
+    let (_d, mut s) = board();
+    assert!(s.lanes_seen("live").unwrap().is_empty());
+    s.add_lane_session("l1", "acme/web", "c1", "live", "main", "C:/co/web/.claude/worktrees/merge-lane", "claude-opus-5-5", "high").unwrap();
+    s.add_lane_session("l2", "acme/api", "c2", "live", "main", "C:/co/api/.claude/worktrees/merge-lane", "claude-opus-5-5", "high").unwrap();
+    s.add_lane_session("l3", "Acme/Web", "c3", "live", "main", "C:/co/web/.claude/worktrees/merge-lane", "claude-opus-5-5", "low").unwrap();
+    s.add_lane_session("l4", "acme/web", "c4", "test", "main", "C:/co/web/.claude/worktrees/test-merge-lane", "claude-opus-5-5", "high").unwrap();
+    let seen: Vec<(String, String)> = s.lanes_seen("live").unwrap().into_iter().map(|l| (l.repo, l.id)).collect();
+    assert_eq!(seen, vec![("acme/api".into(), "l2".into()), ("acme/web".into(), "l3".into())]);
+    assert_eq!(s.lanes_seen("test").unwrap().iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["l4"], "a test board's lanes are its own");
 }
 
 #[test]
@@ -194,10 +191,15 @@ fn the_history_is_the_repos_last_finished_merges_newest_first() {
     let three = mk(&mut s, "three", "acme/web", json!({ "state": "passed", "at": "2026-11-09T02:00:00.000Z" }));
     mk(&mut s, "queued", "acme/web", json!({ "state": "queued", "at": "2026-11-09T04:00:00.000Z" }));
     mk(&mut s, "other", "acme/api", json!({ "state": "passed", "at": "2026-11-09T05:00:00.000Z" }));
-    let got: Vec<i64> = s.recent_merges("acme/web", 5, None).unwrap().iter().map(|c| c.number).collect();
+    let web = lane_key("acme/web");
+    let got: Vec<i64> = s.recent_merges(&web, "acme/web", 5, None).unwrap().iter().map(|c| c.number).collect();
     assert_eq!(got, vec![two.number, three.number, one.number]);
-    let got: Vec<i64> = s.recent_merges("ACME/WEB", 2, Some(&two.id)).unwrap().iter().map(|c| c.number).collect();
+    let got: Vec<i64> = s.recent_merges(&web, "ACME/WEB", 2, Some(&two.id)).unwrap().iter().map(|c| c.number).collect();
     assert_eq!(got, vec![three.number, one.number]);
+    // Card #162: a card under an old alias of the repo that merged in its lane counts too.
+    let alias = mk(&mut s, "alias", "acme/old-web", json!({ "state": "passed", "lane": web, "at": "2026-11-09T06:00:00.000Z" }));
+    let got: Vec<i64> = s.recent_merges(&web, "acme/web", 2, None).unwrap().iter().map(|c| c.number).collect();
+    assert_eq!(got, vec![alias.number, two.number]);
 }
 
 #[test]

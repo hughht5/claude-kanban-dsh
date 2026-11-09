@@ -1,6 +1,6 @@
 // Card #151: each card's own choice of the app's subagents, from the board's defaults.
 
-use kanban_store::{page_default, Card, Patch, Store, CRITIC_RULE_KEY, MERGER_RULE_KEY, PAGE_SETTINGS, REPRO_RULE_KEY, REVIEW_RULE_KEY, ROUTER_RULE_KEY, RULE_KEYS, SUBAGENTS, SUBAGENTS_KEY, TEST_RULE_KEY};
+use kanban_store::{page_default, Card, Patch, Store, CRITIC_RULE_KEY, PAGE_SETTINGS, REPRO_RULE_KEY, REVIEW_RULE_KEY, ROUTER_RULE_KEY, RULE_KEYS, SUBAGENTS, SUBAGENTS_KEY, TEST_RULE_KEY};
 use serde_json::{json, Value};
 
 fn patch(v: Value) -> Patch {
@@ -26,13 +26,11 @@ fn old_card() -> Card {
 fn a_new_card_gets_the_boards_defaults() {
     let (_d, mut s) = board();
     let c = s.create(None, patch(json!({ "title": "T" })), "test").unwrap();
-    assert_eq!(subs(&c), json!({ "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": true, "merger": true }));
+    assert_eq!(subs(&c), json!({ "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": true }));
     // Hugh's critic off (as on the live board) is the critic's default for a new card.
     s.set_page_setting(CRITIC_RULE_KEY, "off").unwrap();
-    s.set_page_setting(MERGER_RULE_KEY, "off").unwrap();
     let c2 = s.create(None, patch(json!({ "title": "T2" })), "test").unwrap();
     assert_eq!(subs(&c2)["critic"], false);
-    assert_eq!(subs(&c2)["merger"], false);
     assert_eq!(subs(&c2)["tester"], true);
     // A default changed later doesn't change a card made before it.
     assert_eq!(subs(&s.get(&c.id).unwrap())["critic"], true);
@@ -48,7 +46,7 @@ fn hughs_choice_on_add_card_wins_for_the_ones_it_names() {
     let (_d, mut s) = board();
     s.set_page_setting(CRITIC_RULE_KEY, "off").unwrap();
     let c = s.create(None, patch(json!({ "title": "T", "subagents": { "tester": false, "critic": true } })), "Hugh (board)").unwrap();
-    assert_eq!(subs(&c), json!({ "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": false, "merger": true }));
+    assert_eq!(subs(&c), json!({ "router": true, "critic": true, "reproducer": true, "reviewer": true, "tester": false }));
     // A bad choice is refused, and no card is made.
     for bad in [json!({ "card-tester": false }), json!({ "tester": "off" }), json!("tester"), json!(null)] {
         assert!(s.create(None, patch(json!({ "title": "X", "subagents": bad })), "Hugh (board)").is_err(), "{bad}");
@@ -97,7 +95,7 @@ fn a_card_made_before_card_151_follows_the_defaults() {
 #[test]
 fn the_six_defaults_are_page_settings_on_by_default() {
     let (_d, mut s) = board();
-    for key in [ROUTER_RULE_KEY, CRITIC_RULE_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, TEST_RULE_KEY, MERGER_RULE_KEY] {
+    for key in [ROUTER_RULE_KEY, CRITIC_RULE_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, TEST_RULE_KEY] {
         assert!(PAGE_SETTINGS.contains(&key) && RULE_KEYS.contains(&key), "{key}");
         assert_eq!(page_default(key).unwrap(), "on", "{key}");
         assert_eq!(s.page_setting(key).unwrap(), "on");
@@ -105,6 +103,28 @@ fn the_six_defaults_are_page_settings_on_by_default() {
         assert_eq!(s.set_page_setting_by(key, "off", "Hugh (Settings)").unwrap(), "off");
         assert_eq!(s.setting_log(key, 5).unwrap().len(), 1, "{key}: a change is logged");
     }
-    assert_eq!(SUBAGENTS.iter().map(|a| a.setting).collect::<Vec<_>>(), [ROUTER_RULE_KEY, CRITIC_RULE_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, TEST_RULE_KEY, MERGER_RULE_KEY]);
+    assert_eq!(SUBAGENTS.iter().map(|a| a.setting).collect::<Vec<_>>(), [ROUTER_RULE_KEY, CRITIC_RULE_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, TEST_RULE_KEY]);
     assert!(s.subagent_defaults().values().all(|v| v == &json!(false)));
+}
+
+/// Card #162: the card-merger's switch (`sessions.merger_at_ship`) is gone. A board that saved it
+/// keeps the value (an older build still reads it), and nothing here reads it; an old card's
+/// `merger` choice is ignored, and an older page's is dropped.
+#[test]
+fn the_card_mergers_switch_and_choice_are_gone_and_ignored() {
+    let (_d, mut s) = board();
+    let old_key = "sessions.merger_at_ship";
+    assert!(!PAGE_SETTINGS.contains(&old_key) && !RULE_KEYS.contains(&old_key));
+    assert!(s.set_page_setting(old_key, "off").is_err(), "the page can't set it now");
+    s.set_setting(old_key, "off").unwrap();
+    assert_eq!(s.setting(old_key).unwrap().as_deref(), Some("off"), "the saved value stays");
+    let c = s.create(None, patch(json!({ "title": "T", "subagents": { "merger": false, "tester": true } })), "Hugh (board)").unwrap();
+    assert!(subs(&c).get("merger").is_none(), "{}", subs(&c));
+    // A card made before #162, with the merger off: still five on, nothing about a merger.
+    let mut old = old_card();
+    old.fields.insert(SUBAGENTS_KEY.into(), json!({ "merger": false }));
+    assert!(SUBAGENTS.iter().all(|a| s.subagent_on(&old, a.key)));
+    assert!(!s.subagent_on(&old, "merger"));
+    assert!(s.subagents_off_in(&old, "Ship it").is_empty());
+    assert!(!s.subagents_of(&old).contains_key("merger"));
 }

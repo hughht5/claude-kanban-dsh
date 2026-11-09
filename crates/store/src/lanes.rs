@@ -1,17 +1,16 @@
-//! The merge lanes (card #160): one Claude Code session the app owns per listed repo, which
-//! merges that repo's ships one at a time and keeps what it learnt across them. Not a card: its
-//! sessions live in their own append-only table (migration 16), its switches are settings, and
-//! its jobs are the cards' own `merge` records (`queued`, then `running`, then a verdict), so an
-//! app restart loses nothing.
+//! The merge lanes (cards #160, #162): one Claude Code session the app owns per repo, which
+//! merges that repo's ships one at a time and keeps what it learnt across them. Every card with
+//! a branch, on every repo, ships through its repo's lane (card #162; card #160 had a Settings
+//! list of the repos that did, `sessions.merge_lane_repos`, now ignored: a board that saved it
+//! keeps the value for an older build). Not a card: its sessions live in their own append-only
+//! table (migration 16), its model and effort are settings, and its jobs are the cards' own
+//! `merge` records (`queued`, then `running`, then a verdict), so an app restart loses nothing.
 
 use crate::{cards::row_to_card, Card, Patch, Result, Store, MERGE_KEY};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// The repos whose ships go through their merge lane: a JSON list of `MergeLaneRepo`, empty (the
-/// default) for none, so nothing changes until Hugh lists a repo.
-pub const MERGE_LANE_REPOS_KEY: &str = "sessions.merge_lane_repos";
 /// The lanes' model and effort (default: card sessions' default model, effort high, as the
 /// card-merger runs).
 pub const LANE_MODEL_KEY: &str = "lanes.model";
@@ -27,8 +26,10 @@ pub const MERGE_STATES: [&str; 6] = ["queued", "running", "passed", "failed", "u
 /// The states of a job its lane still owes a verdict on.
 pub const MERGE_WAITING: [&str; 2] = ["queued", "running"];
 
-/// A repo whose ships go through its merge lane: its name as cards hold it (`owner/name`), and
-/// the checkout its lane's worktree is made in (under `.claude\worktrees`).
+/// A merge lane's place: its repo (the `owner/name` its checkout's `origin` names on GitHub,
+/// lower case: the lane's key), and the checkout its worktree is made in (under
+/// `.claude\worktrees`). The app finds it for each job (`lane::find_checkout`) and keeps it on
+/// the job's `merge` record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeLaneRepo {
     pub repo: String,
@@ -59,19 +60,6 @@ pub fn lane_key(repo: &str) -> String {
 /// The repo of a lane key, if it is one.
 pub fn lane_repo(key: &str) -> Option<&str> {
     key.strip_prefix(LANE_KEY_PREFIX).filter(|r| !r.is_empty())
-}
-
-/// Checks the merge-lane repo list as the own-worktree list is checked: each repo `owner/name`
-/// and listed once, each checkout an absolute path to a folder holding a git checkout.
-pub fn check_merge_lane_repos(json: &str) -> Result<Vec<MergeLaneRepo>> {
-    let rows: Vec<MergeLaneRepo> = serde_json::from_str(json)
-        .map_err(|e| crate::Error::Invalid(format!("the merge-lane repo list should be a list of {{repo, checkout}}: {e}")))?;
-    let mut out: Vec<MergeLaneRepo> = Vec::new();
-    for (i, r) in rows.iter().enumerate() {
-        let (repo, checkout) = crate::config::check_repo_checkout(i + 1, &r.repo, &r.checkout, &out.iter().map(|o| o.repo.as_str()).collect::<Vec<_>>())?;
-        out.push(MergeLaneRepo { repo, checkout });
-    }
-    Ok(out)
 }
 
 fn session_of(r: &rusqlite::Row) -> rusqlite::Result<LaneSession> {
@@ -138,19 +126,15 @@ impl Store {
         Ok(self.conn.query_row("SELECT repo FROM lane_sessions WHERE id = ?1", [row_id], |r| r.get(0)).optional()?)
     }
 
-    /// The repos whose ships go through their lane. A saved value that no longer parses counts
-    /// as none: their ships then use the card-merger, as before.
-    pub fn merge_lane_repos(&self) -> Vec<MergeLaneRepo> {
-        self.setting(MERGE_LANE_REPOS_KEY).ok().flatten().and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
-    }
-
-    /// The merge-lane entry for `repo` (a card's `owner/name`, any case), if Hugh listed it.
-    pub fn merge_lane_repo_for(&self, repo: &str) -> Option<MergeLaneRepo> {
-        let repo = repo.trim();
-        if repo.is_empty() {
-            return None;
-        }
-        self.merge_lane_repos().into_iter().find(|r| r.repo.eq_ignore_ascii_case(repo))
+    /// Each lane's newest session on `channel`, one per repo, by repo: the lanes that have run
+    /// here, for Settings' list of lanes (card #162).
+    pub fn lanes_seen(&self, channel: &str) -> Result<Vec<LaneSession>> {
+        let mut st = self.conn.prepare(&format!(
+            "SELECT {COLS} FROM lane_sessions WHERE channel = ?1
+             AND seq IN (SELECT MAX(seq) FROM lane_sessions WHERE channel = ?1 GROUP BY repo) ORDER BY repo"
+        ))?;
+        let rows = st.query_map([channel], session_of)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// The lanes' model and effort, from Hugh's settings.
@@ -194,17 +178,18 @@ impl Store {
         Ok(cards)
     }
 
-    /// The last `n` finished merges (passed, failed or unclear) of `repo`'s cards, newest first,
+    /// The last `n` finished merges (passed, failed or unclear) of lane `key`, or of cards whose
+    /// `repo` is `repo` (a merge from before the lane, card #162: the card-merger's), newest first,
     /// from the cards' `merge` records: the lane's history, given in every brief so it survives
     /// a compaction or a new conversation. `except` (a card id) is left out.
-    pub fn recent_merges(&self, repo: &str, n: usize, except: Option<&str>) -> Result<Vec<Card>> {
+    pub fn recent_merges(&self, key: &str, repo: &str, n: usize, except: Option<&str>) -> Result<Vec<Card>> {
         let mut st = self.conn.prepare(
-            "SELECT * FROM cards WHERE lower(json_extract(fields, '$.repo')) = ?1
-             AND json_extract(fields, '$.merge.state') IN ('passed', 'failed', 'unclear') AND id <> ?2
-             ORDER BY json_extract(fields, '$.merge.at') DESC LIMIT ?3",
+            "SELECT * FROM cards WHERE (json_extract(fields, '$.merge.lane') = ?1 OR lower(json_extract(fields, '$.repo')) = ?2)
+             AND json_extract(fields, '$.merge.state') IN ('passed', 'failed', 'unclear') AND id <> ?3
+             ORDER BY json_extract(fields, '$.merge.at') DESC LIMIT ?4",
         )?;
         let cards = st
-            .query_map(params![repo.trim().to_ascii_lowercase(), except.unwrap_or(""), n as i64], row_to_card)?
+            .query_map(params![key, repo.trim().to_ascii_lowercase(), except.unwrap_or(""), n as i64], row_to_card)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(cards)
     }

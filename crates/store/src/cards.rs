@@ -291,8 +291,10 @@ pub const RESET_ON_HUMAN_TEST: &[&str] = &[
     CHECK_SIZE_KEY,
 ];
 
-/// The card field holding the card-merger's latest report at ship (card #100): `{state, at,
-/// agentId, detail, head, origin: {before, after}}`, state "passed", "failed" or "unclear".
+/// The card field holding its latest merge: at ship its merge lane's job and verdict (cards #160,
+/// #162: `lane`, `checkout`, `base`, ... and the states in `MERGE_STATES`), or a stack child's
+/// merge by its lead's card-merger (card #100): `{state, at, agentId, detail, head, origin:
+/// {before, after}}`, state "passed", "failed" or "unclear".
 /// Only the app writes it (it isn't a session field); every move into Ship it clears it, so a
 /// report from an earlier ship never shows on a new one.
 pub const MERGE_KEY: &str = "merge";
