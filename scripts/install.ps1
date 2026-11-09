@@ -850,7 +850,16 @@ if (Get-App) {
 Write-Host "Installing into $InstallDir..."
 # /S is silent. /D sets the folder; NSIS wants it last and unquoted, even with spaces.
 $p = Start-Process -FilePath $Setup.FullName -ArgumentList '/S', "/D=$InstallDir" -Wait -PassThru
-if ($p.ExitCode -ne 0) { throw "The installer failed (exit $($p.ExitCode))" }
+# Exit 3: the app is installed, but kb.exe is still the old one, because something holds it
+# (src-tauri\windows\hooks.nsh, card #134). Say who, carry on, and exit 3 at the end.
+$KbHeld = $null
+if ($p.ExitCode -eq 3) {
+    . (Join-Path $PSScriptRoot 'kb-holders.ps1')
+    $holders = @(Get-KbHolders (Join-Path $InstallDir 'kb.exe'))
+    $who = if ($holders.Count) { $holders -join ', ' } else { 'a process Windows would not name' }
+    $KbHeld = "The app is installed, but kb.exe is still the old one: held by $who. Close those, then install again."
+    Write-Warning $KbHeld
+} elseif ($p.ExitCode -ne 0) { throw "The installer failed (exit $($p.ExitCode))" }
 if (-not (Test-Path $AppExe)) { throw "The installer finished, but $AppExe is missing" }
 
 # --- 4. kb.exe next to the app ------------------------------------------------------------
@@ -917,3 +926,5 @@ Start-Process -FilePath $AppExe -WorkingDirectory $InstallDir -ArgumentList '--b
 Write-Host 'Done.'
 if ($LockGate) { $script:LockInfo.phase = 'started'; Write-TestLock }
 } finally { Release-TestLock }
+# Said again last, where it is seen, and exit 3 so a caller can tell (card #134).
+if ($KbHeld) { Write-Warning $KbHeld; exit 3 }

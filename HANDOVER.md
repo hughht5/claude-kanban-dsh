@@ -1822,7 +1822,8 @@ proof so far is CI on GitHub's Mac runners. ACCEPTANCE.md has the list for a rea
 - **Updates:** `install.sh` (stage, the live default) leaves a ditto zip of the .app and
   `update.json`. Restart now's sh helper swaps the bundle (the old one to `update/previous.app`,
   put back if the move fails), logs every step and the exact error to `update/restart.log`, and
-  writes `update/restart-result.json`; the next start's banner says once if it failed.
+  writes `update/restart-result.json`; the next start's banner says once if it failed. Windows'
+  helper writes the same file since card #134.
 - **Bundle:** `tauri.macos.conf.json` (read by Tauri by itself), `tauri.macos.bundle.json` (kb as
   `externalBin` and `scripts/mac-kb.sh`, passed only by install.sh and CI so `cargo test` never
   needs the sidecar), `tauri.test.macos.conf.json` (test icons), `tauri.smoke.conf.json` (the
@@ -2109,9 +2110,23 @@ or any session with `kanban_router`. The decisions below are the router's after 
   live `-Now`, Restart now and every test slot (they all `!include` hooks.nsh). Uninstall also
   deletes `kb.old-*.exe` and then the emptied install folder (Tauri's own `RMDir` runs before the
   hook, while kb.exe is still there).
-- **If it can't:** when no rename works (99 copies in use, or a lock that refuses renames) the
-  installer logs a line no one sees in a silent install and the old kb.exe stays, as before.
-  Saying so loudly is card #133, with the Windows update-failed notice.
+- **If it can't (card #134):** when no rename works (99 copies in use, or a handle opened
+  without delete sharing) and writing over it fails too, or the new kb.exe didn't land and the
+  old one was put back, the old kb.exe stays and the installer exits **3** (`SetErrorLevel 3`).
+  The app itself is installed. `scripts\kb-holders.ps1` (`Get-KbHolders <path>`, the Windows
+  Restart Manager, so it finds file handles too) names the processes holding it.
+  - `install.ps1`: exit 3 doesn't throw. It warns "The app is installed, but kb.exe is still the
+    old one: held by ...", carries on and starts the app, warns again at the end, and exits 3.
+  - Restart now's Windows helper (`platform::update_helper`, which embeds kb-holders.ps1 with
+    `include_str!`) now writes `update\restart-result.json`, as the Mac helper does: UTF-8 with
+    no byte-order mark, `{ok, kind, error, at}`, before it starts the app. Exit 0 is ok; exit 3
+    is kind "kb" with the holders as `error`; any other exit, an installer that didn't start or
+    an app that didn't exit in 5 min is kind "install". A file with no kind (the Mac's) is
+    "install".
+  - `update.rs` reads it once (`last_failure`): kind "install" sets `failed` ("The last update
+    didn't install"), kind "kb" sets `kb_notice`, a bar of its own ("Updated, but kb.exe is still
+    the old version — held by ..."). OK (`update_failure_seen`) clears the one shown, the failure
+    first.
 - **Test:** `scripts\test-kb-locked.ps1 [-Channel test]` (test channels only), in your test-app
   turn. It installs three times; see its header.
 
