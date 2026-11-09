@@ -902,7 +902,8 @@ how it was built.
   low-effort session still merges at high). No `GATES` entry: there is no hold, because the push
   comes before any app call could hold it. The one-ship-per-repo lane (card #79) is unchanged.
 - **Two jobs:** "ship" (the default: the card in Ship it, steps 1 to 11) and "stack" (card #113:
-  a stack child in Human test whose test and review passed; in the lead's worktree it detaches at
+  a stack child in Human test whose test and review are met: passed, or that subagent switched
+  off for the card, as the app's own checks count it (card #176); in the lead's worktree it detaches at
   the child's head SHA, rebases onto the stack's branch and fast-forwards that branch; never the
   child's own branch, never main, never a push). A stack child's recorded merge then calls
   `merger::after_child_merge`, empty here: when #113's branch is merged it becomes the one call
@@ -2281,3 +2282,8 @@ keep the headless override.
 ## Agents drawer beside the Router panel (9 Nov 2026, card #167)
 
 UI only. With both open, the Agents drawer floats to the left of the Router panel (same top and bottom, 16 px gap) instead of lying over it, and the board and a card panel keep clear of both. The drawer has its own width, `--apane-w` (380 px); `--rpane-w` is the Router panel's. `agents-open` and `router-open` on `<body>` say which is open (`rpane-open` stays while either is), and `--pane-used` is their total, which the board's right margin and a card panel's box use. Closing one no longer removes the other's room.
+
+## Card-merger accepts a switched-off reviewer (9 Nov 2026, card #176)
+
+The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate job's step a) counts a test or review as met when that subagent is off for the card (`subagents.tester` / `subagents.reviewer` false in `kanban_get_card`), as the app's gates do. Before, a stack child with the reviewer off (the board's default since card #162) could never be merged. The lead's merge brief (`stackrun.rs`) says "(or has them switched off)".
+

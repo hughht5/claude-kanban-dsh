@@ -935,3 +935,7 @@ UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 co
 | `prompts\kanban-app.md` In progress step 6, `AGENTS.md` Hard rules, README, HANDOVER, PLAN, `src-tauri\tests\prompt_rules.rs` | The same revert |
 | The private folder's `prompts\kanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
 | To keep the rule but let one more repo in or out | Edit `REPOS` in `nobrowser.rs` |
+
+## Card #176: the card-merger accepts a switched-off reviewer (9 Nov 2026)
+
+Prompt text only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #176 commit>`, then stage the live update. Files: `src-tauri\src\merger.rs` (prompt and test), `src-tauri\src\stackrun.rs` (merge brief), `HANDOVER.md`. A lead session already running keeps the old merger prompt until it restarts.
