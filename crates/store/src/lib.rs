@@ -77,7 +77,7 @@ pub use pair::{failed_at as verdict_failed_at, hhmm, stale_passes, stamp_times, 
 pub use sessions::{SessionRow, MID_TURN, RESUME_OFFER_KEY};
 pub use ships::{ship_goes_first, ship_lane, ship_started, QUEUED as SHIP_QUEUED};
 pub use stacks::{children_reviewed as stack_children_reviewed, lead_missing, lead_missing_in_stack, merged as stack_merged, own_build as stack_own_build, OWN_BUILD_KEY as STACK_OWN_BUILD_KEY, stack_ready, stack_stage, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_HELD_KEY, STACK_RULE_KEY};
-pub use subagents::{clean_subagents, subagent, Subagent, MIGRATION_BY as UNSTAMP_BY, ROUTER_RULE_KEY, SUBAGENTS, SUBAGENTS_KEY};
+pub use subagents::{clean_subagents, subagent, Subagent, MIGRATION_BY as UNSTAMP_BY, RETIRED as RETIRED_SUBAGENTS, ROUTER_RULE_KEY, SUBAGENTS, SUBAGENTS_KEY};
 pub use flow::{clean_skip, Arrival, Whose, FLOW_FIELDS, PLAN_SKIPPED, SKIPS, SKIP_HUMAN_TEST_KEY, SKIP_HUMAN_TEST_RULE_KEY, SKIP_PLANNING_KEY, SKIP_PLANNING_RULE_KEY};
 pub use start_queue::{StartQueue, WaitingStart, DEFAULT_CAP as DEFAULT_SESSION_CAP, MAX_CAP as MAX_SESSION_CAP};
 pub use templates::{Template, TemplateInput};

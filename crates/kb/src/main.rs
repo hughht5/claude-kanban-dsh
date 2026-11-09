@@ -486,6 +486,12 @@ mod tests {
         assert_eq!(f, json!({ "skipPlanning": true, "skipHumanTest": null, "subagents": { "critic": false, "tester": true }, "summary": "s" }));
         assert_eq!(update_fields(&a(&["--subagent", "router=default"])).unwrap(), json!({ "subagents": { "router": null } }));
         assert_eq!(update_fields(&a(&["--skip-planning", "off"])).unwrap(), json!({ "skipPlanning": false }));
+        // Card #162: a retired or unknown subagent is refused with a plain message, not dropped.
+        let e = update_fields(&a(&["--subagent", "merger=off"])).unwrap_err();
+        assert!(e.contains("card-merger is no longer a card subagent") && e.contains("router, critic, reproducer, reviewer, tester"), "{e}");
+        assert!(update_fields(&a(&["--subagent", "card-merger=on"])).unwrap_err().contains("no longer"));
+        assert!(update_fields(&a(&["--subagent", "planner=off"])).unwrap_err().contains("--subagent planner: no such subagent"));
+        assert_eq!(update_fields(&a(&["--subagent", "Card-Reviewer=off"])).unwrap(), json!({ "subagents": { "reviewer": false } }));
         for bad in [&["--skip-planning", "yes"][..], &["--skip-human-test"][..], &["--subagent", "critic"][..], &["--subagent", "critic=maybe"][..]] {
             assert!(update_fields(&a(bad)).is_err(), "{bad:?}");
         }
@@ -531,6 +537,22 @@ fn on_off_default(name: &str, v: Option<&String>) -> Result<serde_json::Value, S
     }
 }
 
+/// A `--subagent` name (`critic` or `card-critic`, any case) as its card key, or why not: the
+/// card-merger is retired (the merge lane ships every card, card #162), and any other name isn't
+/// one of the card's subagents. Refused here, so a typo isn't dropped without a word.
+fn subagent_key(name: &str) -> Result<String, String> {
+    let key = name.trim().to_ascii_lowercase();
+    let key = key.trim_start_matches("card-");
+    let known: Vec<&str> = kanban_store::SUBAGENTS.iter().map(|s| s.key).collect();
+    if known.contains(&key) {
+        return Ok(key.to_string());
+    }
+    if kanban_store::RETIRED_SUBAGENTS.contains(&key) {
+        return Err(format!("--subagent {}: the card-{key} is no longer a card subagent (the merge lane merges every ship). Use one of: {}", name.trim(), known.join(", ")));
+    }
+    Err(format!("--subagent {}: no such subagent. Use one of: {}", name.trim(), known.join(", ")))
+}
+
 /// `kb update`'s fields: `--<field> <value>` pairs (see `api::fields`), and the card's flow
 /// (card #162), Hugh's alone: `--skip-planning on|off|default`, `--skip-human-test
 /// on|off|default`, and `--subagent <name>=on|off|default`, which may be given more than once.
@@ -550,7 +572,7 @@ fn update_fields(args: &[String]) -> Result<serde_json::Value, String> {
             "--subagent" => {
                 let v = it.next().ok_or("--subagent needs <name>=on|off|default, like critic=off")?;
                 let (name, value) = v.split_once('=').ok_or("--subagent needs <name>=on|off|default, like critic=off")?;
-                let key = name.trim().trim_start_matches("card-").to_string();
+                let key = subagent_key(name)?;
                 subs.insert(key, on_off_default("--subagent", Some(&value.to_string()))?);
             }
             _ => rest.push(a.clone()),
