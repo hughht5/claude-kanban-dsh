@@ -10,7 +10,7 @@
 - [The card](#the-card)
 - [0. Stop the dev stack](#0-stop-the-dev-stack)
 - [1. Commit](#1-commit)
-- [1a. Bring the branch up to date with the merger](#1a-bring-the-branch-up-to-date-with-the-merger)
+- [1a. Bring the branch up to date in the merge lane](#1a-bring-the-branch-up-to-date-in-the-merge-lane)
 - [2. Merge the PR, and prove it](#2-merge-the-pr-and-prove-it)
 - [3. Watch the deploy](#3-watch-the-deploy)
 - [4. Write the docs (commit locally, don't push yet)](#4-write-the-docs-commit-locally-dont-push-yet)
@@ -48,7 +48,8 @@ you move the lead to Deploy complete, the app moves its children with it; don't 
 
 The owner can drop a card on your card while it waits in Ship it, or before you merge. That is
 approval to ship that card in the same merge, and the app's message tells you which branch to merge
-in. Merge it into your branch first, run the checks again, and close its PR in favour of yours.
+in. Give its branch to the merge lane in step 1a (`branches`), so it goes on top of yours and the
+checks run on both, and close its PR in favour of yours.
 Then, just before step 2's merge, check `kanban_stack_list`: every card in the stack must be on your
 branch, so the whole stack ships as one merge, one push and one deploy. Once your ship has started,
 the app doesn't add cards to it. A card dropped then waits in Ship it and ships next.
@@ -74,42 +75,25 @@ with `gh run rerun <id>`.
 Commit any outstanding code the way the repo documents (including any version bump its deploy
 needs). Don't write the release docs yet.
 
-## 1a. Bring the branch up to date with the merger
+## 1a. Bring the branch up to date in the merge lane
 
-The rule: the branch is brought up to date with the latest `main` by a subagent before the push.
-If your session has the **`card-merger`** subagent (the Agent tool lists it), do these steps. If
-not, say so on the card and go on with step 2 as before.
+Every ship's merge goes through its repo's merge lane (cards #160, #162): one session the app
+owns for each repo. It rebases each ship onto the latest `main` in its own worktree, one at a
+time, and keeps what it learnt for the next. It never pushes: you do. Don't rebase or merge the
+branch yourself.
 
-1. Run the merger: the Agent tool with `subagent_type: "card-merger"`. Brief it with the card's
-   number, its worktree (`worktreePath`), its branch, and the branch of any card the owner dropped
-   on this one to ship with it. If the repo has merge rules (how to resolve a version number, a
-   changelog or other files that always conflict) or check commands (lint, typecheck, tests,
-   build), put them in the brief too, in the repo's own words from its CLAUDE.md, AGENTS.md or
-   README. The merger reads the repo's CLAUDE.md and AGENTS.md as well, but the brief is what it
-   follows first. Wait for its report; if it runs in the background, wait for it to finish. It
-   rebases the card's branch onto `origin/main`, then every other branch of the ship onto that,
-   resolves the conflicts by those rules (by default: keep both sides of a changelog, newest
-   first), and reruns the checks. It never pushes: you do. The app records its report on the card
-   (`merge`, a "Merged" chip).
-2. On **PASS**, check its `HEAD:` line is your branch's HEAD (`git rev-parse HEAD`), and that its
-   `ORIGIN:` line's two SHAs match (if they differ, something pushed while it ran: stop and report
-   `needs-hugh` with both SHAs). Then push the branch:
-   `git push --force-with-lease origin <branch>`.
-3. Then do step 2 as written, with the branch already pushed: 2a opens the PR if none is open
-   yet. In 2b, if `gh pr view <n> --json mergeable,mergeStateStatus` says `CONFLICTING` (main
-   moved again), run the merger again and push again instead of rebasing yourself. Then 2c and
-   2d as usual.
-4. On **FAIL** (or "Merge unclear" on the card), the merger has put every branch back where it
-   was. Report `needs-hugh` with `kanban_ship_result` and its reason, and stop. Don't resolve it
-   yourself and don't push.
+If the card has no branch (nothing to merge: its deliverable is data, or isn't code on a branch),
+say so on the card, skip 1a and step 2, and prove the deliverable as step 6c says.
 
-**If the app's note says this repo ships through its merge lane** (card #160), the repo's one
-merge lane does the merge instead of a card-merger in your session. Don't run the card-merger.
-
-1. Call `kanban_merge`, with `branches` (the branch of any card the owner dropped on this one),
-   `rules` (the repo's merge rules, as above) and `checks` (its check commands). Commit
-   everything first: it refuses a worktree with uncommitted work. Then end your turn. The app
-   sends you the lane's verdict.
+1. Commit everything first: `kanban_merge` refuses a worktree with uncommitted work. Then call
+   `kanban_merge`, with `branches` (the branch of any card the owner dropped on this one, in
+   order), `rules` (the repo's merge rules: how to resolve a version number, a changelog or other
+   files that always conflict, in the repo's own words from its CLAUDE.md, AGENTS.md or README)
+   and `checks` (its check commands: lint, typecheck, tests, build). Then end your turn. The app
+   sends you the lane's verdict and every line of what it changed.
+   - If `kanban_merge` refuses because it found no checkout for the repo, report `needs-hugh`
+     with its reason, and stop. Fix any other refusal it names (commit your work, set `branch`
+     or `worktreePath`) and call it again.
 2. On **PASS**, the app's message gives the lane's commit (`head`), the commit your branch was at
    (`base`) and what it rebased onto (`onto`). In your worktree:
    - `git status --porcelain` must be empty and `git rev-parse HEAD` must still be `base`.
@@ -118,19 +102,21 @@ merge lane does the merge instead of a card-merger in your session. Don't run th
    - `git range-diff <onto> <base> <head>` must show each of your commits, with only the
      conflict resolutions the lane listed. If one is missing or changed in a way it didn't list,
      report `needs-hugh` and stop.
-   - Then go on as step 2 above says for a PASS (push with `--force-with-lease`). If 2b finds the
-     PR `CONFLICTING`, call `kanban_merge` again instead of rebasing yourself.
-3. On **FAIL**, or "Merge unclear" on the card, every branch is where it was (the lane never
-   moves one). Report `needs-hugh` with its reason, and stop.
+   - Push the branch: `git push --force-with-lease origin <branch>`.
+3. Then do step 2 as written, with the branch already pushed: 2a opens the PR if none is open
+   yet. If 2b finds the PR `CONFLICTING` (main moved again), call `kanban_merge` again and do
+   this step's 2 again, instead of rebasing yourself. Then 2c and 2d as usual.
+4. On **FAIL**, or "Merge unclear" on the card, every branch is where it was (the lane never
+   moves one). Report `needs-hugh` with `kanban_ship_result` and its reason, and stop. Don't
+   resolve it yourself and don't push.
 
 ## 2. Merge the PR, and prove it
 
 a. Push the branch. If no PR is open, open one with `Closes #<n>` in the body, and put it on the
    card (`pr`).
-b. Check `gh pr view <n> --json mergeable,mergeStateStatus`. If it is `CONFLICTING`, run
-   `git fetch origin main && git rebase origin/main` and resolve the conflicts (for changelogs, keep
-   both sides, newest first). Force-push with lease, then re-run lint, tests and build: it is a
-   different tree now.
+b. Check `gh pr view <n> --json mergeable,mergeStateStatus`. If it is `CONFLICTING` (main moved
+   since the lane's merge), go back to 1a: call `kanban_merge` again, and push its commit as 1a
+   says. Don't rebase it yourself: the lane resolves the conflicts and reruns the checks.
 c. If the deploy keys off a version number, check it even when the merge is clean: another PR may
    have shipped the same version while you were building, and the merge would then deploy nothing.
 d. `gh pr merge <n> --merge`, then confirm `state` is `MERGED`: the CLI can print nothing and leave

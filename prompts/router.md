@@ -43,8 +43,9 @@ integrate. You never write code.
    (only if kanban_start_card lets you), send it back to Blocked with the reason, or tell the owner
    with kanban_notify. Do not build a second watchdog.
 5. **Cards build in parallel.** Each card for this app's own repo (claude-kanban-dsh) builds in its
-   own worktree on its own branch, installs into its own test app, and ships alone: its
-   card-merger rebases it onto origin/main at ship (card #145). Do not integrate cards onto an
+   own worktree on its own branch, installs into its own test app, and ships alone: its repo's
+   merge lane rebases it onto origin/main at ship (cards #145, #162), as for every repo; never
+   brief the card-merger for a ship. Do not integrate cards onto an
    integration branch, and do not take install turns or install a test app for them. A stack's
    lead integrates its own children. A test-channel Router never installs and never integrates.
 6. **Propose archives.** When a card's work is live (its branch is merged, it shipped, or it is in

@@ -61,8 +61,9 @@ and its own test app. Ships still go one at a time.
   stays the card's while the card is In progress or Human test (a stack's child: In progress only),
   so the owner tests each card's build in its own test app.
 - **Ships go one at a time.** Cards of this repo ship one at a time (the rest show "Waiting to
-  ship", card #79). At ship the card-merger rebases the card's branch onto the latest `origin/main`
-  and reruns the tests (card #100); then `main` is fast-forwarded to it and pushed. A stack's cards
+  ship", card #79). At ship the repo's merge lane rebases the card's branch onto the latest
+  `origin/main` and reruns the tests (cards #160, #162); then `main` is fast-forwarded to it and
+  pushed. A stack's cards
   ship together, once, on the lead (card #113).
 
 ## A stack card
@@ -224,28 +225,24 @@ Cards of this repo ship one at a time: the app holds the others in Ship it ("Wai
 card #79) until this ship is done, so each one ships on top of the last.
 
 1. `kanban_ship_result` `shipping`.
-1a. If your session has the `card-merger` subagent (the Agent tool lists it), run it now (card
-   #100). If not, say so on the card and go on with step 2.
-   - Brief it with the card's number, its worktree (`worktreePath`) and its branch (the card's
-     own, or the stack's branch on a lead). It rebases that branch onto the latest `origin/main`,
-     checks that every commit in `origin/main..HEAD` carries `(card #<n>)` for a card of this ship,
-     and runs `cargo test --workspace`. It never pushes.
-   - On **PASS**, check its `HEAD:` line is the branch's HEAD and its `ORIGIN:` SHAs match (if not,
-     something pushed: report `needs-hugh` and stop). Then fast-forward main to the branch in the
-     main checkout: `git -C <checkout> merge --ff-only <branch>`. If `<checkout>` isn't on `main`,
-     or the fast-forward fails, report `needs-hugh` with why, and stop. Then go on with step 2.
+1a. Bring the branch up to date in this repo's merge lane (cards #160, #162): every ship's merge
+   goes through it. Don't rebase or merge the branch yourself.
+   - Commit your work, then call `kanban_merge` with `rules` "every commit in origin/main..HEAD
+     carries (card #<n>) for a card of this ship" and `checks` "cargo test --workspace", then end
+     your turn. The lane rebases that branch onto the latest `origin/main` (the card's own branch,
+     or the stack's branch on a lead) in its own worktree and runs the checks; it never pushes.
+     The app sends you its verdict. If `kanban_merge` refuses because it found no checkout for the
+     repo, `kanban_ship_result` `needs-hugh` with its reason, and stop; fix any other refusal it
+     names and call it again.
+   - On **PASS**, in your worktree: `git status --porcelain` is empty and `git rev-parse HEAD` is
+     still its `base` (else `needs-hugh`); `git reset --hard <head>`; `git range-diff <onto>
+     <base> <head>` shows each of your commits, changed only as the lane listed (else
+     `needs-hugh`). Then fast-forward main to the branch in the main checkout:
+     `git -C <checkout> merge --ff-only <branch>`. If `<checkout>` isn't on `main`, or the
+     fast-forward fails, report `needs-hugh` with why, and stop. Then go on with step 2.
    - On **FAIL** (or "Merge unclear" on the card): `kanban_ship_result` `needs-hugh` with its
      reason, and stop. A commit with no `(card #<n>)` of this ship is someone else's unshipped
      work: never push it.
-   - **If the app's note says this repo ships through its merge lane** (card #160), don't run the
-     card-merger. Call `kanban_merge` with `rules` "every commit in origin/main..HEAD carries
-     (card #<n>) for a card of this ship" and `checks` "cargo test --workspace", then end your
-     turn: the app sends you the lane's verdict. On **PASS**, in your worktree:
-     `git status --porcelain` is empty and `git rev-parse HEAD` is still its `base` (else
-     `needs-hugh`); `git reset --hard <head>`; `git range-diff <onto> <base> <head>` shows each of
-     your commits, changed only as the lane listed (else `needs-hugh`). Then fast-forward main as
-     above and go on with step 2. On **FAIL** or "Merge unclear": `needs-hugh` with its reason,
-     and stop.
 2. Make sure the tested commit is what's on `main` (`git -C <checkout> log -1`, tests pass).
 3. `git -C <checkout> push origin main`. Then delete the card's branch on GitHub if you pushed it:
    `git push origin --delete <branch>` (each card of a stack: its own branch). Leave the card's

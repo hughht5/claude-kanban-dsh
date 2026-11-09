@@ -68,6 +68,8 @@ fn cards_ship_one_at_a_time_rebased_or_as_one_stack() {
     assert!(t.contains("ship one at a time"), "kanban-app.md ships one card at a time");
     assert!(t.contains("waiting to ship"), "kanban-app.md names the ship queue");
     assert!(t.contains("rebases that branch onto the latest origin/main"), "kanban-app.md rebases at ship");
+    // Card #162: in the repo's merge lane, never the card-merger.
+    assert!(t.contains("merge lane") && !t.contains("card-merger"), "kanban-app.md ships through the merge lane only");
     assert!(t.contains("merge --ff-only <branch>"), "kanban-app.md fast-forwards main to the card's branch");
     assert!(t.contains("ship together, once, on the lead"), "kanban-app.md ships a stack as one");
     // Ship it can't remove the folder its own session runs in; it logs how to.
