@@ -922,3 +922,11 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 |---|---|
 | `src-tauri\windows\hooks.nsh`: the installer deletes old `kb.old-*.exe` copies, renames kb.exe to a free `kb.old-N.exe` (N up to 99), writes the new kb.exe, then deletes the moved copy if nothing runs it (or moves it back if the write failed); uninstall also deletes `kb.old-*.exe` and the emptied folder | `git revert` the card's commit. Leftover `kb.old-N.exe` files are only old copies, in the live folder and every test slot: `Get-ChildItem "$env:USERPROFILE\Programs\Claude Kanban DSH*\kb.old-*.exe" -ErrorAction SilentlyContinue \| Remove-Item -ErrorAction SilentlyContinue` (those still in use stay) |
 | `scripts\test-kb-locked.ps1` (new) | `Remove-Item scripts\test-kb-locked.ps1 -Confirm:$false` |
+
+## Card #137: uninstall removes kb.exe and kb.old-N.exe (9 Nov 2026, branch `stack-133-137`, stack #133)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\windows\hooks.nsh` NSIS_HOOK_POSTUNINSTALL: a comment on why the kb clean-up is POST, not PRE, and a log line when a held kb.exe (and so the folder) stays | `git -C ~\claude-kanban-dsh revert --no-edit <the card #137 commit>` |
+| `src-tauri\tests\nsis_hooks.rs` (new): POSTUNINSTALL deletes kb.exe and kb.old-*.exe before its RMDir; PREUNINSTALL touches no kb file | The same revert |
+| `scripts\test-uninstall.ps1` (new): uninstalls a test app twice (plain, and with kb.exe held) and installs it again | The same revert. A test app it left uninstalled (`-LeaveUninstalled`, or a failed run): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel <its channel>` |

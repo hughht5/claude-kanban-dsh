@@ -2114,6 +2114,16 @@ or any session with `kanban_router`. The decisions below are the router's after 
   Saying so loudly is card #133, with the Windows update-failed notice.
 - **Test:** `scripts\test-kb-locked.ps1 [-Channel test]` (test channels only), in your test-app
   turn. It installs three times; see its header.
+- **Uninstall (card #137, stack #133):** the clean-up is NSIS_HOOK_POSTUNINSTALL, not PRE, on
+  purpose: Tauri runs PREUNINSTALL before its "is the app running?" check, which can abort, and a
+  kb.exe deleted there would leave the app with no `kb`. A kb.exe or kb.old-N.exe a session's
+  `kb mcp` still runs can't be deleted (and a per-user uninstall can't schedule it for a restart):
+  it and the folder stay until that session ends (a line in the uninstaller's window says so; a
+  silent uninstall shows nothing). A silent update never runs the uninstaller; a setup.exe run by
+  hand with "uninstall first" kept does, and then installs kb.exe afresh.
+  `src-tauri\tests\nsis_hooks.rs` holds the hook to that. `scripts\test-uninstall.ps1 -Channel
+  <testN>` (test channels only, in your test-app turn) uninstalls that test app twice, plain and
+  with kb.exe held, checks the folder goes and the data folder stays, and installs it again.
 
 ## Decisions taken (beyond PLAN.md)
 

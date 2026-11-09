@@ -53,9 +53,23 @@ Var KanbanKbOld
   kanban_kb_done:
 !macroend
 
+; Uninstall takes kb.exe and every kb.old-N.exe with it, then the emptied folder (card #137).
+; This is POSTUNINSTALL on purpose, not PREUNINSTALL: Tauri's uninstall section runs PREUNINSTALL
+; before its "is the app running?" check, and that check can abort (Hugh cancels "close the
+; app?", or the app can't be stopped). kb.exe deleted there would leave the app installed with
+; no `kb`. Here the app's own files are already gone. A silent update (install.ps1, Restart now)
+; never runs the uninstaller; a setup.exe run by hand whose "uninstall first" choice is kept does,
+; and its install then writes kb.exe afresh.
+; A kb.exe or kb.old-N.exe that a session's `kb mcp` still runs can't be deleted, and a per-user
+; uninstall can't schedule it for the next restart (that needs admin), so it and the folder stay
+; until those sessions end; then they can be deleted by hand. The line below shows only in the
+; uninstaller's own window, not in a silent uninstall.
 !macro NSIS_HOOK_POSTUNINSTALL
   Delete "$INSTDIR\kb.exe"
   Delete "$INSTDIR\kb.old-*.exe"
   ; Tauri's own RMDir ran before this hook, while kb.exe was still there.
   RMDir "$INSTDIR"
+  IfFileExists "$INSTDIR\*.*" 0 kanban_un_dir_gone
+    DetailPrint "kb.exe or a kb.old-N.exe is in use by a running session, so $INSTDIR stays until it ends"
+  kanban_un_dir_gone:
 !macroend
