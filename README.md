@@ -119,7 +119,7 @@ cd claude-kanban-dsh; powershell -ExecutionPolicy Bypass -File scripts\install.p
 Both install for your user only, with no admin rights. Then:
 
 1. Open **Claude Kanban DSH** from Applications or the Start menu.
-2. In **Settings › Sessions**, add your repos, or point **Private folder** at your own `repos.json` and column prompts.
+2. In **Settings › Sessions**, set a **Private folder**, then add your repos under **Repos a card can be for** (saved as that folder's `repos.json`, beside your own column prompts).
 3. Click **Add card**, describe the work, pick a repo and drop it into **Planning**.
 4. Watch it go. Answer its questions when it asks. Review it when it lands in **Human test**.
 

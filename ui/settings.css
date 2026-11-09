@@ -50,3 +50,5 @@
 .st-lrepo{font-size:13.5px;min-width:0;overflow-wrap:anywhere}
 .chip.lane-off{color:var(--muted)} .chip.lane-idle{color:var(--ok)} .chip.lane-merging{color:var(--info)}
 .chip.lane-starting{color:var(--warn);border-style:dashed} .chip.lane-down{color:var(--bad)}
+/* Card #155: the repo list rows (repo, short name, folder, Remove). */
+.st-rrow .st-rr{flex:2 1 200px}.st-rrow .st-rl{flex:1 1 110px}.st-rrow .st-rf{flex:2 1 200px}

@@ -993,7 +993,9 @@ fn main() {
             settings::get_setting_log,
             goes_on::small_opt_out,
             settings::set_setting,
-            settings::list_repos
+            settings::list_repos,
+            settings::edit_repos,
+            settings::save_repos
         ])
         .build(tauri::generate_context!())
         .expect("build the app");

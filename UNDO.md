@@ -852,3 +852,11 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test
 | `ui\colwidths.js` (the edges, the drag, the saved weights), its tag in `ui\index.html`, `.col` and `.colgrip` in `ui\board.css` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #130 commits>`. Columns go back to equal widths with a 240px floor |
 | `tools\cdp.mjs viewport`, the fake DOM's `style.setProperty`, pointer-event fields, window listeners and storage in `tools\ui-tests` | Same revert |
 | The widths you set | Stored in the board's WebView only (`localStorage` key `wb.colWeights`). Press an edge twice to reset them, or in DevTools: `localStorage.removeItem("wb.colWeights")`. A leftover key is harmless |
+
+## Repos a card can be for, in Settings (9 Nov 2026, card #155, branch `card-155`)
+
+| Change | Undo |
+|---|---|
+| Settings › Sessions › "Repos a card can be for" (`reposBox`, `ui\settings.js`, `ui\settings.css`), the `save_repos` command (`src-tauri\src\settings.rs`, `main.rs`), `private::save_repos_in` (`src-tauri\src\private.rs`), `tools\ui-tests\repos.test.mjs` and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #155 commit>`, then stage the live update. The list is then edited by hand in `repos.json` again |
+| A Save there rewrites `<private folder>\repos.json`, keeping the one before as `repos.json.bak` | `Copy-Item <private folder>\repos.json.bak <private folder>\repos.json -Force` (only the last Save is kept). In a git repo, `git -C <private folder> checkout -- repos.json` |
+

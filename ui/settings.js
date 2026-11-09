@@ -175,8 +175,9 @@ async function sessions(m){
   <div class="row"><button class="btn" id="st-psave" type="button">Save</button><span class="msg" id="st-pmsg"></span></div>`;
   m.appendChild(pbox);
   const pm=pbox.querySelector("#st-pmsg");
+  const reposDraw=await reposBox(m,pv.value); // card #155
   pbox.querySelector("#st-psave").onclick=async()=>{
-    try{const x=await invoke("set_setting",{key:"private.dir",value:pbox.querySelector("#st-priv").value});pbox.querySelector("#st-priv").value=x;note(pm,"Saved","ok")}
+    try{const x=await invoke("set_setting",{key:"private.dir",value:pbox.querySelector("#st-priv").value});pbox.querySelector("#st-priv").value=x;note(pm,"Saved","ok");await reposDraw(x)}
     catch(e){note(pm,"Not saved: "+errText(e),"err")}};
   // Pausing idle sessions, as Kangentic does.
   const p=await invoke("get_setting",{key:"sessions.idle_pause_minutes"});
@@ -217,6 +218,42 @@ async function sessions(m){
   await smallReposBox(m);
   await ownWorktreeBox(m); // card #146
   await mergeLaneBox(m); // card #160
+}
+
+// Card #155: the repos a card can be for (Add card's Repo list), kept in the private folder's
+// repos.json. Rows of repo, label and folder; Save writes the file (the app keeps each repo's
+// other fields, such as loginDirs, and the old file as repos.json.bak). Returns a redraw for the
+// private folder's Save, given the folder as saved.
+async function reposBox(m,dir){
+  const b=document.createElement("div");b.className="st-box st-repos";m.appendChild(b);
+  let rows=[],loadErr="";
+  const row=(r,i)=>`<div class="row st-rrow" data-i="${i}"><input class="tx st-rr" placeholder="owner/name" value="${esc(r.repo||"")}" aria-label="Repo">
+    <input class="tx st-rl" placeholder="Short name" value="${esc(r.label||"")}" aria-label="Short name">
+    <input class="tx st-rf" placeholder="~\\folder (empty: home)" value="${esc(r.folder||"")}" aria-label="Folder its sessions start in">
+    <button class="btn ghost st-rx" type="button">Remove</button></div>`;
+  // Each row keeps `was`, the name it was loaded with, so a renamed repo keeps its loginDirs.
+  const read=()=>{rows=[...b.querySelectorAll(".st-rrow")].map(d=>{const r={repo:d.querySelector(".st-rr").value.trim(),label:d.querySelector(".st-rl").value.trim(),folder:d.querySelector(".st-rf").value.trim()};
+    const was=(rows[+d.dataset.i]||{}).was;if(was)r.was=was;return r})};
+  function draw(msgText,kind){
+    const none=!String(dir||"").trim();
+    b.innerHTML=`<p class="st-radio"><b>Repos a card can be for</b></p>
+    <p class="meta">The Repo list on Add card. Each repo has a short name (shown on its cards; empty: the part after the /) and the folder its card sessions start in (<code>~</code> is your home folder; empty starts them there). Saved as <code>repos.json</code> in the private folder above; anything else a repo has there, such as <code>loginDirs</code>, is kept, and the file before your last change as <code>repos.json.bak</code>. Removing a repo leaves the cards already on it as they are, but their sessions then start in your home folder. This app's own repo is always in the list.</p>
+    ${none?`<p class="meta">Set a private folder above first: the list is kept there.</p>`:
+      loadErr?`<p class="meta err" id="st-rmsg">Couldn't read the list: ${esc(loadErr)}</p>`:
+      (rows.map(row).join("")||`<p class="meta">No repos: Add card offers this app's repo and Other.</p>`)+
+      `<div class="row"><button class="btn ghost" id="st-radd" type="button">Add a repo</button><button class="btn" id="st-rsave" type="button">Save</button><span class="msg" id="st-rmsg"></span></div>`}`;
+    if(none||loadErr)return; // no Save over a file it couldn't read
+    const msg=b.querySelector("#st-rmsg");
+    if(msgText)note(msg,msgText,kind);
+    b.querySelectorAll(".st-rx").forEach(x=>x.onclick=()=>{read();rows.splice(+x.closest(".st-rrow").dataset.i,1);draw()});
+    b.querySelector("#st-radd").onclick=()=>{read();rows.push({repo:"",label:"",folder:""});draw();const r=b.querySelectorAll(".st-rr");try{r[r.length-1].focus()}catch(e){}};
+    b.querySelector("#st-rsave").onclick=async()=>{read(); // the app checks each owner/name
+      try{const x=await invoke("save_repos",{repos:rows});rows=Array.isArray(x)?x:[];draw("Saved","ok")}
+      catch(e){note(msg,"Not saved: "+errText(e),"err")}};
+  }
+  const load=async d=>{dir=d;loadErr="";if(String(d||"").trim()){try{const x=await invoke("edit_repos");rows=Array.isArray(x)?x:[]}catch(e){rows=[];loadErr=errText(e)}}draw()};
+  await load(dir);
+  return load;
 }
 
 // Card #146: the repos whose cards each build in their own git worktree, which the app makes

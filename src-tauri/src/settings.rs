@@ -106,6 +106,20 @@ pub fn list_repos() -> CmdResult<Vec<crate::private::Repo>> {
     Ok(crate::private::repos())
 }
 
+/// The repo list as Settings › Sessions edits it (card #155): names, labels and folders as written,
+/// refused when `repos.json` can't be read, so a Save never drops what wasn't shown.
+#[tauri::command]
+pub fn edit_repos() -> CmdResult<Vec<crate::private::RepoEdit>> {
+    crate::private::edit_rows().map_err(CmdError::other)
+}
+
+/// Saves the repo list (Settings, card #155) as the private folder's `repos.json` and returns it
+/// as `edit_repos` would. The Add card dropdown reads the file each time it opens.
+#[tauri::command]
+pub fn save_repos(repos: Vec<crate::private::RepoEdit>) -> CmdResult<Vec<crate::private::RepoEdit>> {
+    crate::private::save_repos(&repos).map_err(CmdError::other)
+}
+
 /// The latest changes of an allow-listed setting, newest first (card #104).
 #[tauri::command]
 pub fn get_setting_log(board: State<Board>, key: String, limit: Option<usize>) -> CmdResult<Value> {

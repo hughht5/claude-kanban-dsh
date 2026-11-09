@@ -109,6 +109,13 @@ Empty uses the bundled examples.
   (optional) lists the repo's top-level folders whose changes need a signed-in user to check. Without a
   `repos.json` the list is empty.
 
+  You needn't edit the file by hand: Settings › Sessions › **Repos a card can be for**, just
+  under the private folder, lists each repo with its short name and folder. Add a repo, change
+  one or Remove one, then **Save**: the app writes `repos.json` (the old one is kept as
+  `repos.json.bak`), keeps each repo's `loginDirs` as they were, and the Add card list has the
+  change the next time it opens. Cards already on a removed repo keep it; their sessions then
+  start in your home folder. If your private folder is a git repo, commit the change there.
+
 To start, copy the bundled `prompts\` into your private folder and tailor them to your repos.
 
 ## Stacked cards

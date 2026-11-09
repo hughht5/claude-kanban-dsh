@@ -115,9 +115,254 @@ pub fn repo_folder_in(list: &[Repo], repo: Option<&str>, home: &Path) -> PathBuf
         .unwrap_or_else(|| home.to_path_buf())
 }
 
+/// One row of Settings' repo list (card #155): what Hugh can change there. Everything else a
+/// repo has in `repos.json` (`loginDirs`, any field a later build adds) is kept as it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoEdit {
+    pub repo: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub folder: String,
+    /// The repo's name as it was loaded, so a renamed row keeps its other fields. None: a new row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub was: Option<String>,
+}
+
+/// `owner/name`: one slash, each part of letters, digits, `-`, `_` or `.`, as GitHub allows.
+fn valid_repo(r: &str) -> bool {
+    let ok = |p: &str| !p.is_empty() && p != "." && p != ".." && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    matches!(r.split_once('/'), Some((o, n)) if ok(o) && ok(n))
+}
+
+/// A value as one line, the way `repos.json` is written by hand: `{ "a": 1, "b": ["x", "y"] }`.
+fn one_line(v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) if m.is_empty() => "{}".into(),
+        Value::Object(m) => format!(
+            "{{ {} }}",
+            m.iter().map(|(k, v)| format!("{}: {}", Value::String(k.clone()), one_line(v))).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Array(a) => format!("[{}]", a.iter().map(one_line).collect::<Vec<_>>().join(", ")),
+        other => other.to_string(),
+    }
+}
+
+/// The file's entries, each checked as `repos_in` reads it, so Settings never shows an empty list
+/// for a file it couldn't read (and a Save then never drops what it couldn't show).
+fn strict_entries(text: Option<&str>) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, String> {
+    use serde_json::Value;
+    let Some(t) = text.map(str::trim).filter(|t| !t.is_empty()) else { return Ok(Vec::new()) };
+    let bad = |e: String| format!("repos.json can't be read ({e}): fix it by hand first");
+    let list = serde_json::from_str::<Vec<Value>>(t).map_err(|e| bad(e.to_string()))?;
+    list.into_iter()
+        .map(|v| {
+            serde_json::from_value::<Repo>(v.clone()).map_err(|e| bad(e.to_string()))?;
+            match v {
+                Value::Object(m) => Ok(m),
+                _ => Err(bad("an entry isn't an object".into())),
+            }
+        })
+        .collect()
+}
+
+/// The repo list as Settings edits it (card #155): each named repo's name, label and folder as
+/// written (no label filled in), in file order. Refused when the file can't be read.
+pub fn edit_rows_in(dir: &Path) -> Result<Vec<RepoEdit>, String> {
+    let text = std::fs::read_to_string(dir.join("repos.json")).ok();
+    let s = |m: &serde_json::Map<String, serde_json::Value>, k: &str| m.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    Ok(strict_entries(text.as_deref())?
+        .iter()
+        .filter(|m| !s(m, "repo").is_empty())
+        .map(|m| RepoEdit { repo: s(m, "repo"), label: s(m, "label"), folder: s(m, "folder"), was: Some(s(m, "repo")) })
+        .collect())
+}
+
+/// Writes `repos` as the private folder's `repos.json`, in their order (card #155). Each row is
+/// checked (an `owner/name`, no repo twice); a repo already in the file keeps its other fields (a
+/// loaded row is matched by the name it was loaded with, so a rename keeps them too); a row's empty
+/// label or folder is left out (the repo's name, the home folder). An entry with no repo name
+/// (Settings never shows one) is kept at the end. A changed file's old text is kept as
+/// `repos.json.bak`, and the new one is written whole before it replaces the old. A file that
+/// can't be read is refused, so nothing in it is lost. Returns the list as `edit_rows_in` reads it.
+pub fn save_repos_in(dir: &Path, repos: &[RepoEdit]) -> Result<Vec<RepoEdit>, String> {
+    use serde_json::{Map, Value};
+    if !dir.is_dir() {
+        return Err(format!("the private folder {} isn't there", dir.display()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for r in repos {
+        let name = r.repo.trim();
+        if !valid_repo(name) {
+            return Err(format!("\"{name}\" isn't a repo: give it as owner/name"));
+        }
+        if !seen.insert(name.to_ascii_lowercase()) {
+            return Err(format!("{name} is listed twice"));
+        }
+        if r.label.contains(['\r', '\n']) || r.folder.contains(['\r', '\n']) {
+            return Err(format!("{name}: a label or folder is one line"));
+        }
+    }
+    let file = dir.join("repos.json");
+    let old_text = std::fs::read_to_string(&file).ok();
+    let old = strict_entries(old_text.as_deref())?;
+    let name_of = |o: &Map<String, Value>| o.get("repo").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let mut rows: Vec<Map<String, Value>> = repos
+        .iter()
+        .map(|r| {
+            let name = r.repo.trim();
+            let key = r.was.as_deref().map(str::trim).unwrap_or(name);
+            let mut m = old.iter().find(|o| name_of(o).eq_ignore_ascii_case(key)).cloned().unwrap_or_default();
+            m.insert("repo".into(), Value::String(name.into()));
+            for (key, val) in [("folder", r.folder.trim()), ("label", r.label.trim())] {
+                if val.is_empty() {
+                    m.remove(key);
+                } else {
+                    m.insert(key.into(), Value::String(val.into()));
+                }
+            }
+            m
+        })
+        .collect();
+    rows.extend(old.iter().filter(|o| name_of(o).is_empty()).cloned());
+    // Each row's known fields first, in the order the file has always had, then any others.
+    const FIRST: [&str; 4] = ["repo", "folder", "label", "loginDirs"];
+    let row_text = |m: &Map<String, Value>| {
+        let keys = FIRST.iter().copied().filter(|k| m.contains_key(*k)).chain(m.keys().map(String::as_str).filter(|k| !FIRST.contains(k)));
+        format!("  {{ {} }}", keys.map(|k| format!("{}: {}", Value::String(k.into()), one_line(&m[k]))).collect::<Vec<_>>().join(", "))
+    };
+    let text = if rows.is_empty() {
+        "[]\n".to_string()
+    } else {
+        format!("[\n{}\n]\n", rows.iter().map(row_text).collect::<Vec<_>>().join(",\n"))
+    };
+    // Unchanged: nothing is written, so the .bak still holds the file before the last real change.
+    if old_text.as_deref() != Some(text.as_str()) {
+        let tmp = dir.join("repos.json.tmp");
+        std::fs::write(&tmp, &text).map_err(|e| format!("couldn't write repos.json: {e}"))?;
+        let done = match &old_text {
+            Some(t) => std::fs::write(dir.join("repos.json.bak"), t).map_err(|e| format!("couldn't keep the old repos.json: {e}")),
+            None => Ok(()),
+        }
+        .and_then(|_| std::fs::rename(&tmp, &file).map_err(|e| format!("couldn't replace repos.json: {e}")));
+        if let Err(e) = done {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    }
+    edit_rows_in(dir)
+}
+
+fn need_dir() -> Result<PathBuf, String> {
+    dir().ok_or_else(|| "set a private folder first: the repo list is kept in its repos.json".to_string())
+}
+
+/// The repo list for Settings (card #155); refused with no private folder set.
+pub fn edit_rows() -> Result<Vec<RepoEdit>, String> {
+    edit_rows_in(&need_dir()?)
+}
+
+/// Saves the repo list in the private folder (card #155); refused with none set.
+pub fn save_repos(repos: &[RepoEdit]) -> Result<Vec<RepoEdit>, String> {
+    save_repos_in(&need_dir()?, repos)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edit(repo: &str, label: &str, folder: &str) -> RepoEdit {
+        RepoEdit { repo: repo.into(), label: label.into(), folder: folder.into(), was: None }
+    }
+
+    #[test]
+    fn saving_repos_adds_removes_and_keeps_other_fields() {
+        let t = tempfile::tempdir().unwrap();
+        let old = "[\n  { \"repo\": \"acme/web\", \"folder\": \"~/web\", \"label\": \"web\", \"loginDirs\": [\"server\", \"frontends\"], \"extra\": 1 },\n  { \"repo\": \"acme/docs\", \"label\": \"Docs\" }\n]\n";
+        std::fs::write(t.path().join("repos.json"), old).unwrap();
+        // Remove acme/docs, rename acme/web's label (given in another case), add acme/new.
+        let rows = save_repos_in(t.path(), &[edit("ACME/Web", " Web app ", "~/web"), edit("acme/new", "", "")]).unwrap();
+        // As Settings shows it: no label filled in.
+        assert_eq!(rows[1], RepoEdit { repo: "acme/new".into(), label: "".into(), folder: "".into(), was: Some("acme/new".into()) });
+        let list = repos_in(Some(t.path()));
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].repo, "ACME/Web");
+        assert_eq!(list[0].label, "Web app");
+        assert_eq!(list[0].login_dirs, vec!["server".to_string(), "frontends".to_string()]);
+        assert_eq!(list[1].repo, "acme/new");
+        assert_eq!(list[1].label, "new");
+        let text = std::fs::read_to_string(t.path().join("repos.json")).unwrap();
+        assert_eq!(
+            text,
+            "[\n  { \"repo\": \"ACME/Web\", \"folder\": \"~/web\", \"label\": \"Web app\", \"loginDirs\": [\"server\", \"frontends\"], \"extra\": 1 },\n  { \"repo\": \"acme/new\" }\n]\n"
+        );
+        // The old file is kept, and no temporary file is left.
+        assert_eq!(std::fs::read_to_string(t.path().join("repos.json.bak")).unwrap(), old);
+        assert!(!t.path().join("repos.json.tmp").exists());
+        // Saving the same list again writes nothing, so the .bak still holds the file before it.
+        assert_eq!(save_repos_in(t.path(), &rows).unwrap(), rows);
+        assert_eq!(std::fs::read_to_string(t.path().join("repos.json.bak")).unwrap(), old);
+        // A renamed row keeps its other fields: it is matched by the name it was loaded with.
+        let mut renamed = rows.clone();
+        renamed[0].repo = "acme/website".into();
+        save_repos_in(t.path(), &renamed).unwrap();
+        let list = repos_in(Some(t.path()));
+        assert_eq!(list[0].repo, "acme/website");
+        assert_eq!(list[0].login_dirs, vec!["server".to_string(), "frontends".to_string()]);
+        // Removing every repo leaves an empty list, which lists none.
+        assert!(save_repos_in(t.path(), &[]).unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(t.path().join("repos.json")).unwrap(), "[]\n");
+    }
+
+    #[test]
+    fn an_entry_with_no_repo_name_is_kept() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("repos.json"), r#"[{ "repo": "", "note": "spare" }, { "repo": "a/b" }]"#).unwrap();
+        assert_eq!(edit_rows_in(t.path()).unwrap().len(), 1);
+        save_repos_in(t.path(), &[edit("a/c", "", "")]).unwrap();
+        assert_eq!(std::fs::read_to_string(t.path().join("repos.json")).unwrap(), "[\n  { \"repo\": \"a/c\" },\n  { \"repo\": \"\", \"note\": \"spare\" }\n]\n");
+    }
+
+    #[test]
+    fn saving_repos_with_no_file_makes_one() {
+        let t = tempfile::tempdir().unwrap();
+        save_repos_in(t.path(), &[edit("me/app", "App", "~\\app")]).unwrap();
+        let list = repos_in(Some(t.path()));
+        assert_eq!(list[0].folder, "~\\app");
+        assert!(!t.path().join("repos.json.bak").exists());
+        let h = Path::new(r"C:\Users\u");
+        assert_eq!(repo_folder_in(&list, Some("me/app"), h), h.join("app"));
+    }
+
+    #[test]
+    fn saving_repos_refuses_bad_rows_and_changes_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let old = r#"[{ "repo": "acme/web" }]"#;
+        std::fs::write(t.path().join("repos.json"), old).unwrap();
+        for bad in [
+            vec![edit("acme", "", "")],
+            vec![edit("acme/web/x", "", "")],
+            vec![edit("ac me/web", "", "")],
+            vec![edit("acme/..", "", "")],
+            vec![edit("", "", "")],
+            vec![edit("acme/web", "", ""), edit("Acme/WEB", "", "")],
+            vec![edit("acme/web", "a\nb", "")],
+        ] {
+            assert!(save_repos_in(t.path(), &bad).is_err(), "{:?}", bad.iter().map(|r| &r.repo).collect::<Vec<_>>());
+        }
+        assert_eq!(std::fs::read_to_string(t.path().join("repos.json")).unwrap(), old);
+        // A file the board can't read is neither shown nor overwritten: not a list, an entry that
+        // isn't an object, a null label, a loginDirs that isn't a list, an entry with no repo.
+        for text in ["not json", r#"["acme/web"]"#, r#"[{ "repo": "a/b", "label": null }]"#, r#"[{ "repo": "a/b", "loginDirs": "server" }]"#, r#"[{ "label": "x" }]"#] {
+            std::fs::write(t.path().join("repos.json"), text).unwrap();
+            assert!(edit_rows_in(t.path()).unwrap_err().contains("fix it by hand"), "{text}");
+            assert!(save_repos_in(t.path(), &[edit("acme/web", "", "")]).unwrap_err().contains("fix it by hand"), "{text}");
+            assert_eq!(std::fs::read_to_string(t.path().join("repos.json")).unwrap(), text);
+        }
+        // Nor is a folder that isn't there written.
+        assert!(save_repos_in(&t.path().join("gone"), &[]).is_err());
+    }
 
     #[test]
     fn tilde_expands_under_home() {
