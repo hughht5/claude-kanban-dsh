@@ -20,7 +20,7 @@ use crate::sessions::{self, Sessions};
 use crate::Board;
 use kanban_store::{Card, Patch, Store};
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -225,10 +225,7 @@ pub fn record(store: &mut Store, card_id: &str, text: &str) -> Result<Card, Stri
     let card = store.get(card_id).map_err(|e| e.to_string())?;
     let done = router::record_with(store, &card, text, AGENT_ID, true).filter(|c| c.id == card.id && router::route_of(c).is_some());
     match done {
-        Some(c) => {
-            clear(store, card_id);
-            store.get(card_id).map_err(|e| e.to_string()).or(Ok(c))
-        }
+        Some(c) => Ok(c),
         None => {
             clear(store, card_id);
             Err("its reply had no route the app could record (see the line above)".into())
@@ -281,6 +278,46 @@ fn end_flight(card_id: &str) {
     }
 }
 
+/// Ends the card's flight however its thread ends (a panic too), so a card can't be held for
+/// ever.
+struct Flight(String);
+impl Drop for Flight {
+    fn drop(&mut self) {
+        end_flight(&self.0);
+    }
+}
+
+/// The most sizing calls that run at once; the rest wait their turn.
+pub const MAX_CALLS: usize = 3;
+static CALLS: (std::sync::Mutex<usize>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+/// A place among the `MAX_CALLS`, given back when dropped.
+struct Slot;
+impl Slot {
+    fn take() -> Slot {
+        let (m, cv) = &CALLS;
+        if let Ok(mut n) = m.lock() {
+            while *n >= MAX_CALLS {
+                match cv.wait(n) {
+                    Ok(g) => n = g,
+                    Err(_) => return Slot,
+                }
+            }
+            *n += 1;
+        }
+        Slot
+    }
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let (m, cv) = &CALLS;
+        if let Ok(mut n) = m.lock() {
+            *n = n.saturating_sub(1);
+        }
+        cv.notify_one();
+    }
+}
+
 /// `begin_session`'s first step: true when this start waits for the card's sizing (one already
 /// under way, or one it starts now), false when the session starts as before.
 pub fn hold(app: &AppHandle, store: &mut Store, card: &Card, mode: &str, why: &str) -> bool {
@@ -319,13 +356,8 @@ fn inputs(store: &Store, card: &Card) -> Result<Inputs, String> {
     let exe = sessions::claude_exe().ok_or("claude.exe wasn't found on this machine")?;
     let account = crate::conversation(store, card).map(|c| c.1).unwrap_or_else(|| crate::dispatch::pick_account(store, card).0);
     let env = sessions::build_env(std::env::vars(), &account, card.number, false);
-    let folder = card
-        .fields
-        .get("worktreePath")
-        .and_then(Value::as_str)
-        .filter(|p| Path::new(p).is_dir())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| sessions::repo_folder(card.fields.get("repo").and_then(Value::as_str)));
+    // Where the session will run: Hugh's start's rule (`routertools::start_folder`).
+    let folder = PathBuf::from(crate::routertools::start_folder(card.fields.get("worktreePath").and_then(Value::as_str), card.fields.get("repo").and_then(Value::as_str)));
     let home = kanban_store::home_var();
     let checkout = (folder.is_dir() && home.as_deref() != Some(folder.as_path())).then_some(folder);
     let cwd = match &checkout {
@@ -352,47 +384,70 @@ fn call(live: &Sessions, i: &Inputs) -> Result<String, String> {
         .current_dir(&i.cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .no_window();
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start claude: {e}"))?;
     let _ = live.adopt(child.id());
+    // Written from its own thread, so a claude that never reads it can't hold this one past
+    // the timeout.
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(i.brief.as_bytes());
+        let brief = i.brief.clone();
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(brief.as_bytes());
+        });
     }
     let mut out = child.stdout.take().ok_or("no output from claude")?;
+    let mut err = child.stderr.take();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut s = String::new();
         let _ = out.read_to_string(&mut s);
         let _ = tx.send(s);
     });
+    let (etx, erx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(e) = err.as_mut() {
+            let _ = e.read_to_string(&mut s);
+        }
+        let _ = etx.send(s);
+    });
     let got = rx.recv_timeout(TIMEOUT);
     let _ = child.kill();
     let _ = child.wait();
+    let stderr = erx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
     match got {
-        Ok(s) => read_output(&s),
+        Ok(s) => read_output(&s).map_err(|why| with_stderr(why, &stderr)),
         Err(_) => Err(format!("no answer after {} minutes", TIMEOUT.as_secs() / 60)),
     }
 }
 
-/// The sizing thread: the call (no lock held), the route on the card, then the start.
+/// A failure's reason, with what claude wrote to stderr (masked, cut short) when it wrote any.
+pub fn with_stderr(why: String, stderr: &str) -> String {
+    let e: String = kanban_store::mask_secrets(stderr.trim()).chars().take(300).collect();
+    if e.is_empty() {
+        why
+    } else {
+        format!("{why} (claude said: {e})")
+    }
+}
+
+/// The sizing thread: the call (no lock held, one of `MAX_CALLS`), the route on the card, then
+/// the start.
 fn run_and_start(app: &AppHandle, card_id: &str, mode: &str, why: &str) {
+    let _flight = Flight(card_id.to_string());
     let live = app.state::<Arc<Sessions>>().inner().clone();
+    let slot = Slot::take();
     let started = Instant::now();
     let prep = {
         let board = app.state::<Board>();
-        let Ok(store) = board.0.lock() else {
-            end_flight(card_id);
-            return;
-        };
+        let Ok(store) = board.0.lock() else { return };
         store.get(card_id).map_err(|e| e.to_string()).and_then(|c| inputs(&store, &c))
     };
     let reply = prep.and_then(|i| call(&live, &i));
+    drop(slot);
     let board = app.state::<Board>();
-    let Ok(mut store) = board.0.lock() else {
-        end_flight(card_id);
-        return;
-    };
+    let Ok(mut store) = board.0.lock() else { return };
     let secs = started.elapsed().as_secs();
     let routed = match reply.and_then(|text| record(&mut store, card_id, &text)) {
         Ok(c) => {
@@ -416,17 +471,8 @@ fn run_and_start(app: &AppHandle, card_id: &str, mode: &str, why: &str) {
 /// unless the card was archived, moved to a column that stops sessions, or has a session now.
 fn start_after(app: &AppHandle, live: &Sessions, store: &mut Store, card_id: &str, mode: &str, why: &str, routed: bool) {
     let Ok(card) = store.get(card_id) else { return };
-    let suspends = store.column(&card.column).ok().flatten().map_or(false, |c| c.on_enter == "suspend");
-    let skip = if card.archived {
-        Some("it was archived")
-    } else if suspends {
-        Some("it moved to a column that stops sessions")
-    } else if live.is_live(card_id).is_some() {
-        Some("it already has a session")
-    } else {
-        None
-    };
-    if let Some(s) = skip {
+    let (suspends, spawns) = column_rules(store, &card);
+    if let Some(s) = start_skip(&card, why, suspends, spawns, live.is_live(card_id).is_some()) {
         let _ = store.add_log(card_id, &format!("Didn't start its session after the sizing: {s}"), BY);
         return;
     }
@@ -439,14 +485,45 @@ fn start_after(app: &AppHandle, live: &Sessions, store: &mut Store, card_id: &st
     }
 }
 
+/// Whether the card's column stops sessions, and whether it starts them on a move.
+fn column_rules(store: &Store, card: &Card) -> (bool, bool) {
+    store.column(&card.column).ok().flatten().map_or((false, false), |c| (c.on_enter == "suspend", c.auto_spawn))
+}
+
+/// Why a start the sizing held no longer goes ahead, or None when it does: the card was
+/// archived, moved to a column that stops sessions or out of Planning and In progress, or (a
+/// start that wasn't Hugh's own click) is in a column that doesn't start sessions, or it has a
+/// session.
+pub fn start_skip(card: &Card, why: &str, suspends: bool, spawns: bool, live: bool) -> Option<&'static str> {
+    if card.archived {
+        Some("it was archived")
+    } else if suspends {
+        Some("it moved to a column that stops sessions")
+    } else if !router::ROUTED_COLUMNS.contains(&card.column.as_str()) {
+        Some("it moved out of Planning and In progress")
+    } else if why != "hugh" && !spawns {
+        Some("it is in a column that doesn't start sessions")
+    } else if live {
+        Some("it already has a session")
+    } else {
+        None
+    }
+}
+
 /// At start-up: a card still marked as being sized (the app quit during its call) is sized
-/// again, then started, by the start it waited for.
+/// again, then started, by the start it waited for, if that start still goes ahead.
 pub fn resume_at_start(app: &AppHandle) {
+    let live = app.state::<Arc<Sessions>>().inner().clone();
     let board = app.state::<Board>();
     let Ok(mut store) = board.0.lock() else { return };
     for (card, mode, why) in pending(&store) {
         clear(&mut store, &card.id);
         let Ok(card) = store.get(&card.id) else { continue };
+        let (suspends, spawns) = column_rules(&store, &card);
+        if let Some(s) = start_skip(&card, &why, suspends, spawns, live.is_live(&card.id).is_some()) {
+            let _ = store.add_log(&card.id, &format!("The app restarted while it was sizing this card; not started again: {s}"), BY);
+            continue;
+        }
         let _ = store.add_log(&card.id, "The app restarted while it was sizing this card: sizing it again", BY);
         if let Err(e) = crate::begin_session(app, &mut store, &card, &mode, &why) {
             let _ = store.add_log(&card.id, &format!("Couldn't start a session: {e}"), "the app");
@@ -607,12 +684,56 @@ mod tests {
     }
 
     #[test]
+    fn a_held_start_goes_ahead_only_where_a_session_may_start() {
+        let (_d, mut s) = board();
+        let c = mk(&mut s, json!({ "title": "T", "column": "Planning" }));
+        assert_eq!(start_skip(&c, "move", false, true, false), None);
+        assert_eq!(start_skip(&c, "move", false, false, false), Some("it is in a column that doesn't start sessions"));
+        assert_eq!(start_skip(&c, "hugh", false, false, false), None, "Hugh's own Start needs no auto-spawn");
+        assert_eq!(start_skip(&c, "move", true, true, false), Some("it moved to a column that stops sessions"));
+        assert_eq!(start_skip(&c, "move", false, true, true), Some("it already has a session"));
+        let bl = mk(&mut s, json!({ "title": "T", "column": "Backlog" }));
+        assert_eq!(start_skip(&bl, "hugh", false, true, false), Some("it moved out of Planning and In progress"));
+        let mut gone = c.clone();
+        gone.archived = true;
+        assert_eq!(start_skip(&gone, "move", false, true, false), Some("it was archived"));
+    }
+
+    #[test]
+    fn a_failure_keeps_what_claude_said_on_stderr() {
+        assert_eq!(with_stderr("it printed nothing".into(), "  "), "it printed nothing");
+        assert_eq!(with_stderr("it printed nothing".into(), "error: unknown option '--tools'\n"), "it printed nothing (claude said: error: unknown option '--tools')");
+        assert!(with_stderr("x".into(), &"e".repeat(1000)).len() < 400);
+    }
+
+    #[test]
+    fn at_most_max_calls_run_at_once() {
+        let held: Vec<Slot> = (0..MAX_CALLS).map(|_| Slot::take()).collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _s = Slot::take();
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "the next one waits");
+        drop(held);
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "and runs once a place is free");
+    }
+
+    #[test]
     fn one_call_per_card_at_a_time() {
         let id = "card-presize-test";
         assert!(!in_flight(id));
         assert!(take_flight(id));
         assert!(in_flight(id) && !take_flight(id));
         end_flight(id);
+        assert!(!in_flight(id));
+        // The guard ends it however the thread ends, a panic too.
+        assert!(take_flight(id));
+        let h = std::thread::spawn(move || {
+            let _f = Flight(id.to_string());
+            panic!("a sizing thread that panics");
+        });
+        assert!(h.join().is_err());
         assert!(!in_flight(id));
     }
 }
