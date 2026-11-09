@@ -5,7 +5,7 @@
 //!
 //! - Writes and moves need `if_version` (finding 16): an event can be some minutes old.
 //! - Moves: `routersession::move_refused` (between Planning, In progress, Human test and Blocked;
-//!   Backlog to Planning only with "Router may start cards"; never Ship it).
+//!   out of Backlog, to Planning or In progress, only with "Router may start cards"; never Ship it).
 //! - Hands off a card Hugh has open or changed in the last 2 minutes (decision 4), for writes and
 //!   moves; a message (`kanban_session_send`) is allowed anyway (card #170).
 //! - Anything that starts a session needs "Router may start cards".
@@ -28,7 +28,7 @@ pub const SESSION_TOOLS: [&str; 3] = ["kanban_session_send", "kanban_session_sta
 pub fn own_schemas() -> Value {
     let card = json!({ "type": "integer", "description": "The card's number." });
     json!([
-        { "name": "kanban_start_card", "description": "Start (or resume) a card's session, as Hugh's start does: in its worktree (worktreePath) when it has one, else in its repo's folder. Only for a card in Planning or In progress, and only while Hugh's \"Router may start cards\" setting is on; refused otherwise. The running-sessions cap and queue still apply.",
+        { "name": "kanban_start_card", "description": "Start (or resume) a card's session, as Hugh's start does: in its worktree (worktreePath) when it has one, else in its repo's folder. Only for a card in Planning or In progress, and only while Hugh's \"Router may start cards\" setting is on; refused otherwise. A card in Backlog: move it to Planning or In progress with kanban_move_card instead, which starts it. The running-sessions cap and queue still apply.",
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "message": { "type": "string", "description": "A first message for the session." } }, "required": ["card", "if_version"] } },
         { "name": "kanban_archive_card", "description": "Ask Hugh to archive a card whose work is live (merged, shipped, in Deploy complete) or that he asked for. It does not archive: the card goes into the board's Done pile, and Hugh's Archive all moves it into Done. Refused in Ship it, for a stack's child (ask for the lead), and after Hugh said Not now until he or the card's own session changes it.",
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "reason": { "type": "string", "description": "Why it can go, for Hugh's Done pile." }, "evidence": { "type": "string", "description": "What shows the work is live (a merged branch, a ship, Hugh's words)." } }, "required": ["card", "if_version", "reason"] } },
@@ -283,6 +283,18 @@ pub fn start_folder(worktree: Option<&str>, repo: Option<&str>) -> String {
     }
 }
 
+/// Why `kanban_start_card` won't start card `number` in `column`, if it won't. A card in Backlog
+/// is told the way out (card #174): its move to Planning or In progress starts it.
+pub fn start_column_refused(number: i64, column: &str) -> Option<String> {
+    if START_COLUMNS.contains(&column) {
+        return None;
+    }
+    if column == "Backlog" {
+        return Some(format!("refused: card #{number} is in Backlog; move it to Planning or In progress with kanban_move_card (allowed while \"Router may start cards\" is on), and that move starts it"));
+    }
+    Some(format!("refused: card #{number} is in {column}; the Router starts only cards in {}", START_COLUMNS.join(" or ")))
+}
+
 fn start_card(app: &AppHandle, args: &Value, may_start: bool) -> Result<Value, String> {
     if !may_start {
         return Err("refused: starting a card needs Hugh's \"Router may start cards\" setting, which is off".into());
@@ -290,8 +302,8 @@ fn start_card(app: &AppHandle, args: &Value, may_start: bool) -> Result<Value, S
     let board = app.state::<Board>();
     let mut store = board.0.lock().map_err(|e| e.to_string())?;
     let c = card_for_write(app, &store, args)?;
-    if !START_COLUMNS.contains(&c.column.as_str()) {
-        return Err(format!("refused: card #{} is in {}; the Router starts only cards in {}", c.number, c.column, START_COLUMNS.join(" or ")));
+    if let Some(why) = start_column_refused(c.number, &c.column) {
+        return Err(why);
     }
     // Where it runs is Hugh's start's rule (final-test F1): its worktree when it has one on this
     // machine, else its repo's folder.
@@ -445,6 +457,16 @@ mod tests {
         for c in ["Ship it", "Deploy complete", "Done", "Human test"] {
             assert!(!CREATE_COLUMNS.contains(&c), "{c}");
         }
+    }
+
+    /// Card #174: a start of a Backlog card is refused with the way out (move it, which starts it).
+    #[test]
+    fn a_backlog_start_is_told_to_move_the_card() {
+        let why = start_column_refused(7, "Backlog").unwrap();
+        assert!(why.contains("#7") && why.contains("kanban_move_card") && why.contains("Planning or In progress"), "{why}");
+        assert!(start_column_refused(7, "Ship it").unwrap().contains("starts only cards in Planning or In progress"));
+        assert_eq!(start_column_refused(7, "Planning"), None);
+        assert_eq!(start_column_refused(7, "In progress"), None);
     }
 
     /// Final-test F1: a Router move runs the card's after-move (as Hugh's drag), so the session

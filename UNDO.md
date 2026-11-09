@@ -1003,3 +1003,13 @@ PowerShell 5.1 commands.
 ## Card #170: Router may message a card Hugh has open
 Undo: in `src-tauri/src/routertools.rs`, put back the `routersession::hands_off(app, &store, &c)` refusal
 at the top of the `kanban_session_send` arm (see `git show <card #170 commit>`), or `git revert` the commit.
+
+## Card #174: the Router may move a card out of Backlog (9 Nov 2026)
+
+PowerShell 5.1 commands. No data changes: no migration, no new setting.
+
+| Change | Undo |
+|---|---|
+| `routersession::move_refused` lets the Router move Backlog to In progress, as well as to Planning, while "Router may start cards" is on; `routertools::start_column_refused` tells a start of a Backlog card to move it first | `git -C ~\claude-kanban-dsh revert --no-edit <the card #174 commit>`. A card the Router already moved stays where it is: drag it back to Backlog if you want |
+| The bundled `prompts\router.md` job 2, and the docs (docs\GUIDE.md, HANDOVER.md, PLAN.md decision 33, this section) | The same revert |
+| The owner's private `prompts\router.md` job 2 | Revert the card #174 commit in the private repo |
