@@ -1116,6 +1116,14 @@ as `steps` (`done`, `total`, `current`, `line`). Card #106.
   into Planning. A new session starts a new list.
 - **Hidden text.** A step that looks like a token, a key, a sign-in link or a Bearer header shows
   as "(hidden)".
+- **In the chat too** (card #158, 9 Nov 2026). The card's chat shows the same list just above
+  the message box, as the session's terminal does: "6 tasks (4 done, 1 in progress, 1 open)",
+  then each task, ✓ done (struck through), ■ in progress (bold) or □ open. It changes as the
+  session works and is hidden while the card has no steps. Click its header to fold it to that
+  one line (with the task in progress beside it); the fold is remembered for every card. A list
+  longer than 8 hides its earliest done tasks behind "… +N completed": click it to see them all.
+  TaskCreate, TaskUpdate and TaskGet calls in the chat read as the task ("Write the tests",
+  "#3 → completed") instead of JSON.
 - **Limits.** A card whose conversation is in the Claude desktop app shows no steps (its
   `update_plan` list isn't read). If a later Claude Code drops `CLAUDE_CODE_ENABLE_TODO_TOOLS`,
   cards show nothing; the app then logs once on the card, "This session started with the to-do

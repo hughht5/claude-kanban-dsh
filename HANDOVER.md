@@ -1253,6 +1253,25 @@ critic's 22 findings and the router's decisions, is on card #104. The new hard-r
 - Open: whether a subagent's own TaskCreate lands in the session's
   folder. The card-tester run on the test app shows both.
 
+## The to-do list in the chat (9 Nov 2026, card #158, branch `card-158`)
+
+- `ui\steps.js` `stepsChat()` draws the open card's `steps[cardId].items` (the same `card_steps`
+  summary the tile uses, so this visit's steps only) into `#p-todo`, a row of the chat's grid
+  between `.busy` and `.compose` (`ui\panel.js`, `ui\panel.css`: the grid has a seventh row).
+  It runs when the panel opens and after each `loadSteps` that changed something, and redraws
+  only when the items, the fold or "show all" change (`dataset.key`). Styles in `ui\steps.css`.
+- Hidden while the panel shows a subagent (`panel.view`; `showView` calls `stepsChat`). A redraw
+  keeps the box's scroll and, when a button in it had focus, focuses the new header.
+- The fold is kept in memory (`todoFold`) and saved to `localStorage["panel.todo"]`
+  (`folded`/`open`) as a best effort, for every card. "Show all" is
+  `panel.todoAll`, gone when the panel closes. `TODO_MAX` (8) is the length before the earliest
+  done tasks hide.
+- `transcript::key_input` words TaskCreate (its subject), TaskUpdate (`#id → status · subject`)
+  and TaskGet (`#id`), subjects through `steps::mask`; a TaskUpdate with neither status nor
+  subject, or a call without its field, keeps the compact JSON as before.
+- Not done: the items carry no `activeForm`, so the task in progress shows its subject, as the
+  terminal does.
+
 ## Stack review overlay (6 Nov 2026, card #116, branch `dsh-116`)
 
 - A stack in Human test is reviewed in its overlay (`ui/stacks.js`), as one stop in #102's queue.

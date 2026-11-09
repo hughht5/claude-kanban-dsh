@@ -90,13 +90,14 @@ function openPanel(id,opts){
   <div class="pb" id="p-body"><aside class="det" id="p-det" aria-label="Card details"></aside><div class="dsplit" title="Drag to change the details' width. Double-click to reset."></div>
     <div class="work" id="p-work"><div class="chat">
       <div class="find" role="search"><input type="search" id="p-q" placeholder="Search the conversation (Ctrl+F)" aria-label="Search the conversation" autocomplete="off" spellcheck="false"><span class="cnt" id="p-cnt" aria-live="polite"></span><button class="ibtn" id="p-prev" type="button" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>↑</button><button class="ibtn" id="p-next" type="button" aria-label="Next match" title="Next match (Enter)" disabled>↓</button></div>
-      <div class="subs" id="p-subs" role="tablist" aria-label="Main conversation and its subagents"></div><div class="msgs" id="p-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="p-busy" hidden></div><div class="compose" id="p-compose"></div><div class="sfoot" id="p-sfoot" hidden></div></div></div></div>
+      <div class="subs" id="p-subs" role="tablist" aria-label="Main conversation and its subagents"></div><div class="msgs" id="p-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="p-busy" hidden></div><div class="todo" id="p-todo" hidden></div><div class="compose" id="p-compose"></div><div class="sfoot" id="p-sfoot" hidden></div></div></div></div>
   <div class="pf" id="p-foot"></div>`;
   document.body.append(back,el);
   addPanelEdge(el);
   panel={id,el,back,entries:[],tools:{},offset:0,shown:SHOW,info:null,term:null,fit:null,timer:null,unlisten:[],
     open:new Set(),more:new Set(),find:{q:"",hits:[],i:-1},att:[],status:null,queued:[],ask:{},view:"",gen:0,subs:[],subsTick:0,lastMainUser:null};
   setupFind(el);setupToolToggles(el);setupDrop(id);setupAsk(el);setupSubs(el);
+  if(typeof stepsChat==="function")stepsChat(); // steps.js: the session's to-do list (card #158)
   if(typeof reviewOpened==="function")reviewOpened(id,step); // review.js: the Human test queue
   // The details column (board.js renders it), and the board's record of which card is open.
   if(!draft||draft.id!==id){draft=null;stale=null}
@@ -599,6 +600,7 @@ function showView(id){
   panel.view=id;panel.gen++;panel.reading=null;panel.entries=[];panel.tools={};panel.offset=0;panel.queued=[];panel.shown=SHOW;panel.outboxKey=null;
   if(!id)panel.lastMainUser=null;
   renderSubs();
+  if(typeof stepsChat==="function")stepsChat(); // the to-do list is the main session's (card #158)
   panel.el.querySelector("#p-msgs").innerHTML=`<div class="quiet">Reading the conversation…</div>`;
   pollTranscript();
 }

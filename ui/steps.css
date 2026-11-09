@@ -11,3 +11,28 @@
 .card .steps-bar>span{display:block;height:100%;background:var(--accent);border-radius:3px;transition:width .3s ease}
 .card .steps.all-done .steps-bar>span{background:var(--ok)}
 @media (prefers-reduced-motion:reduce){.card .steps-bar>span{transition:none}}
+
+/* The session's to-do list in the card's chat (card #158, steps.js stepsChat), pinned above the
+   message box as the terminal shows it. */
+.chat .todo{position:relative;border-top:1px solid var(--line);padding:5px 14px 6px;font-family:var(--mono);font-size:12.5px;line-height:1.45;color:var(--fg);max-height:32vh;overflow-y:auto}
+.chat .todo[hidden]{display:none}
+.chat .todo .todo-h{display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;background:none;border:0;padding:1px 0;margin:0;font:inherit;color:var(--muted);cursor:pointer;text-align:left}
+.chat .todo .todo-h:hover .todo-t{color:var(--fg)}
+.chat .todo .todo-h:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
+.chat .todo .todo-c{flex:0 0 auto;width:1ch}
+.chat .todo .todo-t{flex:0 0 auto;white-space:nowrap}
+.chat .todo .todo-now{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.chat .todo .todo-now::before{content:"· "}
+.chat .todo .todo-l{list-style:none;margin:2px 0 0;padding:0 0 0 calc(1ch + 6px)}
+.chat .todo .todo-i{display:flex;gap:7px;min-width:0}
+.chat .todo .todo-m{flex:0 0 auto;width:1.2ch;text-align:center}
+.chat .todo .todo-x{min-width:0;overflow-wrap:anywhere}
+.chat .todo .todo-i.completed{color:var(--muted)}
+.chat .todo .todo-i.completed .todo-m{color:var(--ok)}
+.chat .todo .todo-i.completed .todo-x{text-decoration:line-through}
+.chat .todo .todo-i.in_progress{font-weight:600}
+.chat .todo .todo-i.in_progress .todo-m{color:#d97757}
+.chat .todo .todo-i.pending .todo-m{color:var(--muted)}
+.chat .todo .todo-more{background:none;border:0;padding:0 0 0 calc(1ch + 6px);margin:0;font:inherit;color:var(--muted);cursor:pointer}
+.chat .todo .todo-more:hover{color:var(--fg);text-decoration:underline}
+.chat .todo .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}

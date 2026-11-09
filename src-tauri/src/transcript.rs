@@ -602,6 +602,21 @@ pub fn key_input(name: &str, input: &Value) -> Option<String> {
                 .collect::<Vec<_>>()
                 .join("\n")
         }),
+        // The to-do tools (card #158): what the task is and what changed, not raw JSON.
+        // Subjects go through the steps' mask, as in the to-do box. A TaskUpdate that changes
+        // neither status nor subject (blocks, owner, ...) keeps its compact JSON.
+        "TaskCreate" => s("subject").map(crate::steps::mask),
+        "TaskUpdate" if s("status").is_some() || s("subject").is_some() => id_of(input.get("taskId")).map(|id| {
+            let mut t = format!("#{id}");
+            if let Some(st) = s("status") {
+                t.push_str(&format!(" → {}", st.replace('_', " ")));
+            }
+            if let Some(sub) = s("subject") {
+                t.push_str(&format!(" · {}", crate::steps::mask(sub)));
+            }
+            t
+        }),
+        "TaskGet" => id_of(input.get("taskId")).map(|id| format!("#{id}")),
         _ => None,
     };
     let text = text.or_else(|| match input {
@@ -610,6 +625,15 @@ pub fn key_input(name: &str, input: &Value) -> Option<String> {
         v => Some(v.to_string()),
     })?;
     Some(bounded(text))
+}
+
+/// A task id as text, whether the call sent it as a string or a number.
+fn id_of(v: Option<&Value>) -> Option<String> {
+    match v? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 /// A `tool_result` block's text: its string, or its text blocks joined; images read "[image]".
@@ -1517,6 +1541,15 @@ mod tests {
             k("TodoWrite", r#"{"todos":[{"content":"A","status":"completed"},{"content":"B","status":"in_progress"}]}"#).as_deref(),
             Some("[x] A\n[>] B")
         );
+        assert_eq!(k("TaskCreate", r#"{"subject":"Write the tests","description":"d","activeForm":"Writing the tests"}"#).as_deref(), Some("Write the tests"));
+        assert_eq!(k("TaskUpdate", r#"{"taskId":"3","status":"in_progress"}"#).as_deref(), Some("#3 → in progress"));
+        assert_eq!(k("TaskUpdate", r#"{"taskId":4,"status":"completed","subject":"Ship"}"#).as_deref(), Some("#4 → completed · Ship"));
+        assert_eq!(k("TaskUpdate", r#"{"taskId":"5","addBlockedBy":["1"]}"#).as_deref(), Some(r#"{"addBlockedBy":["1"],"taskId":"5"}"#), "nothing worded: JSON");
+        assert_eq!(k("TaskGet", r#"{"taskId":"2"}"#).as_deref(), Some("#2"));
+        assert_eq!(k("TaskCreate", r#"{"subject":"Open https://x.test/signin?token=abc"}"#).as_deref(), Some("(hidden)"), "masked as in the to-do box");
+        // No usable fields: compact JSON, as before.
+        assert_eq!(k("TaskUpdate", r#"{"status":"completed"}"#).as_deref(), Some(r#"{"status":"completed"}"#));
+        assert_eq!(k("TaskCreate", r#"{"subject":""}"#).as_deref(), Some(r#"{"subject":""}"#));
         assert_eq!(k("mcp__x__y", r#"{"id":3}"#).as_deref(), Some(r#"{"id":3}"#));
         assert_eq!(k("ExitPlanMode", "{}"), None);
     }

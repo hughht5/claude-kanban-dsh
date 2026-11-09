@@ -61,10 +61,84 @@ function stepsPaint(){
     if(c&&!isArch(c))stepsPlace(tile,c);
   }
 }
+// The to-do list in the open card's chat (card #158), pinned above the message box where the
+// terminal shows it: "6 tasks (4 done, 1 in progress, 1 open)", then each task, ✓ done (struck
+// through), ■ in progress, □ open. The same list as the tile's (this visit's steps). The header
+// folds it, remembered for every card ("panel.todo"). A list longer than TODO_MAX hides its
+// earliest done tasks behind "… +N completed", which shows them all until the panel closes.
+// Hidden while the panel shows a subagent's conversation: the list is the main session's.
+// A redraw keeps the box's scroll and, if a button in it had focus, gives focus to the header.
+const TODO_MAX=8,TODO_MARK={completed:"✓",in_progress:"■",pending:"□"};
+// The fold: kept in memory, saved to localStorage as a best effort (so it still folds if storage throws).
+let todoFold=null;
+function todoFolded(v){
+  if(v===undefined){if(todoFold===null){try{todoFold=localStorage.getItem("panel.todo")==="folded"}catch(e){todoFold=false}}return todoFold}
+  todoFold=!!v;try{localStorage.setItem("panel.todo",v?"folded":"open")}catch(e){}
+}
+function todoCounts(items){
+  const n={completed:0,in_progress:0,pending:0};
+  for(const x of items)n[x.status in n?x.status:"pending"]++;
+  return n;
+}
+function todoHead(items){
+  const n=todoCounts(items),k=items.length,parts=[];
+  if(n.completed===k)return `${k} task${k===1?"":"s"} (all done)`;
+  if(n.completed)parts.push(`${n.completed} done`);
+  if(n.in_progress)parts.push(`${n.in_progress} in progress`);
+  if(n.pending)parts.push(`${n.pending} open`);
+  return `${k} task${k===1?"":"s"} (${parts.join(", ")})`;
+}
+// Which tasks show: all of them, or (past TODO_MAX) the list without its earliest done ones.
+function todoShown(items,all){
+  if(all||items.length<=TODO_MAX)return{show:items,hid:0};
+  let drop=items.length-TODO_MAX;const show=[];
+  for(const x of items){if(drop>0&&x.status==="completed"){drop--;continue}show.push(x)}
+  return{show,hid:items.length-show.length};
+}
+function stepsChat(){
+  if(typeof panel==="undefined"||!panel||!panel.el)return;
+  const el=panel.el.querySelector("#p-todo");if(!el)return;
+  const s=panel.view?null:steps[panel.id],items=s&&Array.isArray(s.items)?s.items:[];
+  if(!items.length){el.hidden=true;el.textContent="";delete el.dataset.key;return}
+  const folded=todoFolded(),all=!!panel.todoAll;
+  const key=JSON.stringify([items,folded,all]);
+  if(el.dataset.key===key&&!el.hidden)return;
+  const focused=typeof document!=="undefined"&&document.activeElement&&el.contains(document.activeElement),top=el.scrollTop||0;
+  el.dataset.key=key;el.textContent="";el.hidden=false;
+  el.classList.toggle("folded",folded);
+  el.classList.toggle("all-done",items.every(x=>x.status==="completed"));
+  const head=document.createElement("button");head.type="button";head.className="todo-h";
+  head.setAttribute("aria-expanded",String(!folded));
+  head.title=folded?"Show the session's to-do list":"Hide the session's to-do list";
+  const chev=document.createElement("span");chev.className="todo-c";chev.setAttribute("aria-hidden","true");chev.textContent=folded?"▸":"▾";
+  const ht=document.createElement("span");ht.className="todo-t";ht.textContent=todoHead(items);
+  head.append(chev,ht);
+  if(folded){const cur=items.find(x=>x.status==="in_progress");
+    if(cur){const w=document.createElement("span");w.className="todo-now";w.textContent=cur.text;head.appendChild(w)}}
+  head.onclick=()=>{todoFolded(!folded);stepsChat()};
+  el.appendChild(head);
+  const done=()=>{if(focused)head.focus();if(top)el.scrollTop=top};
+  if(folded)return done();
+  const {show,hid}=todoShown(items,all);
+  const ul=document.createElement("ul");ul.className="todo-l";ul.setAttribute("aria-label","The session's to-do list");
+  for(const x of show){
+    const st=x.status in TODO_MARK?x.status:"pending";
+    const li=document.createElement("li");li.className="todo-i "+st;
+    const m=document.createElement("span");m.className="todo-m";m.setAttribute("aria-hidden","true");m.textContent=TODO_MARK[st];
+    const t=document.createElement("span");t.className="todo-x";t.textContent=x.text;
+    const sr=document.createElement("span");sr.className="sr-only";sr.textContent=st==="completed"?"Done: ":st==="in_progress"?"In progress: ":"Open: ";
+    li.append(m,sr,t);ul.appendChild(li);
+  }
+  el.appendChild(ul);
+  if(hid){const more=document.createElement("button");more.type="button";more.className="todo-more";
+    more.textContent=`… +${hid} completed`;more.title="Show every task";
+    more.onclick=()=>{if(panel)panel.todoAll=true;stepsChat()};el.appendChild(more)}
+  done();
+}
 async function loadSteps(){
   let s;try{s=await invoke("card_steps")}catch(e){return}
   if(JSON.stringify(s||{})===JSON.stringify(steps))return;
-  steps=s||{};stepsPaint();
+  steps=s||{};stepsPaint();stepsChat();
 }
 let stepsTimer=null;
 const stepsSoon=()=>{clearTimeout(stepsTimer);stepsTimer=setTimeout(loadSteps,150)};

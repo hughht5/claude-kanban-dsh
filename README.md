@@ -52,7 +52,7 @@ You stay in charge of the one decision that matters: what ships.
 - **Bugs proved, fixes proved.** When something fails, a reproducer shows the bug in a few steps, then shows that it's gone after the fix. No more re-testing by hand.
 - **Never stuck.** A monitor watches every session. If one loops or stalls, it gets a nudge, and if it's still stuck, you get a notification.
 - **Review in seconds.** Step through every card waiting for you with ← and →. Press P then Enter to pass and ship, or F to fail it with a note. Small changes are labelled "30-second look", and docs-only changes can go on by themselves if you allow them.
-- **Know everything at a glance.** Every card shows "Done when…" with its acceptance checks, step progress ("Step 4 of 7: writing the tests"), what changed, and the exact question it's waiting on you for.
+- **Know everything at a glance.** Every card shows "Done when…" with its acceptance checks, step progress ("Step 4 of 7: writing the tests", and the whole to-do list in its chat), what changed, and the exact question it's waiting on you for.
 - **Ship together, cleanly.** Group related cards into a stack. They build in parallel, a merger brings their branches together and resolves conflicts, and you test and ship them as one.
 - **Order and history.** Mark a card "Blocked by #12" and it starts by itself when #12 is ready. Search every session that has ever run. See how long cards spend in each column, so you know where the waiting happens.
 - **Your own column widths.** Drag the edge of a column to widen or narrow it; every column keeps its share as the window changes, and the widths stay after a restart. Press an edge twice to reset them.

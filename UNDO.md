@@ -860,3 +860,9 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test
 | Settings › Sessions › "Repos a card can be for" (`reposBox`, `ui\settings.js`, `ui\settings.css`), the `save_repos` command (`src-tauri\src\settings.rs`, `main.rs`), `private::save_repos_in` (`src-tauri\src\private.rs`), `tools\ui-tests\repos.test.mjs` and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #155 commit>`, then stage the live update. The list is then edited by hand in `repos.json` again |
 | A Save there rewrites `<private folder>\repos.json`, keeping the one before as `repos.json.bak` | `Copy-Item <private folder>\repos.json.bak <private folder>\repos.json -Force` (only the last Save is kept). In a git repo, `git -C <private folder> checkout -- repos.json` |
 
+## The to-do list in the chat (9 Nov 2026, card #158, branch `card-158`)
+
+| Change | Undo |
+|---|---|
+| The chat's to-do box (`ui\steps.js` `stepsChat`, `ui\steps.css`, the `#p-todo` row in `ui\panel.js` and `ui\panel.css`) and the worded TaskCreate/TaskUpdate/TaskGet lines (`src-tauri\src\transcript.rs` `key_input`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #158 commit>`, then stage the live update as usual. Nothing is stored but the fold, `localStorage["panel.todo"]` in the app's WebView, which an older build never reads |
+| The docs (HANDOVER.md, docs\GUIDE.md, this file) | The same revert |

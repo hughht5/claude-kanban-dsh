@@ -20,7 +20,7 @@
 .dsplit:hover,.dsplit.on{background:var(--accent);opacity:1}
 .work{display:grid;grid-template-columns:minmax(0,1fr);min-height:0;min-width:0}
 .work.with-term{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-.chat{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto auto;min-height:0;min-width:0}
+.chat{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto auto auto;min-height:0;min-width:0}
 /* Subagents (card #91): Main and each subagent, newest first; empty (and no height) when there are none. */
 .subs{display:flex;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line);overflow-x:auto;min-width:0;scrollbar-width:thin}
 .subs:empty{padding:0;border:0}
