@@ -674,6 +674,47 @@ async fn session_stop(app: AppHandle, card_id: String) -> CmdResult<()> {
         .map_err(CmdError::other)
 }
 
+/// Claude Code's folder-trust question on a card session's screen (card #143), as the Router's
+/// (`routersession::trust_ask`): asked only while the session is still starting, never once
+/// its prompt is up, where keys would go into the conversation.
+fn card_trust_menu(live: &sessions::Sessions, card_id: &str) -> Option<routersession::TrustMenu> {
+    let w = live.watch_one(card_id)?;
+    let screen = live.screen_text(card_id)?;
+    routersession::trust_ask(w.state == "starting" || !w.ready, &screen)
+}
+
+/// The chat's words for the trust question, naming the folder.
+fn card_trust_words(cwd: Option<&str>) -> String {
+    match cwd.filter(|c| !c.trim().is_empty()) {
+        Some(c) => format!("Claude Code asks whether to trust this card's folder ({c}). The session needs it to start."),
+        None => "Claude Code asks whether to trust this card's folder. The session needs it to start.".into(),
+    }
+}
+
+/// The trust question, if the card's session shows it now: its words, for the panel's chat,
+/// which draws it with Yes and No buttons (card #143).
+#[tauri::command]
+fn session_trust(board: State<Board>, live: State<Arc<sessions::Sessions>>, card_id: String) -> Option<String> {
+    card_trust_menu(&live, &card_id)?;
+    let cwd = board.0.lock().ok().and_then(|s| s.latest_session(&card_id).ok().flatten()).map(|r| r.cwd);
+    Some(card_trust_words(cwd.as_deref()))
+}
+
+/// Hugh's answer to a card session's trust question, from the chat's buttons: the arrow keys to
+/// his option, then Enter (`routersession::trust_keys`, never a number key). Logged on the card.
+#[tauri::command]
+fn session_trust_answer(app: AppHandle, board: State<Board>, live: State<Arc<sessions::Sessions>>, card_id: String, yes: bool) -> CmdResult<()> {
+    let menu = card_trust_menu(&live, &card_id).ok_or_else(|| CmdError::other("the trust question isn't on this card's session screen now"))?;
+    live.input(&card_id, &routersession::trust_keys(menu, yes)).map_err(CmdError::other)?;
+    if let Ok(mut store) = board.0.lock() {
+        let text = if yes { "Hugh trusted the session's folder (the chat's Yes button)" } else { "Hugh refused the session's folder (the chat's No button): the session exits" };
+        let _ = store.add_log(&card_id, text, router::HUGH);
+    }
+    changed(&app);
+    let _ = app.emit("session-changed", card_id);
+    Ok(())
+}
+
 /// The chat's read of a card's (or the Router's) transcript: `transcript_chunk`, with each user
 /// message of the main conversation split into the app's own parts and Hugh's, so the chat draws
 /// them apart (card #153).
@@ -1058,5 +1099,33 @@ mod own_worktree_tests {
         assert!(s.get(&c.id).unwrap().fields.get("worktreePath").is_none());
         let log = s.log(&c.id).unwrap();
         assert!(log.iter().any(|l| l.text.starts_with("Couldn't make its own worktree:") && l.text.contains("left it alone")), "{log:?}");
+    }
+}
+
+/// Card #143: a card session's folder-trust question, answered from the chat's buttons.
+#[cfg(test)]
+mod card_trust_tests {
+    use super::*;
+
+    const SCREEN: &str = include_str!("../../fixtures/router-trust-screen.txt");
+
+    #[test]
+    fn the_question_is_asked_only_while_the_session_starts() {
+        let m = routersession::trust_ask(true, SCREEN).expect("the real trust menu, while starting");
+        assert_eq!(routersession::trust_keys(m, true), b"\x1b[B\r".to_vec(), "Yes: down, then Enter");
+        assert_eq!(routersession::trust_keys(m, false), b"\r".to_vec(), "No: Enter where it is");
+        assert!(routersession::trust_ask(false, SCREEN).is_none(), "never once the prompt is up");
+        // Claude's own prompt, or the words in a conversation, are no question.
+        assert!(routersession::trust_ask(true, "\u{276f} hello\n  ? for shortcuts").is_none());
+        assert!(routersession::trust_ask(true, "Yes, I trust this folder, I said, and No, exit too.").is_none());
+    }
+
+    #[test]
+    fn the_words_name_the_folder() {
+        let w = card_trust_words(Some(r"C:\work\repo\.claude\worktrees\card-9"));
+        assert!(w.contains(r"(C:\work\repo\.claude\worktrees\card-9)"), "{w}");
+        assert!(w.contains("trust this card's folder"), "{w}");
+        assert!(!card_trust_words(None).contains('('));
+        assert!(!card_trust_words(Some("  ")).contains('('));
     }
 }

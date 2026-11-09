@@ -944,6 +944,8 @@ fn main() {
             session_dismiss_untaken,
             session_answer,
             session_stop,
+            session_trust,
+            session_trust_answer,
             transcript_read,
             subagent_list,
             search_sessions,

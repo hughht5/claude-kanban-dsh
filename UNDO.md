@@ -957,3 +957,13 @@ Prompt text only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the car
 | `src-tauri\windows\hooks.nsh`: the installer deletes old `kb.old-*.exe` copies, renames kb.exe to a free `kb.old-N.exe` (N up to 99), writes the new kb.exe, then deletes the moved copy if nothing runs it (or moves it back if the write failed); uninstall also deletes `kb.old-*.exe` and the emptied folder | `git revert` the card's commit. Leftover `kb.old-N.exe` files are only old copies, in the live folder and every test slot: `Get-ChildItem "$env:USERPROFILE\Programs\Claude Kanban DSH*\kb.old-*.exe" -ErrorAction SilentlyContinue \| Remove-Item -ErrorAction SilentlyContinue` (those still in use stay) |
 | `scripts\test-kb-locked.ps1` (new) | `Remove-Item scripts\test-kb-locked.ps1 -Confirm:$false` |
 
+
+## Card #143: the folder-trust question as Yes/No buttons in a card's chat (9 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `session_trust` and `session_trust_answer` (`src-tauri\src\session_cmds.rs`, registered in `main.rs`), `routersession::trust_ask` (the Router's answer uses it too), and their tests | `git -C ~\claude-kanban-dsh revert --no-edit <the card #143 commits>` |
+| The trust box in the card panel's chat (`ui\panel.js` `checkTrust`, `#p-trust`; `ui\panel.css`) | The same revert |
+| The docs (HANDOVER.md, docs\GUIDE.md, this section) | The same revert |
+
+Nothing in the board's data: an answer only adds a log line on the card.

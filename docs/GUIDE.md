@@ -245,6 +245,14 @@ The word is picked at random each turn, as the terminal's is.
 
 ## Claude's questions in the chat
 
+**The folder-trust question (card #143).** When a card's session starts in a folder Claude Code
+hasn't trusted yet, it stops at "Do you trust the files in this folder?" before its prompt. The
+chat shows that question under the conversation, naming the folder, with **Yes, I trust this
+folder** and **No, exit**. A click presses the arrow keys to that option and Enter in the
+session's terminal (never a number key); the card's log records your answer. It shows only while
+the session is starting and the question is on its screen, and you can still answer in the
+Terminal tab. No exits the session, as in the terminal.
+
 When a card's session asks you something with `AskUserQuestion`, the question shows in the chat as
 its own card, not folded into "Ran 1 tool": each question's header, its text, and its options with
 their descriptions ("pick any" on a multi-select one). While that dialog is on screen you answer

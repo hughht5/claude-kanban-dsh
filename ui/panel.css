@@ -184,6 +184,10 @@ details.tool .tnote{font-size:11.5px;color:var(--muted)}
 .chat .sfoot .ctx.hot{color:var(--warn)}.chat .sfoot .ctx.hot .bar i{background:var(--warn)}
 .chat .sfoot .dim{font-family:var(--sans);opacity:.8}
 .chat .busy{padding:5px 14px 4px;font-family:var(--mono);font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A card session's folder-trust question (card #143); the box itself is router.css's .rtrust. */
+.chat .ptrust{flex:none}
+.ptrust .ask-head{font-weight:600}
+.rtrust-or{align-self:center;color:var(--muted);font-size:12px}
 .chat .busy .g,.chat .busy .v{color:#d97757}
 .chat .busy.asking .g,.chat .busy.asking .v{color:var(--warn)}
 

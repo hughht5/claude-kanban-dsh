@@ -90,7 +90,7 @@ function openPanel(id,opts){
   <div class="pb" id="p-body"><aside class="det" id="p-det" aria-label="Card details"></aside><div class="dsplit" title="Drag to change the details' width. Double-click to reset."></div>
     <div class="work" id="p-work"><div class="chat">
       <div class="find" role="search"><input type="search" id="p-q" placeholder="Search the conversation (Ctrl+F)" aria-label="Search the conversation" autocomplete="off" spellcheck="false"><span class="cnt" id="p-cnt" aria-live="polite"></span><button class="ibtn" id="p-prev" type="button" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>↑</button><button class="ibtn" id="p-next" type="button" aria-label="Next match" title="Next match (Enter)" disabled>↓</button></div>
-      <div class="subs" id="p-subs" role="tablist" aria-label="Main conversation and its subagents"></div><div class="msgs" id="p-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="p-busy" hidden></div><div class="todo" id="p-todo" hidden></div><div class="compose" id="p-compose"></div><div class="sfoot" id="p-sfoot" hidden></div></div></div></div>
+      <div class="subs" id="p-subs" role="tablist" aria-label="Main conversation and its subagents"></div><div class="msgs" id="p-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="p-busy" hidden></div><div class="rtrust ptrust" id="p-trust" role="alert" hidden></div><div class="todo" id="p-todo" hidden></div><div class="compose" id="p-compose"></div><div class="sfoot" id="p-sfoot" hidden></div></div></div></div>
   <div class="pf" id="p-foot"></div>`;
   document.body.append(back,el);
   addPanelEdge(el);
@@ -357,8 +357,30 @@ async function stopSession(){
   b.disabled=false;b.textContent="Stop session";refreshInfo();
 }
 
+// Claude Code's folder-trust question at a card session's start (card #143), as the Router's
+// (router.js checkTrust): shown under the chat with Yes and No buttons, so Hugh needn't find it
+// in the Terminal tab. Asked only while the session is starting; the app checks the screen again
+// before it presses the keys.
+async function checkTrust(){
+  if(!panel)return;const id=panel.id,box=panel.el.querySelector("#p-trust");if(!box)return;
+  const info=panel.info,starting=info&&info.running&&(!info.state||info.state==="starting");
+  let q=null;
+  if(starting)try{q=await invoke("session_trust",{cardId:id})}catch(e){q=null}
+  if(!panel||panel.id!==id)return;
+  if(!q){if(!box.hidden){box.hidden=true;box.innerHTML="";delete box.dataset.q}return}
+  if(!box.hidden&&box.dataset.q===q)return;
+  box.dataset.q=q;box.hidden=false;
+  box.innerHTML=`<div class="ask-head">The session is asking you</div><p>${esc(q)}</p><div class="rtrust-acts"><button class="btn" type="button" data-yes="1">Yes, I trust this folder</button><button class="btn ghost" type="button" data-yes="0">No, exit</button><span class="rtrust-or">or answer in the terminal</span></div>`;
+  box.querySelectorAll("button").forEach(b=>b.onclick=async()=>{
+    box.querySelectorAll("button").forEach(x=>x.disabled=true);
+    try{await invoke("session_trust_answer",{cardId:id,yes:b.dataset.yes==="1"})}
+    catch(e){if(panel&&panel.id===id){foot(`<span class="err">${esc(errText(e))}</span>`);box.querySelectorAll("button").forEach(x=>x.disabled=false)}}
+    setTimeout(()=>{if(panel&&panel.id===id){delete box.dataset.q;checkTrust()}},1500);
+  });
+}
 async function pollTranscript(){
   if(!panel)return;const id=panel.id,view=panel.view,gen=panel.gen;
+  checkTrust();
   if(panel.subsTick++%2===0)refreshSubs();
   // One read at a time, so two reads from the same offset can't both add their entries.
   if(panel.reading===gen)return;panel.reading=gen;
