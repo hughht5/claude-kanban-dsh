@@ -149,7 +149,15 @@ pub struct TypeCheck<'a> {
     /// Only Hugh's own text is going in: nothing of the app's (column prompts, notices) was
     /// waiting with it, so it may go in mid-turn.
     pub mid_turn_ok: bool,
+    /// How long the session has been in its state (`state_since`).
+    pub idle_for: Duration,
 }
+
+/// How long a session has been idle before a mid-turn-ok message goes in without a still
+/// screen (card #154): a turn that ended with a background subagent still running (a
+/// card-tester, a card-reviewer) keeps its status line moving, so the screen is never still
+/// for 1.5 s and the message would wait until the subagent ended.
+pub const SETTLED: Duration = Duration::from_secs(3);
 
 /// Whether Hugh's own message can be typed into a session now. Mid-turn, yes (Claude Code
 /// queues typed text and reads it at its next step), unless the app's own text would go in
@@ -164,7 +172,7 @@ pub fn takes_typing(c: TypeCheck) -> bool {
     }
     match c.state {
         "working" => c.mid_turn_ok && c.sent_ago.map_or(true, |d| d >= Duration::from_secs(1)),
-        "idle" => c.quiet && c.sent_ago.is_none() && !c.unconfirmed,
+        "idle" => (c.quiet || (c.mid_turn_ok && c.idle_for >= SETTLED)) && c.sent_ago.is_none() && !c.unconfirmed,
         "failed" => c.sent_ago.is_none(),
         _ => false,
     }
@@ -1750,6 +1758,7 @@ impl Sessions {
                 switch_waiting: !l.switch.is_empty(),
                 unconfirmed: l.typed.is_some(),
                 mid_turn_ok,
+                idle_for: l.state_since.elapsed(),
             };
             if !takes_typing(check) {
                 return Ok(false);
@@ -1791,6 +1800,7 @@ impl Sessions {
                 switch_waiting: !l.switch.is_empty(),
                 unconfirmed: l.typed.is_some(),
                 mid_turn_ok: true,
+                idle_for: l.state_since.elapsed(),
             };
             if l.state != "working" || !takes_typing(check) {
                 return Ok(false);
@@ -2122,7 +2132,7 @@ mod tests {
 
     #[test]
     fn hughs_message_is_typed_at_once_unless_the_session_is_asking_or_starting() {
-        let ok = TypeCheck { state: "idle", ready: true, alive: true, stopping: false, held: false, quiet: true, sent_ago: None, switch_waiting: false, unconfirmed: false, mid_turn_ok: true };
+        let ok = TypeCheck { state: "idle", ready: true, alive: true, stopping: false, held: false, quiet: true, sent_ago: None, switch_waiting: false, unconfirmed: false, mid_turn_ok: true, idle_for: Duration::from_secs(1) };
         // Typed at its prompt, mid-turn (even with the screen busy), and after a failed turn.
         assert!(takes_typing(ok));
         assert!(takes_typing(TypeCheck { state: "working", quiet: false, ..ok }));
@@ -2140,6 +2150,12 @@ mod tests {
         assert!(!takes_typing(TypeCheck { switch_waiting: true, ..ok }));
         // At the prompt, on free()'s terms: the screen still, and no message still in flight.
         assert!(!takes_typing(TypeCheck { quiet: false, ..ok }));
+        // Card #154: idle with a background subagent's status line moving (never quiet):
+        // Hugh's or the Router's message goes in once the session has been idle 3 s,
+        // the app's own text (not mid-turn-ok) still waits for a still screen.
+        assert!(takes_typing(TypeCheck { quiet: false, idle_for: Duration::from_secs(3), ..ok }));
+        assert!(!takes_typing(TypeCheck { quiet: false, idle_for: Duration::from_secs(2), ..ok }));
+        assert!(!takes_typing(TypeCheck { quiet: false, idle_for: Duration::from_secs(60), mid_turn_ok: false, ..ok }));
         assert!(!takes_typing(TypeCheck { sent_ago: Some(Duration::from_secs(5)), ..ok }));
         // Mid-turn: not with the app's own text riding along, nor straight after another.
         let mid = TypeCheck { state: "working", ..ok };

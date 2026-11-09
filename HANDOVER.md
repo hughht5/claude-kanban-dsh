@@ -45,6 +45,11 @@ minutes, though Claude Code takes typing mid-turn and reads it at its next step.
   `Sessions::type_now(.., true)` as soon as the session can take it, mid-turn included. A held
   move goes first; nothing goes into a session being restarted onto its route (#98).
 - After an app restart the record is gone and a waiting message is typed at the prompt, as before.
+- Idle but never quiet (second fix, same day): a turn that ended with a background subagent
+  still running (a card-tester) keeps the status line moving, so `quiet` (1.5 s still screen)
+  never held and Hugh's message to #150 sat queued until the subagent ended. `takes_typing`
+  now lets a mid-turn-ok message in at an idle prompt once the session has been idle
+  `SETTLED` (3 s), still screen or not. The app's own text still waits for `free`.
 - Tests: `dispatch.rs` `a_message_goes_in_mid_turn_only_when_all_that_waits_may`,
   `the_mid_turn_record_is_per_card_and_forgotten`.
 
