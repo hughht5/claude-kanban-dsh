@@ -13,8 +13,9 @@
 //   vanishing.
 const termB64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 // What xterm sends on its own in answer to a query: CSI reports (cursor position R, device
-// attributes c, status n, mode $y, window t, keyboard flags u), OSC and DCS replies.
-const TERM_REPLY=/^\x1b(?:\[[?>=]?[\d;]*(?:\$y|[cnRtu])|\][\s\S]*|P[\s\S]*)$/;
+// attributes c, status n, mode $y, window t, keyboard flags u, and focus I/O when the replayed
+// output turns focus reports on), OSC and DCS replies.
+const TERM_REPLY=/^\x1b(?:\[[?>=]?[\d;]*(?:\$y|[cnRtuIO])|\][\s\S]*|P[\s\S]*)$/;
 const termLinks=new Set();
 let termPtyOn=false;
 function termListen(){

@@ -95,6 +95,7 @@ test("xterm's answers to old output during a replay are not typed into the sessi
   term.key("\x1b[24;1R"); // xterm answering the replayed cursor-position query
   term.key("\x1b]11;rgb:0f0f/1111/1717\x1b\\"); // and a colour query
   assert.deepEqual(app.inputs, []);
+  term.key("\x1b[O"); // a focus report the replayed output turned on (seen on the old build)
   term.key("h"); // Hugh's own key, while the replay still draws
   await flush();
   assert.deepEqual(app.inputs, ["h"]);
