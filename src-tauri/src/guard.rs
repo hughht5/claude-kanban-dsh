@@ -249,10 +249,85 @@ pub fn router_refusal(body: &Value, test_channel: bool) -> Option<(&'static str,
     Some((what, format!("{who} may not run {what}. Use the kanban_* tools for the board; only Hugh pushes, ships, installs live or restarts the app.")))
 }
 
+/// git's subcommands, and their options, that move or remove a branch or a worktree: a merge lane
+/// works detached and never moves a branch (card #160), so these are refused it.
+fn moves_a_branch(words: &[String]) -> Option<&'static str> {
+    let Some(("git", rest)) = invocation(words) else { return None };
+    const GIT_VALUED: [&str; 6] = ["-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path"];
+    let (i, sub) = subcommand(rest, &GIT_VALUED)?;
+    let args = &rest[i + 1..];
+    let has = |opts: &[&str]| args.iter().any(|a| opts.contains(&a.as_str()));
+    match sub {
+        "update-ref" | "switch" => Some("a move of a branch"),
+        "branch" if has(&["-f", "--force", "-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy"]) => Some("a move of a branch"),
+        "checkout" if has(&["-b", "-B", "--orphan"]) => Some("a move of a branch"),
+        "worktree" if args.first().is_some_and(|a| ["remove", "move", "prune"].contains(&a.as_str())) => Some("a change to the worktrees"),
+        _ => None,
+    }
+}
+
+/// The path an editing call writes, from its input (`file_path`, or `notebook_path`).
+fn edit_path(body: &Value) -> Option<&str> {
+    body.pointer("/tool_input/file_path").or_else(|| body.pointer("/tool_input/notebook_path")).and_then(Value::as_str)
+}
+
+/// Whether `path` is inside `root` (both as written, `\` or `/`, any case, `..` worked out).
+pub fn inside(path: &str, root: &str) -> bool {
+    fn parts(p: &str) -> Vec<String> {
+        let mut out: Vec<String> = vec![];
+        for part in p.split(['\\', '/']).filter(|s| !s.is_empty() && *s != ".") {
+            if part == ".." {
+                out.pop();
+            } else {
+                out.push(part.to_ascii_lowercase());
+            }
+        }
+        out
+    }
+    let r = parts(root);
+    let full = if std::path::Path::new(path).is_absolute() || path.starts_with(['/', '\\']) { path.to_string() } else { format!("{root}/{path}") };
+    let p = parts(&full);
+    !r.is_empty() && p.len() > r.len() && p[..r.len()] == r[..]
+}
+
+/// Why a call in a merge lane's session must be refused, if it must (card #160): an edit outside
+/// its worktree (`worktree`, the folder it runs in), and in a shell what the Router may never run
+/// (`router_shell_refusal`, with no install at all), plus any move of a branch.
+pub fn lane_refusal(body: &Value, worktree: &str) -> Option<(&'static str, String)> {
+    let tool = body.get("tool_name").and_then(Value::as_str).unwrap_or("");
+    if EDIT_TOOLS.contains(&tool) {
+        let path = edit_path(body).unwrap_or("");
+        if worktree.trim().is_empty() || !inside(path, worktree) {
+            return Some(("an edit outside its worktree", format!("The merge lane edits files only in its own worktree, {worktree}. Resolve the conflict there.")));
+        }
+        return None;
+    }
+    if !SHELL_TOOLS.split('|').any(|t| t == tool) {
+        return None;
+    }
+    let cmd = body.pointer("/tool_input/command").and_then(Value::as_str).unwrap_or("");
+    let what = router_shell_refusal(cmd, true).or_else(|| commands(&cmd.to_ascii_lowercase()).iter().find_map(|w| moves_a_branch(w)))?;
+    Some((what, format!("The merge lane may not run {what}. It works detached in its own worktree and moves no branch; the card's session pushes after your PASS. Finish the merge and report with kanban_merge_result.")))
+}
+
 /// The `guard` hook (`POST /hook/<token>/<session>/guard`, a `PreToolUse` for the shell tools
 /// of every card session): `{}` lets the call run, a `deny` refuses it. A refusal is logged on
 /// the session's card. Anything else takes no lock, so other calls go straight through.
 pub fn guard(app: &AppHandle, row_id: &str, body: &Value) -> Value {
+    // A merge lane (card #160): refusals go on the card it merges now.
+    if let Some(key) = crate::lane::key_of_row(app, row_id) {
+        let worktree = app.state::<std::sync::Arc<crate::sessions::Sessions>>().is_live(&key).map(|r| r.cwd).unwrap_or_default();
+        let Some((what, why)) = lane_refusal(body, &worktree) else { return json!({}) };
+        let raw = body.pointer("/tool_input/command").and_then(Value::as_str).or_else(|| edit_path(body)).unwrap_or("");
+        let cmd = shown(raw, what);
+        if let Ok(mut store) = app.state::<Board>().0.lock() {
+            if let Some(c) = crate::lane::running_job(&store, &key) {
+                let _ = store.add_log(&c.id, &format!("Refused {what} by the merge lane: {cmd}"), BY);
+            }
+        }
+        let _ = app.emit("cards-changed", ());
+        return deny(&why);
+    }
     if crate::routersession::is_router_row(app, row_id) {
         let Some((what, why)) = router_refusal(body, kanban_store::is_test()) else { return json!({}) };
         let cmd = shown(body.pointer("/tool_input/command").and_then(Value::as_str).unwrap_or(""), what);
@@ -416,6 +491,87 @@ mod tests {
         }
         // A test-channel Router never installs.
         assert!(router("", "PowerShell", json!({ "command": "powershell -File scripts/install.ps1 -Channel test" }), true).is_some());
+    }
+
+    const WT: &str = r"C:\Users\x\repo\.claude\worktrees\merge-lane";
+
+    fn lane(agent: &str, tool: &str, input: serde_json::Value) -> Option<(&'static str, String)> {
+        lane_refusal(&json!({ "agent_type": agent, "tool_name": tool, "tool_input": input }), WT)
+    }
+
+    /// Card #160: every refused form for a merge lane, and its own work running.
+    #[test]
+    fn the_lane_guard_refuses_pushes_kb_installs_branch_moves_and_edits_outside() {
+        let refused = [
+            ("git push origin card-7", "git push"),
+            ("git push --force-with-lease origin card-7", "git push"),
+            ("git -C C:/w push", "git push"),
+            ("cd x && git push", "git push"),
+            ("sh -c \"git push origin main\"", "git push"),
+            ("gh pr merge 12 --squash", "gh pr merge"),
+            ("gh api repos/a/b/merges", "gh api"),
+            ("kb list", "kb"),
+            ("kb.exe log 7 hi", "kb"),
+            ("& \"C:\\Users\\x\\Programs\\Claude Kanban DSH\\kb.exe\" move 7 Done", "kb"),
+            ("claude config set -g theme dark", "claude config"),
+            ("claude mcp add x", "claude mcp"),
+            ("powershell -File scripts/install.ps1", "an install (a test-channel Router never installs)"),
+            ("powershell -File scripts/install.ps1 -Channel test", "an install (a test-channel Router never installs)"),
+            ("Stop-Process -Name 'Claude Kanban DSH'", "a stop of a process"),
+            ("taskkill /IM claude-kanban-dsh.exe /F", "a stop of a process"),
+            ("sqlite3 C:/Users/x/.claude-kanban-dsh/board.db .tables", "the board's database"),
+            ("python -c \"import sqlite3; sqlite3.connect('board.db')\"", "the board's database"),
+            ("git branch -f card-7 HEAD", "a move of a branch"),
+            ("git branch -D card-7", "a move of a branch"),
+            ("git update-ref refs/heads/card-7 abc1234", "a move of a branch"),
+            ("git switch card-7", "a move of a branch"),
+            ("git checkout -b tmp", "a move of a branch"),
+            ("git -C C:/w worktree remove C:/w/.claude/worktrees/card-7", "a change to the worktrees"),
+        ];
+        for (c, what) in refused {
+            for tool in ["Bash", "PowerShell"] {
+                let (w, why) = lane("", tool, json!({ "command": c })).unwrap_or_else(|| panic!("the lane may run {c} in {tool}"));
+                assert_eq!(w, what, "{c}");
+                assert!(why.starts_with("The merge lane may not run"), "{why}");
+            }
+        }
+        // Its own work runs.
+        for c in [
+            "git fetch origin",
+            "git rebase --abort",
+            "git checkout --detach origin/main",
+            "git reset --hard origin/main",
+            "git clean -fdx -e target -e node_modules",
+            "git checkout --detach 1a2b3c4",
+            "git rebase origin/main",
+            "git rebase --onto HEAD abc1234 def5678",
+            "git rev-parse origin/card-7",
+            "git commit -m \"Bump the version (card #7)\"",
+            "git log --oneline origin/main..HEAD",
+            "git branch --list",
+            "git status --porcelain",
+            "export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo test --workspace",
+            "npm test",
+            "git worktree list",
+        ] {
+            assert!(lane("", "Bash", json!({ "command": c })).is_none(), "the lane can't run {c}");
+        }
+        // Edits: only inside its worktree.
+        for p in [format!("{WT}\\src\\main.rs"), format!("{}/Changelog.md", WT.replace('\\', "/")), format!("{}\\SRC\\X.RS", WT.to_uppercase()), "src/lib.rs".to_string()] {
+            for t in ["Edit", "Write", "MultiEdit"] {
+                assert!(lane("", t, json!({ "file_path": p })).is_none(), "{t} {p}");
+            }
+        }
+        assert!(lane("", "NotebookEdit", json!({ "notebook_path": format!("{WT}\\n.ipynb") })).is_none());
+        for p in [r"C:\Users\x\repo\src\main.rs", r"C:\Users\x\repo\.claude\worktrees\card-7\src\main.rs", &format!("{WT}\\..\\card-7\\x.rs"), r"C:\Users\x\repo\.claude\worktrees\merge-lane-2\x.rs", "../card-7/x.rs", WT] {
+            let (w, _) = lane("", "Edit", json!({ "file_path": p })).unwrap_or_else(|| panic!("an edit of {p}"));
+            assert_eq!(w, "an edit outside its worktree");
+        }
+        assert!(lane("", "Write", json!({})).is_some(), "no path: refused");
+        assert!(lane_refusal(&json!({ "tool_name": "Edit", "tool_input": { "file_path": format!("{WT}\\x") } }), "").is_some(), "no worktree known: refused");
+        // Reading is never refused.
+        assert!(lane("", "Read", json!({ "file_path": r"C:\anything" })).is_none());
+        assert!(lane("", "Grep", json!({ "pattern": "push" })).is_none());
     }
 
     #[test]
