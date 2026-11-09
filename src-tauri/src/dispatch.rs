@@ -1375,6 +1375,7 @@ pub fn on_hook(app: &AppHandle, row_id: &str, event: &str, body: &Value) {
     crate::search::on_hook(app, row_id, event, body);
     let live = app.state::<Arc<Sessions>>();
     let testing = live.testing_hook(row_id, event, body);
+    let running = live.running_hook(row_id, event, body);
     if let Some((card, state, prompt)) = live.hook(row_id, event, body) {
         record_state(app, row_id, &state);
         if event == "Stop" {
@@ -1389,6 +1390,10 @@ pub fn on_hook(app: &AppHandle, row_id: &str, event: &str, body: &Value) {
     // After the state, so a review ending with its turn goes straight from Testing to nothing.
     if let Some((card, on)) = testing {
         let _ = app.emit("testing", json!({ "card": card, "on": on }));
+    }
+    // Its subagents changed: the board's status chip reads them again (card #150).
+    if let Some(card) = running {
+        let _ = app.emit("doing", json!({ "card": card }));
     }
 }
 

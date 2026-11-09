@@ -75,10 +75,11 @@ fn session_states(live: State<Arc<sessions::Sessions>>) -> Value {
     json!(live.states())
 }
 
-/// The cards whose session is running a review or a test, for the "Testing" chip (card #86).
+/// What each running card's session is doing: its state, since when and its subagents, for
+/// the board's status chip (card #150).
 #[tauri::command]
-fn session_testing(live: State<Arc<sessions::Sessions>>) -> Value {
-    json!(live.testing_cards())
+fn session_doing(live: State<Arc<sessions::Sessions>>) -> Value {
+    json!(live.doing())
 }
 
 /// Starts a session for `card`. `mode` is "new" (a fresh conversation in the repo's folder)

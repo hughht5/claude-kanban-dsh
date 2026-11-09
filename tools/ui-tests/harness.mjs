@@ -10,7 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const UI = path.resolve(here, "..", "..", "ui");
 
 // The files a board face needs, in index.html's order (panel.js, stacks.js and the rest are left out).
-export const FILES = ["labels.js", "board.js", "small.js", "needs.js", "check-size.js", "steps.js", "done-when.js", "waits.js", "changes.js", "filterbar.js", "face.js", "archive-ask.js", "colwidths.js"];
+export const FILES = ["labels.js", "board.js", "small.js", "needs.js", "check-size.js", "steps.js", "done-when.js", "waits.js", "doing.js", "changes.js", "filterbar.js", "face.js", "archive-ask.js", "colwidths.js"];
 
 // `storage`: a localStorage for the page (card #132's held places), else an in-memory one, `store` (card #130).
 export function boot({ files = FILES, invoke = {}, storage = null } = {}) {

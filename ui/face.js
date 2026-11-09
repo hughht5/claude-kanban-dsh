@@ -13,7 +13,7 @@
 (()=>{
 const AGENT={route:"Router",critique:"Critic",test:"Tester",review:"Reviewer",repro:"Reproducer",merge:"Merger"};
 // The chip row's order; anything else keeps its own order after these.
-const CHIP_ORDER=["label","wait","route","critique","test","review","repro","merge","checksize"];
+const CHIP_ORDER=["doing","label","wait","route","critique","test","review","repro","merge","checksize"];
 const META_ORDER=["repo","issue","pr","logins","stack","acct","ago"];
 
 // What a node in the card's .tags line is.
@@ -21,6 +21,7 @@ function chipKind(el){
   if(!el||!el.classList)return"other";
   const cl=el.classList,ds=el.dataset||{};
   if(ds.meta)return"meta";
+  if(ds.doing!==undefined)return"doing"; // what the card is doing (doing.js, card #150), first
   if(cl.contains("chg-tag"))return"chg";
   if(cl.contains("lbl"))return"label";
   if(cl.contains("wt-chip"))return"wait";

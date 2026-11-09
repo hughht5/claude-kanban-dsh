@@ -1077,3 +1077,12 @@ UI only: no data, setting or migration.
 ## A typed message left in the prompt gets Enter, not another copy (9 Nov 2026, card #175)
 
 No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #175 commit>`, then stage the live update. Files: `src-tauri\src\sessions.rs` (`retry_step`, `RetryCheck`, `prompt_text`, `prompt_holds`, `DRAW_WAIT`, `nudge`, `Typed::first`), `src-tauri\src\dispatch.rs` (the log line), `HANDOVER.md`.
+
+## Card #150: what each card is really doing (9 Nov 2026, branch `card-150`)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\doing.rs` (each session's subagents; card #129's `running.rs` is another module), `Live.running`, `Sessions::running_hook` and `Sessions::doing` (`sessions.rs`), the `doing` event (`dispatch.rs`), the `session_doing` command (`session_cmds.rs`, `main.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #150 commits>`. Nothing on the board or in the data folder changes: it is all in memory |
+| `ui\doing.js`, `ui\doing.css` and their tags in `ui\index.html`; `cardEl` draws `doingChip` where `buildingChip` was (`ui\board.js`); `buildingChip` and its `testing` set gone from `ui\panel.js`; the chip first in the row (`ui\face.js`) | Same revert. The Building and Testing chips come back |
+| The test app's own chip on each tile (card #147's `KBTestApp.tileChip`, still in `ui\testapp.js`) drawn by the status chip, not by testapp.js (`ui\testapp.js`, `ui\testapp.css`, `tools\ui-tests\testapp.test.mjs`); `window.testappState` and the `testapp-status` event; `window.Waits.unmet` (`ui\waits.js`) | Same revert |
+| `tools\ui-tests\doing.test.mjs`, `doing.js` in the test harness's files, two face tests that now see the status chip | Same revert, or `Remove-Item tools\ui-tests\doing.test.mjs -Confirm:$false` |

@@ -46,6 +46,9 @@ function tipLine(w,i){if(i.st==="gone")return`#${i.n}: there's no card with this
     :repoKey(w)!==repoKey(b)?"another repo: ready at Deploy complete":"ready from Human test";
   return`#${i.n} ${plainTitle(b,60)}: ${where} (${why})`}
 
+// The waits not met yet, for the card's status chip (doing.js, card #150): [{n, st, tip}].
+window.Waits={unmet:c=>isArch(c)?[]:waitsOf(c).map(n=>info(c,n)).filter(i=>i.st!=="met").map(i=>({n:i.n,st:i.st,tip:tipLine(c,i)}))};
+
 // The card's chip: "Waits on #12, #40", or "Waits on #12 +3"; a circle first, met cards last.
 const RANK={loop:0,wait:1,gone:2,arch:2,met:3};
 function chip(c){const ns=waitsOf(c);if(!ns.length||isArch(c))return"";

@@ -10,6 +10,7 @@ mod configwatch;
 mod control;
 mod critic;
 mod dispatch;
+mod doing;
 mod done_when;
 mod evidence;
 mod feed;
@@ -932,7 +933,7 @@ fn main() {
             app_name,
             app_platform,
             session_states,
-            session_testing,
+            session_doing,
             session_start,
             session_input,
             session_resize,

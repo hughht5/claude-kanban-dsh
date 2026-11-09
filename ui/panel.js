@@ -898,25 +898,17 @@ function attachTerm(){
   termAttach(panel.link);
 }
 
-// Session state from the hooks, shown as a dot on each card and in the panel's header.
+// Session state from the hooks, shown as a dot on each card and in the panel's header. What the
+// card is doing (the old "Building" and "Testing" chips, cards #75 and #86) is doing.js's status
+// chip now (card #150).
 let activity={};
 const STATE_LABEL={starting:"Starting",idle:"Ready",working:"Working",permission:"Needs you",failed:"Turn failed",ended:"Ended"};
-// "Building" on a card while its session works (Hugh, card #75); it stands in for the plan chip then.
-// "Testing" instead while the session runs a review or a test: /code-review, or a subagent that
-// tests, reviews or verifies (card #86); a background one shows it after the turn ends too.
-let testing=new Set();
-async function loadTesting(){try{testing=new Set(await invoke("session_testing"))}catch(e){}}
-function buildingChip(id){const s=activity[id];
-  if(testing.has(id)&&(s==="working"||s==="idle"))return`<span class="tag chip testing" title="Session: running a review or tests">Testing</span>`;
-  return s==="working"?`<span class="tag chip building" title="Session: working">Building</span>`:""}
 function stateDot(id){const s=activity[id];return s?`<span class="sdot s-${esc(s)}" title="Session: ${esc(STATE_LABEL[s]||s)}"></span>`:""}
 (async()=>{
   const ev=window.__TAURI__.event;
-  ev.listen("testing",e=>{if(e.payload.on)testing.add(e.payload.card);else testing.delete(e.payload.card);render()});
   try{activity=await invoke("session_states")}catch(e){}
-  await loadTesting();
   ev.listen("activity",e=>{activity[e.payload.card]=e.payload.state;render();if(panel&&panel.id===e.payload.card)refreshInfo()});
-  ev.listen("session-changed",async()=>{try{activity=await invoke("session_states")}catch(e){}await loadTesting();render()});
+  ev.listen("session-changed",async()=>{try{activity=await invoke("session_states")}catch(e){}render()});
   ev.listen("ship-request",e=>shipRequest(e.payload));
   ev.listen("open-card",e=>openPanel(e.payload)); // a toast was clicked
   render();

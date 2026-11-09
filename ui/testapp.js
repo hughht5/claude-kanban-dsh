@@ -3,8 +3,9 @@
 // the "testapp" event and testapp_status say: a "Test apps" chip in the header that opens a popover
 // (a row per slot in use: its card, turn, line and install, with Release and Free; the cards waiting
 // for a test app; held restarts; the old DSH lock folder), a banner when a test-app restart is
-// pending, and a chip on each card's tile (its own test app, its place in a line, or its stack lead's
-// test app). In every test app it also tells the app, at most every 30 s, that Hugh is using it
+// pending. A card's tile shows its test app on its status chip (doing.js, card #150), which asks
+// KBTestApp.tileChip and reads the status through window.testappState, told of a change by the
+// document's "testapp-status" event. In every test app it also tells the app, at most every 30 s, that Hugh is using it
 // (testapp_input). An older backend without these commands shows nothing. Nothing here focuses the
 // window or opens a toast. The pure parts (KBTestApp) are set before the Tauri check, for tests.
 (()=>{
@@ -185,26 +186,12 @@
     if(keep){const b=bar.querySelector(`[data-act="${CSS.escape(keep)}"]`);if(b&&!b.disabled)b.focus()}
   }
 
-  // Card tiles. Idempotent: it changes a tile only when its chip is wrong, so the observer settles at once.
-  function decorate(){
-    const board=document.getElementById("board");if(!board)return;
-    const all=typeof cards!=="undefined"&&Array.isArray(cards)?cards:[],byId=new Map(all.map(c=>[String(c.id),c]));
-    for(const tile of board.querySelectorAll(".card[data-id]")){
-      const c=byId.get(tile.dataset.id),w=c?tileChip(c,all,st):null,have=tile.querySelector(":scope .tapcard");
-      if(!w){if(have)have.remove();continue}
-      const cls="tag chip tapcard "+w.c;
-      if(have&&have.textContent===w.t&&have.className===cls&&have.title===w.title)continue;
-      if(have)have.remove();
-      const el=document.createElement("span");el.className=cls;el.textContent=w.t;el.title=w.title;
-      const host=tile.querySelector(":scope > .tags")||tile.querySelector(":scope .stk-sub")||tile;
-      host.prepend(el);
-    }
-  }
-  {const board=document.getElementById("board");
-   if(board)new MutationObserver(()=>decorate()).observe(board,{childList:true,subtree:true})}
+  // Card tiles: the status chip (doing.js) reads the latest status from here.
+  window.testappState=()=>st;
+  const told=()=>{try{document.dispatchEvent(new Event("testapp-status"))}catch(e){}};
 
-  function draw(){drawChip();drawPop();drawBar();decorate()}
-  function take(s){if(s&&typeof s==="object"){st=s;draw()}}
+  function draw(){drawChip();drawPop();drawBar()}
+  function take(s){if(s&&typeof s==="object"){st=s;draw();told()}}
 
   // key: "release-N", "free-N" (slot N), "mkdir", "hold" or "letrestart".
   async function act(key,where){

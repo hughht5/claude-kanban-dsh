@@ -34,11 +34,5 @@
 /* The banner: amber like a warning, since a restart stops the test app's sessions. */
 .testappbar{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--panel))}
 /* Card tiles */
-.chip.tapcard{border-radius:8px}
-.chip.tap-hold{color:var(--accent)}
-.chip.tap-hold.tap-over{color:var(--warn)}
-.chip.tap-wait{color:var(--muted);border-style:dashed}
-.chip.tap-paused{color:var(--warn);border-style:dashed}
-.chip.tap-own{color:var(--fg)}
-.chip.tap-stack{color:var(--muted);border-style:dotted}
+/* A card's own test app, its turn or its place in line is on its status chip (doing.css, card #150). */
 @media (max-width:640px){.tappop{min-width:0;width:calc(100vw - 32px)}}

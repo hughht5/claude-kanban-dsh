@@ -74,7 +74,7 @@ input[type=search]{background:var(--panel);border:1px solid var(--line);border-r
 .chip.requested,.chip.shipping{color:var(--info)}
 .chip.shipped{color:var(--ok)}
 .chip.queued{color:var(--muted);border-style:dashed}
-.chip.plan-requested,.chip.plan-claimed{color:var(--info)} .chip.plan-started{color:var(--ok)} .chip.building{color:var(--accent)}
+.chip.plan-requested,.chip.plan-claimed{color:var(--info)} .chip.plan-started{color:var(--ok)}
 /* Take it to (card #76): where a card goes on to by itself, and its card-tester subagent's verdict. */
 .chip.auto{color:var(--accent);border-style:dashed} .chip.auto-deploy{color:var(--warn)}
 .chip.route{color:var(--muted)} .chip.route-small{color:var(--ok)} .chip.route-split{color:var(--info)}
@@ -91,7 +91,6 @@ input[type=search]{background:var(--panel);border:1px solid var(--line);border-r
 .repro .rp-earlier summary{cursor:pointer;font-size:12px;color:var(--muted)} .repro .rp-round{border-top:1px solid var(--line);padding-top:6px;margin-top:6px;display:flex;flex-direction:column;gap:4px}
 .repro img.shot.gone{cursor:default;border-style:dashed;color:var(--muted);font-size:12px;padding:6px;max-height:none}
 .hint{margin:-8px 0 0;font-size:12.5px;line-height:1.45;color:var(--muted)} .hint.warn{color:var(--warn);border-left:3px solid var(--warn);padding-left:8px}
-.chip.testing{color:var(--warn)}
 /* The stuck-session monitor (card #99). */
 .chip.stuck{color:var(--bad);border-color:var(--bad);font-weight:600} .stuck-row{color:var(--bad)}
 .addbtn{margin-left:8px}

@@ -1,0 +1,17 @@
+/* What each card is doing (card #150): one status chip, first in a tile's chip row. Its colour says
+   who it waits on: you (purple), something wrong (red), a subagent or a review (amber), the test
+   app (blue), its own turn (the accent, as "Building" was), nothing (muted). */
+.chip.doing{white-space:nowrap}
+.chip.d-need{color:var(--ask);background:var(--ask-soft)}
+.chip.d-stuck,.chip.d-failed{color:var(--bad)}
+.chip.d-agent{color:var(--warn)}
+.chip.d-install,.chip.d-tapp,.chip.d-starting{color:var(--info)}
+.chip.d-tline{color:var(--info);border-style:dashed}
+.chip.d-working{color:var(--accent)}
+.chip.d-waits{color:var(--muted);border-style:dashed}
+.chip.d-shipped{color:var(--ok)}
+.chip.d-idle{color:var(--muted)}
+.chip.d-own{color:var(--fg)}
+.chip.d-none{color:var(--muted);border-style:dashed;font-weight:500}
+/* A stack's tile carries it on its sub-line. */
+.stk-sub .chip.doing{font-size:11px;vertical-align:baseline}

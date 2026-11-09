@@ -161,16 +161,20 @@ test("the page: header chip, tile chips, banner; Release and Free ask twice and 
   assert.equal(chip.textContent, "Test apps: 4 in use · 2 waiting");
   assert.equal(b.document.querySelector(".tapwrap").hidden, false);
   assert.equal(chip.classList.contains("warn"), false);
-  const tap = (id) => { const el = b.card(id).querySelector(".tapcard"); return el && [el.textContent, el.className]; };
-  assert.deepEqual(tap("card-140"), ["Test 2 · testing", "tag chip tapcard tap-hold"]);
-  assert.deepEqual(tap("card-141"), ["Test 3 · 1st in line", "tag chip tapcard tap-wait"]);
-  assert.deepEqual(tap("card-142"), ["Test", "tag chip tapcard tap-own"]);
-  assert.deepEqual(tap("card-150"), ["Test app: 2nd in line", "tag chip tapcard tap-wait"]);
-  assert.deepEqual(tap("card-161"), ["Test 4 · stack", "tag chip tapcard tap-stack"]);
+  // Each tile's test app is on its status chip (doing.js, card #150): no chip of testapp.js's own.
+  const tap = (id) => { const el = b.card(id).querySelector(".chip.doing"); return el && [el.textContent, el.dataset.doing]; };
+  assert.deepEqual(tap("card-140"), ["Test 2 · testing", "tapp"]);
+  assert.deepEqual(tap("card-141"), ["Test 3 · 1st in line", "tline"]);
+  assert.deepEqual(tap("card-142"), ["Test", "own"]);
+  assert.deepEqual(tap("card-150"), ["Test app: 2nd in line", "tline"]);
+  assert.deepEqual(tap("card-161"), ["Test 4 · stack", "own"]);
   assert.equal(tap("card-170"), null);
-  // Idempotent: a second pass leaves the same single chip.
-  b.decorate();
-  assert.equal(b.card("card-140").querySelectorAll(".tapcard").length, 1);
+  assert.equal(b.document.querySelectorAll(".tapcard").length, 0);
+  assert.match(b.card("card-140").querySelector(".chip.doing").title, /Claude Kanban DSH Test 2 \(CDP port 9335\)\. Its session has the turn now\./);
+  // A card with a session and its own test app: what it does, then where to test it.
+  b.ctx.__d = { "card-142": { state: "idle", since: iso(4), turnSince: null, running: [], testing: false } };
+  b.run("doingLoaded=true;doing=__d;Doing.doingPaint()");
+  assert.deepEqual(tap("card-142"), ["Idle 4m · Test", "idle"]);
   // The banner names the slot and what its install waits for.
   const bar = b.document.getElementById("testappBar");
   assert.equal(bar.hidden, false);

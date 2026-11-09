@@ -40,8 +40,7 @@ folder.
 - **A tester turn**: the card's session uses its own test app (its own checks and its
   card-tester) during its turn, or waits in line for it and gets a message when the turn is its
   own. A paused session is never resumed for it: the turn passes to the next card with a running
-  session, and the paused card keeps its place ("Test app: turn waits for its session" on its
-  tile). Release gives back the turn only: the test app stays the card's.
+  session, and the paused card keeps its place (on its tile's status chip). Release gives back the turn only: the test app stays the card's.
 - **An install turn**: a session outside the app (Hugh's own, for example) takes one on one test
   app with `kb testapp take --install --slot <N> --owner <o> --label "wave 3"`. It goes ahead of
   every tester on that test app, waits only for the current turn to end, and ends when its install
@@ -380,15 +379,39 @@ A column prompt or template (Settings) can name the prompts folder as `{prompts}
 `follow {prompts}\planning.md`: the app fills in the private folder's `prompts` folder, or else
 the bundled examples (see "Private folder"), with the system's own separator (card #114).
 
-## Building
+## What a card is doing
 
-While a card's session is working on a turn, the card shows a **Building** chip (beside its pulsing
-dot), in place of the plan chip ("Session started" and the like). It goes when the turn ends.
+Each card with a running session, and each In progress card without one, has one **status chip**
+first in its chip row (card #150). It says what the card is really doing; hover it for the detail.
+It replaces the old Building and Testing chips, the test app's own chip on the tile, and the plan
+chip while a session runs ("Plan requested" and "Starting session" still show beside it). The first
+that holds wins:
 
-While the session runs a review or a test, the chip reads **Testing** instead: a `/code-review` (or any
-skill whose name says review, test or verify), or a subagent whose description says it tests, reviews or
-verifies (but not one that builds, like "Build the testing chip"). A subagent running in the background keeps the card on Testing after the turn ends, until it
-finishes. Sessions started before the update show Building only, until they are restarted.
+| Chip | When | The tooltip says |
+|---|---|---|
+| **Needs you** (or **Turn failed**, **Crashed**) | its session asks a question, waits at a permission prompt, or failed | the question, or what it asks to run |
+| **Installing**, **Install waiting** | its build is going into the test app | what the install waits for |
+| **Reviewer running**, **Tester running**, **Critic running**, **Reproducer running**, **Merger running**, **Router running** | one of the app's subagents runs for it, in the foreground or in the background after the turn ended ("+1" when more run) | every subagent, its description and how long it has run |
+| **Subagent running** | any other subagent (an Explore, a general-purpose one) | the same |
+| **Reviewing** | a review skill such as `/code-review` | |
+| **Test 2 · testing** (or **· installing**) | its session has the turn on its own test app (card #147) | which test app, its CDP port, and when the turn ends |
+| **Test 2 · 1st in line**, **Test app: 2nd in line** | it waits for a turn on its test app, or for a test app to come free | its place, and whether its session is paused |
+| **Working 12m** | its session is on a turn, for that long | since when, and its to-do step |
+| **Starting** | its session is starting | |
+| **Waiting on #12** | its `blockedBy` cards aren't ready (with a session, or in In progress; it takes the place of the "Waits on" chip there) | each card and why it isn't ready |
+| **Shipped, session open** | it shipped and its session is still open | |
+| **Idle 25m** | its session is open and waiting for a message, for that long | since when, and its to-do step |
+| **No session** | an In progress card with no session running (a start queued under the cap shows **Queued** instead) | how to start one |
+
+A card with a test app of its own and nothing running on it names it at the end of the chip
+("Idle 5m · Test 2"; a stack's child "· Test 4 · stack"), so the tile still says where to test it.
+
+A card the Monitor thinks may be stuck keeps its **May be stuck** box above the chips; its chip
+says what the session is doing under it, and its tooltip starts with the Monitor's reason.
+
+The times move on by themselves every 30 s. The subagents come from the session's hooks, so a
+session started before the update shows them only once it is restarted (until then it shows Working
+and Idle).
 
 ## macOS (untested, unsigned)
 

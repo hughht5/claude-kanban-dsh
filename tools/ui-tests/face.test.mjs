@@ -60,6 +60,7 @@ test("the pure helpers", () => {
   // A stable order: labels, waits, route, critique, test, review, repro, merge, check size, then the rest as drawn.
   const kinds = ["other1", "merge", "label", "checksize", "other2", "test", "wait", "route", "review", "critique", "repro"];
   const kindOf = (k) => (k.startsWith("other") ? "other" : k);
+  assert.deepEqual(F.orderChips(["label", "doing", "other"], (k) => k), ["doing", "label", "other"], "what it is doing comes first (card #150)");
   assert.deepEqual(F.orderChips(kinds, kindOf), ["label", "wait", "route", "critique", "test", "review", "repro", "merge", "checksize", "other1", "other2"]);
 });
 
@@ -77,6 +78,7 @@ test("labels come first in the one chip row, in the mockup's order", () => {
   assert.equal(row.querySelector(".chip.auto").textContent, "Goes on by itself");
   // Human test: test, review, then the dashed check size, then To test; the time last when known.
   assert.deepEqual(rowKinds(b, b.card("c121")), ["test", "review", "checksize", "other"]);
+  // No "No session" chip here: the harness's session_doing never answers (doing.js, card #150).
   assert.deepEqual(rowKinds(b, b.card("c120")), ["time"]);
   assert.equal(b.card("c120").querySelector(".timein").textContent, "In progress 1h 12m");
 });
@@ -86,7 +88,7 @@ test("the face parts are in the mockup's order", () => {
   b.show(fixture(), { needs: NEEDS });
   const parts = (id) => b.card(id).children.filter((x) => !x.hidden).map((x) => x.className.split(" ")[0]);
   assert.deepEqual(parts("c120"), ["t", "dw-line", "tags", "s", "face-meta"]);
-  assert.deepEqual(parts("c124"), ["t", "wbox", "face-meta"]); // an empty chip row hides
+  assert.deepEqual(parts("c124"), ["t", "wbox", "tags", "face-meta"]); // its chip row holds "Needs you" (card #150)
   assert.deepEqual(parts("c128"), ["t", "tags", "face-agent", "face-meta"]);
   assert.deepEqual(parts("c121"), ["t", "face-thumbs", "tags", "face-agent", "face-meta"]);
   // The agent line replaces the summary; the summary stays (hidden) for the panel and search.

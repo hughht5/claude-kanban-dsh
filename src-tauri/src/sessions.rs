@@ -800,6 +800,8 @@ struct Live {
     /// When the turn in progress began (its first `UserPromptSubmit`), for the chat panel's
     /// "Working… (5m 55s)" line. Kept through a question to Hugh; cleared when the turn ends.
     turn_since: Option<Instant>,
+    /// The same, by the clock, for the board's status chip (`doing`).
+    turn_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The question dialog on screen, from its `PreToolUse` hook: the call's `tool_use_id`
     /// (if the hook gave one) and its questions. Cleared once the session leaves "permission"
     /// or the chat panel has answered it.
@@ -818,6 +820,8 @@ struct Live {
     untaken: Option<String>,
     /// Its reviews and tests in flight, for the card's "Testing" chip.
     testing: crate::testing::Testing,
+    /// Its subagents in flight, by name, for the card's status chip (card #150).
+    running: crate::doing::Running,
     /// A `/btw` overlay is up (`ask_btw`): nothing else is typed into the session meanwhile.
     btw: bool,
     /// A slash command was typed, and many open a screen of their own (`/config`, `/cost`, a
@@ -917,6 +921,22 @@ pub struct Watch {
     pub claude_session_id: String,
     pub transcript: Option<std::path::PathBuf>,
     pub fail_error: Option<String>,
+}
+
+/// One live card session's status, as the board's status chip reads it (`Sessions::doing`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Doing {
+    /// "starting", "idle", "working", "permission" or "failed".
+    pub state: String,
+    /// When it went into that state (RFC 3339).
+    pub since: String,
+    /// When the turn in progress began, if it is on one.
+    pub turn_since: Option<String>,
+    /// Its subagents running, oldest first.
+    pub running: Vec<crate::doing::Sub>,
+    /// It is running a review or a test (`testing.rs`).
+    pub testing: bool,
 }
 
 pub struct Sessions {
@@ -1252,7 +1272,7 @@ impl Sessions {
         }
         live.insert(
             key.to_string(),
-            Live { row: row.clone(), writer, master: pair.master, child, ring, screen, alive, last_out, state: "starting".into(), ready: false, sent_at: None, retried: false, stopping: false, switch: Switch::default(), hold_until: None, state_since: Instant::now(), state_at: chrono::Utc::now(), turn_since: None, question: None, waits: Default::default(), transcript: None, fail_error: None, typed: None, untaken: None, testing: Default::default(), btw: false, dialog: None },
+            Live { row: row.clone(), writer, master: pair.master, child, ring, screen, alive, last_out, state: "starting".into(), ready: false, sent_at: None, retried: false, stopping: false, switch: Switch::default(), hold_until: None, state_since: Instant::now(), state_at: chrono::Utc::now(), turn_since: None, turn_at: None, question: None, waits: Default::default(), transcript: None, fail_error: None, typed: None, untaken: None, testing: Default::default(), running: Default::default(), btw: false, dialog: None },
         );
         Ok(row)
     }
@@ -1302,6 +1322,7 @@ impl Sessions {
             l.state_at = chrono::Utc::now();
         }
         l.turn_since = turn_start(l.turn_since, state, Instant::now());
+        l.turn_at = l.turn_since.and(l.turn_at.or_else(|| Some(chrono::Utc::now())));
         l.state = state.to_string();
         Some((card_id.clone(), l.state.clone(), prompt))
     }
@@ -1315,6 +1336,37 @@ impl Sessions {
         let was = l.testing.active(now);
         let is = l.testing.hook(event, body, now);
         (was != is).then(|| (card_id.clone(), is))
+    }
+
+    /// A hook from session `row_id`, for its subagents (`doing.rs`). Returns the card when
+    /// what it runs changed.
+    pub fn running_hook(&self, row_id: &str, event: &str, body: &Value) -> Option<String> {
+        let mut live = self.live.lock().ok()?;
+        let (card_id, l) = live.iter_mut().find(|(_, l)| l.row.id == row_id)?;
+        l.running.hook(event, body, chrono::Utc::now()).then(|| card_id.clone())
+    }
+
+    /// What each running card's session is doing, for the board's status chip (card #150): its
+    /// state, since when, when its turn began, its subagents and whether it is testing.
+    pub fn doing(&self) -> HashMap<String, Doing> {
+        let Ok(live) = self.live.lock() else { return HashMap::new() };
+        let now = Instant::now();
+        let wall = chrono::Utc::now();
+        // The clock times kept beside the `Instant`s, to the second: the page compares answers.
+        let at = |t: chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        live.iter()
+            .filter(|(_, l)| l.alive.load(Ordering::SeqCst) && !l.stopping)
+            .map(|(k, l)| {
+                let d = Doing {
+                    state: if l.ready { l.state.clone() } else { "starting".into() },
+                    since: at(l.state_at),
+                    turn_since: l.turn_at.map(at),
+                    running: l.running.list(wall),
+                    testing: l.testing.active(now),
+                };
+                (k.clone(), d)
+            })
+            .collect()
     }
 
     /// The running cards whose session is running a review or a test.
@@ -1348,9 +1400,11 @@ impl Sessions {
         l.state_since = Instant::now();
         l.state_at = chrono::Utc::now();
         l.turn_since = None;
+        l.turn_at = None;
         l.question = None;
         l.waits.left("idle");
         l.testing.turn_ended();
+        l.running.turn_ended();
         Some((card_id.clone(), l.state.clone()))
     }
 
@@ -1366,6 +1420,7 @@ impl Sessions {
         if l.state == "starting" {
             l.state = "idle".into();
             l.state_since = Instant::now();
+            l.state_at = chrono::Utc::now();
         }
         Some((card_id.clone(), l.state.clone()))
     }
