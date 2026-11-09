@@ -31,7 +31,8 @@ through the running app (a card session's own card when <n> is left out):
                                        reviewer, tester; give it once for each)
   kb log <n> "<text>"                  add a log line
   kb move <n> "<column>" [--reason r]  move a card (your own card's move waits for your turn to end)
-  kb create --title <t> [--repo r] [--column c] [--summary s] [--template id] [--stack <lead>] [--labels BUG,RCS] [--to Planning|"Human test"]
+  kb create --title <t> [--repo r] [--column c] [--summary s] [--template id] [--stack <lead>] [--labels BUG,RCS] [--to Planning|"Human test"] [--skip-planning]
+                                       --skip-planning: its flow skips Planning; it starts now in In progress
                                        --stack: create it straight into that card's stack
   kb stack [<lead>]                    list a stack: its lead and its cards in order
   kb stack <lead> add <n>              put card n into the stack led by <lead>
@@ -269,7 +270,7 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
                 Some(v) => Some(v.parse::<i64>().map_err(|_| "--stack needs the lead card's number")?),
                 None => None,
             };
-            ("kanban_create_card", json!({ "title": opt("--title").ok_or("create needs --title")?, "repo": opt("--repo"), "column": opt("--column"), "summary": opt("--summary"), "stack": stack, "template": opt("--template"), "labels": opt("--labels"), "to": opt("--to") }))
+            ("kanban_create_card", json!({ "title": opt("--title").ok_or("create needs --title")?, "repo": opt("--repo"), "column": opt("--column"), "summary": opt("--summary"), "stack": stack, "template": opt("--template"), "labels": opt("--labels"), "to": opt("--to"), "skipPlanning": args.iter().any(|a| a == "--skip-planning") }))
         }
         "stack" => stack_args(args)?,
         "passed" => ("kanban_set_passed", json!({ "card": num(0).ok_or("passed needs a card number")?, "passed": !args.iter().any(|a| a == "--off") })),

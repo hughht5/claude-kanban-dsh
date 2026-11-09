@@ -915,3 +915,11 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: Hugh's move into Human test from `kb` or his own session outside the app never skips it, as his drag doesn't (`dispatch::hughs_own`) | The same revert |
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
+
+## Skip Planning when a card is made (9 Nov 2026, card #169, branch `card-169`)
+
+PowerShell 5.1 commands.
+
+| Change | Undo |
+|---|---|
+| `kanban_create_card`'s `skipPlanning` (`src-tauri\src\tools.rs`), `kb create --skip-planning` (`crates\kb\src\main.rs`) and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #169 commit>`, then stage the live update as usual. A card made this way only has #162's `skipPlanning` field |
