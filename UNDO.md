@@ -999,3 +999,7 @@ PowerShell 5.1 commands.
 | Change | Undo |
 |---|---|
 | `kanban_create_card`'s `skipPlanning` (`src-tauri\src\tools.rs`), `kb create --skip-planning` (`crates\kb\src\main.rs`) and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #169 commit>`, then stage the live update as usual. A card made this way only has #162's `skipPlanning` field |
+
+## Card #170: Router may message a card Hugh has open
+Undo: in `src-tauri/src/routertools.rs`, put back the `routersession::hands_off(app, &store, &c)` refusal
+at the top of the `kanban_session_send` arm (see `git show <card #170 commit>`), or `git revert` the commit.
