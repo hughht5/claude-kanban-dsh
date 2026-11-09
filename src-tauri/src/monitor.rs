@@ -670,7 +670,7 @@ fn act(app: &AppHandle, live: &Arc<Sessions>, memory: &mut Memory, card: &Card, 
                 if let Ok(mut st) = app.state::<Board>().0.lock() {
                     let _ = st.note_app_message(&card.id, &text);
                 }
-                let typed =still_repeating(live, &card.id, &about, interval) && !crate::router::restarting(&card.id) && live.type_now(&card.id, &text, true).unwrap_or(false);
+                let typed = still_repeating(live, &card.id, &about, interval) && !crate::router::restarting(&card.id) && live.type_now(&card.id, &text, true).unwrap_or(false);
                 if !typed {
                     if let Some(s) = next.as_mut() {
                         s.typed = false; // Hugh is told at the next check if it is still stuck
