@@ -2128,7 +2128,14 @@ or any session with `kanban_router`. The decisions below are the router's after 
     the old version — held by ..."). OK (`update_failure_seen`, with the page's `kind`) clears only the
     one it showed; the failure shows first. A first install whose kb.exe didn't land exits 3 too.
 - **Test:** `scripts\test-kb-locked.ps1 [-Channel test]` (test channels only), in your test-app
-  turn. It installs three times; see its header.
+  turn. It installs three times; see its header. `-Restart` and `-Fail` (card #136, stack #133)
+  test Restart now instead, because install.ps1's own kb.exe copy (its step 4) would hide a
+  broken hook and the helper has no such copy. Each stages the build, clicks `#updNow` over the
+  slot's CDP port, and checks the app comes back with `--background`. `-Restart` holds the planted
+  kb.exe with a `kb mcp` and checks it is replaced, with an ok result and no notice. `-Fail` opens
+  kb.exe from the script with no write or delete sharing: a `kb mcp` can't make the installer
+  exit 3, since a running exe can still be renamed. It then checks the result has kind "kb" naming
+  the script's pid, the planted kb.exe stays, and the kb.exe notice shows until OK.
 - **Uninstall (card #137, stack #133):** the clean-up is NSIS_HOOK_POSTUNINSTALL, not PRE, on
   purpose: Tauri runs PREUNINSTALL before its "is the app running?" check, which can abort, and a
   kb.exe deleted there would leave the app with no `kb`. A kb.exe or kb.old-N.exe a session's

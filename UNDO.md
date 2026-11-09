@@ -947,3 +947,10 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | `src-tauri\src\update.rs`: `Staged.background` (default false) and `restart_in_background`, true only for a test build; `update_restart` passes it to the helper | `git revert` the card's commit |
 | `src-tauri\src\platform\windows.rs`: `update_helper(..., background)` adds `-ArgumentList '--background'` to the app's start when true; `macos.rs` takes the flag and ignores it | Same revert |
 | `scripts\install.ps1 -Stage` and `scripts/install.sh --stage` write `"background": true` into `update.json` on a test channel only | Same revert. A staged test update already written keeps the field; an older build ignores it. To drop it: `Remove-Item "$env:USERPROFILE\.claude-kanban-dsh-test*\update\update.json" -ErrorAction SilentlyContinue` (test data only, never live) |
+
+## Card #136: Restart now test paths (9 Nov 2026, branch `stack-133-136`)
+
+| Change | Undo |
+|---|---|
+| `scripts\test-kb-locked.ps1 -Restart` and `-Fail`: Restart now in a test app, over its CDP port. `-Fail` holds kb.exe from the script, so the installer exits 3 | `git revert` the card's commits. The script changes nothing outside a test app. After a `-Fail` run that stopped part way, run `install.ps1 -Channel <its channel>` to put the built kb.exe back |
+| HANDOVER.md's test line, this section | Same revert |
