@@ -582,6 +582,37 @@ set in the app. A card your own session creates straight into Planning or In pro
 (`kb create --column Planning`, as the kanban-agent skill does) now starts its session as your move
 would; before, it just sat there.
 
+## Card flow: skip Planning, skip Human test, and the agents per card (card #162)
+
+Each card's details have a **Card flow** box: **Skip Planning**, **Skip Human test** and the six
+card agents, each with three choices. **Default (on)** or **Default (off)** follows Settings ›
+Sessions › Card flow defaults, now and whenever you change it there. **On** or **Off** is that
+card's own. Each change saves at once, on its own, and the card's session is told. Add card has
+the same box, every option at Default.
+
+- **Skip Planning:** a move into Planning from Backlog or Blocked goes straight to In progress:
+  your drag, Add card's Take it to, a blocked card starting by itself, the Router's move. No plan
+  request, no Planning session, no plan critique. The session is told to read the card, make its
+  worktree if the app hasn't, write a short approach into the summary, and build. The log says
+  "Skipped Planning: Hugh's choice (this card's own)" or "(the default in Settings)". Your own move
+  into Planning from a later column still plans it.
+- **Skip Human test:** once the card's session (or the stack rules) moves it into Human test,
+  after its agent checks passed, the app moves it into Ship it for you, as Take it to: Deploy
+  complete does. That is your approval to ship it with no human test. It waits its turn in the
+  ship queue, and a stack waits until every card in it is ready. Your own drag into Human test
+  never skips it, Take it to: Human test still stops it there, and small-change auto-ship doesn't
+  start its 10-minute wait. Set it On on a card already waiting in Human test (its session put it
+  there) and it goes on at once.
+- **Stacks:** a stack's cards never skip either: their lead's flow plans and ships them.
+- **On the card:** a small chip for each choice of its own that differs from the default: "No
+  plan", "No human test", "Planning on", "Human test on", "Critic off", "Tester on", and so on.
+- **Change a default:** Settings › Sessions › Card flow defaults. It reaches every card that
+  follows it at once; a card whose session is in the column where it matters is told.
+- **From your own Claude session:** `kb update <n> --skip-planning on|off|default`,
+  `--skip-human-test on|off|default`, `--subagent critic=on|off|default` (once per agent).
+  `kb card <n>` shows a `flow` object: each option's value and whether it is the card's own or the
+  default. A card's session and the Router can't set them.
+
 ## A message to a card in Human test takes it back to work
 
 When you write to a card in Human test from its chat (Send or Send now), the app moves it back to
@@ -696,8 +727,9 @@ Every card is tested by an independent subagent before it reaches you in Human t
 - **On the card:** a **Tested**, **Test failed** or **Test unclear** chip in In progress and Human
   test (hover a failed one for what failed), and a **Subagent test** row in the panel's details:
   the state, when, and what failed.
-- **Switch it off:** for one card, untick card-tester in its details (or on Add card); for new
-  cards, untick it under Settings › Sessions › "Subagents on a new card" (on by default). Sessions
+- **Switch it off:** for one card, set card-tester Off in its Card flow (or on Add card); for
+  every card that follows the default, untick it under Settings › Sessions › Card flow defaults
+  (on by default). Sessions
   still have the tester; a card with it off just isn't held to it, and its session skips it.
 
 ## Subagent review before Human test
@@ -735,8 +767,8 @@ card #96, 6 Nov 2026), as well as tested.
 - **On the card:** a **Reviewed**, **Review failed** or **Review unclear** chip beside the test
   chip, and a **Subagent review** row in the panel's details (the state, when, how many FAILs,
   and what failed).
-- **Switch it off:** for one card, untick card-reviewer in its details (or on Add card); for new
-  cards, under Settings › Sessions › "Subagents on a new card" (on by default). It is separate
+- **Switch it off:** for one card, set card-reviewer Off in its Card flow (or on Add card); for every
+  card that follows the default, under Settings › Sessions › Card flow defaults (on by default). It is separate
   from the tester's switch.
 - **Guard rail:** the app's subagents may not use the card-changing board tools (under either of
   the two names a kanban-app session sees them by). In their shells the app refuses `kb`,
@@ -817,8 +849,8 @@ Every card's plan is checked by an independent critic before it is built (card #
   blocked reason (not a card routed small: it has one critique). Fixing the plan doesn't reset that count; a move back into Planning does.
 - **On the card:** a **Plan critiqued**, **Critique failed** or **Critique unclear** chip on
   Planning and Blocked cards, and a **Plan critique** row in the panel's details.
-- **Switch it off:** for one card, untick card-critic in its details (or on Add card); for new
-  cards, under Settings › Sessions › "Subagents on a new card" (on by default). Then nothing is
+- **Switch it off:** for one card, set card-critic Off in its Card flow (or on Add card); for every
+  card that follows the default, under Settings › Sessions › Card flow defaults (on by default). Then nothing is
   held, and a card coming into Planning tells its session to skip the step.
 
 ## The card-router sizes each card in Planning
@@ -957,8 +989,8 @@ A bug reported on a card comes back to you with proof, not another round of test
   screenshot for full size), and the test's name. The screenshots are copied into the data folder
   (`repro\<card>\`), so they outlast the temp folder. The hand-over in Human test leads with the
   same proof.
-- **Switch it off:** for one card, untick card-reproducer in its details (or on Add card); for
-  new cards, under Settings › Sessions › "Subagents on a new card" (on by default). Bug reports
+- **Switch it off:** for one card, set card-reproducer Off in its Card flow (or on Add card); for every
+  card that follows the default, under Settings › Sessions › Card flow defaults (on by default). Bug reports
   on such a card are then only logged, and nothing is held.
 - Like the other subagents, the reproducer can't edit files or use the card-changing board tools,
   `kb` or `claude config`. It keeps Bash, so its "changes no code" rests on its prompt.

@@ -889,3 +889,20 @@ PowerShell 5.1 commands. No migration and no new stored field beyond `merge.chec
 | The Ship it step in the bundled `prompts\ship-it.md` and `prompts\kanban-app.md` (the lane path only), `prompts\router.md` job 5 | The same revert |
 | The owner's private copies of `ship-it.md` and `kanban-app.md` | Revert the card #162 commit in the private repo |
 | A lane worktree made in a checkout no list named before (`<checkout>\.claude\worktrees\merge-lane`, `<channel>-merge-lane` from a test app) | Once no lane runs: `git -C <checkout> worktree remove --force <checkout>\.claude\worktrees\merge-lane` |
+
+## Card #162: card flow options, skip Planning, skip Human test, three-way subagents (9 Nov 2026)
+
+PowerShell 5.1 commands. Nothing here deletes a row: every change below is an ordinary card write with its revision, or a setting.
+
+| Change | Undo |
+|---|---|
+| A card's `subagents` holds only Hugh's overrides, null for a key back to the default (`crates\store\src\subagents.rs`, `cards.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 commits, newest first>`. A card with no override then follows the defaults as #151's cards made before it did |
+| Migration 17: stamped subagent values equal to the default taken off non-archived cards (`schema17.sql`, `subagents::unstamp_defaults`, run by `Store::migrate`) | The board from before it is in `%USERPROFILE%\.claude-kanban-dsh\backups\<stamp>-pre-migration.db`. To put one card's old values back, set them in its Card flow (each is in its revisions, by "the app (migration 17 ...)"). An older build opens the board as it is |
+| The settings `sessions.skip_planning` and `sessions.skip_human_test` (off by default) | Untick them in Settings › Sessions › Card flow defaults. The saved rows are only read by this build |
+| The card fields `skipPlanning` and `skipHumanTest` | Set each back to Default in the card's Card flow (logged on the card); or, from your own session, `kb update <n> --skip-planning default --skip-human-test default` |
+| The skip: `cards.rs` `planning_skip` in `move_as`, `dispatch::session_move_to`, the `plan` record `{state: "skipped"}`, `critic::gate` | The same revert. A card already moved to In progress stays there: drag it to Planning to plan it |
+| Skip Human test in `dispatch::auto_progress` (`skip_human_test_why`, `Store::arrival`), and small-change auto-ship leaving such cards out (`small.rs`, `goes_on.rs`) | The same revert. A card already in Ship it: drag it back to Human test (its ship request is cancelled) |
+| The session notes (`dispatch.rs` `flow_note`, `skips_changed_note`, `flow_log_lines`, `after_default_change`; `settings.rs`) | The same revert |
+| `kanban_update_card` takes the flow from Hugh's own sessions and `kb` (`tools.rs` `not_updatable_by`), the `flow` object in `kanban_get_card`, `kb update --skip-planning`, `--skip-human-test`, `--subagent` (`crates\kb`) | The same revert |
+| `ui\subagents.js` (Card flow box, Add card, chips, `CARD_FLOW_SKIPS`), `ui\subagents.css`, Add card and the move status in `ui\board.js`, Settings' "Card flow defaults" in `ui\settings.js`, `tools\ui-tests\flow.test.mjs` | The same revert |
+| The docs (README.md, HANDOVER.md, docs\GUIDE.md, PLAN.md decisions 29 to 32, ACCEPTANCE.md 162.x, this section) | The same revert |

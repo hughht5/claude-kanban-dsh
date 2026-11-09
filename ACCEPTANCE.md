@@ -238,20 +238,37 @@ Run on dry-run card #29 (main account, low effort). Toasts and the tray are nati
 | 160.15 | Two cards of a scratch repo ship through one lane: the second resumes the same conversation and its brief lists the first; a FAIL and a repo not listed | In the card's test app with a scratch repo and a local bare origin (the card's deliverable 9) |
 
 Card #162 (the merge lane everywhere) replaces 160.2's list check, 160.12 and 160.13 with
-162.2 to 162.5, and 160.5's "give up when unlisted" with 162.6.
+162.11 to 162.14, and 160.5's "give up when unlisted" with 162.15.
 
 ## Card #162: the merge lane everywhere (9 Nov 2026)
 
 | # | Test | How |
 |---|---|---|
-| 162.1 | There is no merge-lane repo list: the page can't read or set it, a saved one is kept as it was and never read | `crates/store/tests/lanes.rs` `the_old_repo_list_is_no_setting_and_a_saved_one_is_kept_as_it_was`; `tools/ui-tests/lane.test.mjs` (the box has no list and never reads it) |
-| 162.2 | The lane's checkout is found in order (the card's worktree's main checkout, the own-worktree list, the `repos.json` folder), each a git checkout with a GitHub origin; none is refused naming each place and why, and says needs-hugh | `lane.rs` `the_lanes_checkout_is_found_in_order_or_refused_saying_where_it_looked`, `a_remote_url_names_its_github_repo_or_none`; `private.rs` `repos_come_from_repos_json` |
-| 162.3 | Lanes are keyed by the origin repo: an old repo name shares the lane and its worktree; another repo has its own; a test app's lane worktree is its own | `lane.rs` `a_lane_is_keyed_by_its_origin_so_an_alias_shares_it`, `the_lanes_listed_are_each_lane_once_with_its_place`; `crates/store/tests/lanes.rs` `the_lanes_seen_are_each_repos_newest_session_on_this_channel`, `the_history_is_the_repos_last_finished_merges_newest_first` |
-| 162.4 | Every Ship it card with a branch, on any repo, is told to use `kanban_merge` and never the card-merger; a card with no branch hears nothing of a merge | `lane.rs` `the_lane_note_is_for_every_ship_with_a_branch`; `dispatch.rs` `every_ship_with_a_branch_is_told_to_use_its_merge_lane` |
-| 162.5 | Both ship prompts merge only through the lane (no card-merger, no condition, no rebase of the session's own, needs-hugh with no checkout, a no-branch path); `kanban-app.md` names the lane | `merger.rs` `both_ship_prompts_merge_only_through_the_lane`; `prompt_rules.rs` `cards_ship_one_at_a_time_rebased_or_as_one_stack` |
-| 162.6 | A job with no checkout (an older build's) gives up; a lane free in another checkout's worktree stops before the next brief | `lane.rs` `a_card_that_leaves_ship_it_cancels_its_job_and_a_job_with_no_checkout_gives_up`, `a_lane_in_another_checkout_stops_before_the_next_brief` |
-| 162.7 | The card-merger is no card subagent: no row, no default setting; an old card's `merger` is ignored and an older page's dropped; it refuses a ship and its report on a Ship it card or a lane job isn't recorded | `crates/store/tests/subagents.rs` `the_card_mergers_switch_and_choice_are_gone_and_ignored`; `subagents.rs` tests; `merger.rs` `the_merger_does_no_ship`; `dispatch.rs` `a_session_is_told_which_subagents_are_off_in_its_column` |
-| 162.8 | A card on no list ships through its lane: `kanban_merge` finds the checkout from the card's worktree and queues the job in the lane its origin names; Settings shows that lane | In the card's test app, a dry-run Ship it card of this repo (a manual check) |
+| 162.10 | There is no merge-lane repo list: the page can't read or set it, a saved one is kept as it was and never read | `crates/store/tests/lanes.rs` `the_old_repo_list_is_no_setting_and_a_saved_one_is_kept_as_it_was`; `tools/ui-tests/lane.test.mjs` (the box has no list and never reads it) |
+| 162.11 | The lane's checkout is found in order (the card's worktree's main checkout, the own-worktree list, the `repos.json` folder), each a git checkout with a GitHub origin; none is refused naming each place and why, and says needs-hugh | `lane.rs` `the_lanes_checkout_is_found_in_order_or_refused_saying_where_it_looked`, `a_remote_url_names_its_github_repo_or_none`; `private.rs` `repos_come_from_repos_json` |
+| 162.12 | Lanes are keyed by the origin repo: an old repo name shares the lane and its worktree; another repo has its own; a test app's lane worktree is its own | `lane.rs` `a_lane_is_keyed_by_its_origin_so_an_alias_shares_it`, `the_lanes_listed_are_each_lane_once_with_its_place`; `crates/store/tests/lanes.rs` `the_lanes_seen_are_each_repos_newest_session_on_this_channel`, `the_history_is_the_repos_last_finished_merges_newest_first` |
+| 162.13 | Every Ship it card with a branch, on any repo, is told to use `kanban_merge` and never the card-merger; a card with no branch hears nothing of a merge | `lane.rs` `the_lane_note_is_for_every_ship_with_a_branch`; `dispatch.rs` `every_ship_with_a_branch_is_told_to_use_its_merge_lane` |
+| 162.14 | Both ship prompts merge only through the lane (no card-merger, no condition, no rebase of the session's own, needs-hugh with no checkout, a no-branch path); `kanban-app.md` names the lane | `merger.rs` `both_ship_prompts_merge_only_through_the_lane`; `prompt_rules.rs` `cards_ship_one_at_a_time_rebased_or_as_one_stack` |
+| 162.15 | A job with no checkout (an older build's) gives up; a lane free in another checkout's worktree stops before the next brief | `lane.rs` `a_card_that_leaves_ship_it_cancels_its_job_and_a_job_with_no_checkout_gives_up`, `a_lane_in_another_checkout_stops_before_the_next_brief` |
+| 162.16 | The card-merger is no card subagent: no row, no default setting; an old card's `merger` is ignored and an older page's dropped; it refuses a ship and its report on a Ship it card or a lane job isn't recorded | `crates/store/tests/subagents.rs` `the_card_mergers_switch_and_choice_are_gone_and_ignored`; `subagents.rs` tests; `merger.rs` `the_merger_does_no_ship`; `dispatch.rs` `a_session_is_told_which_subagents_are_off_in_its_column` |
+| 162.17 | A card on no list ships through its lane: `kanban_merge` finds the checkout from the card's worktree and queues the job in the lane its origin names; Settings shows that lane | In the card's test app, a dry-run Ship it card of this repo (a manual check) |
+
+## Card #162: a card's flow, skip Planning, skip Human test, three-way subagents (9 Nov 2026)
+
+| # | Test | How |
+|---|---|---|
+| 162.18 | A card's subagents hold only Hugh's overrides; null puts one back to the default; a later default reaches every card that follows it | `crates/store/tests/subagents.rs` `a_new_card_follows_the_boards_defaults_as_they_change`, `hughs_choice_on_add_card_keeps_only_his_overrides`, `an_override_goes_back_to_the_default_with_null`; `subagents.rs` `an_update_changes_only_the_keys_it_names` |
+| 162.19 | Migration 17 backs up first, takes stamped values equal to the default off non-archived cards with a revision each, keeps the ones that differ, is idempotent, and an older build opens the board | `crates/store/tests/flow.rs` `migration_17_unstamps_the_defaults_and_keeps_the_overrides`, `a_board_at_version_17_opens_on_an_older_build` |
+| 162.20 | The two defaults are page settings, off by default, logged | `flow.rs` `the_two_defaults_are_page_settings_off_by_default` |
+| 162.21 | Skip Planning and skip Human test are three-way; a stack's child never skips; the flow object says each value and whose it is | `flow.rs` `a_skip_is_three_way_on_the_card`, `the_flow_object_says_each_value_and_whose_it_is` |
+| 162.22 | A move into Planning from Backlog or Blocked (Hugh's drag, Take it to, the waits) goes to In progress with no plan request, logged; from a later column, a child, or a card set Off it plans | `flow.rs` `a_move_into_planning_from_backlog_or_blocked_goes_to_in_progress`, `planning_still_plans_where_the_rule_doesnt_reach` |
+| 162.23 | The plan critique doesn't hold such a card from Backlog or Blocked into In progress | `critic.rs` `a_card_that_skips_planning_needs_no_critique_to_start` |
+| 162.24 | Skip Human test goes on after a session's move; not after Hugh's drag, with Take it to: Human test, or on a child; the default reaches a card | `dispatch.rs` `skip_human_test_goes_on_only_after_a_sessions_move`; `flow.rs` `arrival_names_the_mover_and_a_cleared_auto_to` |
+| 162.25 | The sessions are told: Planning skipped, Human test skipped (In progress, Ship it), Hugh's edits logged and told | `dispatch.rs` `the_flow_notes_tell_the_session`, `hughs_flow_change_is_logged_and_told` |
+| 162.26 | A card that skips Human test is left out of small-change auto-ship | `small.rs` `skip_conditions` |
+| 162.27 | A card session and the Router can't set the flow; Hugh's own sessions and kb can | `tools.rs` `only_hughs_own_callers_set_the_cards_flow`, `stack_tools_are_listed`; `kb` `update_takes_the_cards_flow` |
+| 162.28 | The card face chips, the Card flow box (one key per change), Add card (only what isn't Default) and the Settings defaults | `tools/ui-tests/flow.test.mjs` |
+| 162.29 | In the test app: a card set to skip Planning dragged to Planning lands in In progress and its session hears why; one set to skip Human test moved there by its session goes on to Ship it | By hand in the card's test app (Hugh) |
 
 ## macOS (card #117, 6 Nov 2026): untested on real hardware, unsigned
 

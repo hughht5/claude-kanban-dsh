@@ -1905,6 +1905,57 @@ per card. The gates follow the card's own choice.
   auto-ship (#104) still needs both the reviewer's and tester's passes, so a card with one of them
   off waits for Hugh there.
 
+## A card's flow: skip Planning, skip Human test, three-way subagents (9 Nov 2026, card #162)
+
+Hugh's per-card options for the steps a card goes through, each with a default in Settings ›
+Sessions › Card flow defaults, each three-way on the card: true, false, or absent (follow the
+default as it is now). `crates/store/src/flow.rs` holds the keys and the store's reads.
+
+- **Subagents, three-way:** a card's `subagents` now holds only Hugh's overrides
+  (`subagents::for_new_card` keeps only what Add card chose; `merged` takes null for a key, back to
+  the default, and drops the field when none is left; null for the whole field clears them all).
+  Nothing is stamped on a new card, so a later change of a default reaches it. **Migration 17**
+  (`schema17.sql` is a marker; the work is `subagents::unstamp_defaults`, run by `Store::migrate`
+  in the same transaction, after the pre-migration backup): on each card not archived, a stamped
+  value equal to the board's default goes; one that differs stays. Each change is an ordinary
+  write with its revision, by `UNSTAMP_BY`. Idempotent; an older build reads a card with no
+  override from Settings, as before.
+- **Skip Planning** (`skipPlanning`, default `sessions.skip_planning`, off): `cards.rs`
+  `planning_skip` decides; `move_as` (Hugh's drag, `move_for_hugh` for Add card's Take it to and
+  `start_new`, `move_after_waits`) and `dispatch::session_move_to` (a session's or the Router's
+  move) send a move into Planning from Backlog or Blocked to In progress instead, with no plan
+  request: the `plan` record is `{state: "skipped", whose, from, auto?, waitedOn?}` and the log
+  says "Skipped Planning: Hugh's choice (this card's own)" or "(the default in Settings)". The
+  card's next move takes the record off (`apply`). `critic::gate` doesn't hold such a card from
+  Backlog or Blocked into In progress. `MoveOutcome.skipped_planning` and `move_card`'s
+  `skippedPlanning` tell the page. A stack's child never skips; a move into Planning from a later
+  column still plans.
+- **Skip Human test** (`skipHumanTest`, default `sessions.skip_human_test`, off):
+  `dispatch::auto_progress` moves a card in Human test with no `autoTo` into Ship it for Hugh
+  (`move_for_hugh`, the ship queue, a lead only once `stack_ready(.., "all")`) when
+  `skip_human_test_why` says so: it skips, and `Store::arrival` shows the last move into Human
+  test wasn't Hugh's own ("Hugh (board)") and its `autoTo` wasn't cleared since (Take it to:
+  Human test stopped it there). A child never goes on. `small::skip` and `goes_on`'s `read`,
+  `decide_now` and `cant_go_on` leave such a card out of small-change auto-ship.
+- **Sessions told:** `dispatch::flow_note` (in `move_message`, `app_move_message`,
+  `held_move_message`): `SKIPPED_PLANNING` on the move that skipped Planning, `SKIPS_HUMAN_TEST`
+  in In progress, `SHIP_NO_HUMAN_TEST` in Ship it; `move_message`'s why for the app's ship. Hugh's
+  edits: `flow_changed`, `flow_log_lines` (one log line each), `skips_changed_note` and the
+  subagents note via `after_edit`; a skipHumanTest edit runs `auto_progress`. A default changed in
+  Settings: `settings.rs` `set_setting` calls `dispatch::after_default_change`, which tells each
+  following card's session in the column it matters to, logs it, and reruns `after_lead_verdict`
+  for following leads.
+- **Only Hugh:** the page's `update_card` and `create_card`; his own sessions outside the app and
+  plain `kb` (not held in `tools.rs` `call_inner`: `not_updatable_by`), which also log and run
+  `after_edit`. A card session and the Router are refused. `kb update` takes `--skip-planning`,
+  `--skip-human-test` (on, off, default) and `--subagent <name>=on|off|default`.
+  `kanban_get_card` and `kb card` show a computed `flow` (`Store::flow_of`).
+- **UI:** `ui/subagents.js`: the Card flow box (`subagentsBox`, three-way selects, one key per
+  change), Add card's box (`subagentTicks`, `flowChoice`: only what isn't Default), the chips (a
+  `boardHooks.decorate` hook, `flowChips`), and `CARD_FLOW_SKIPS` for Settings' "Card flow
+  defaults" group in `ui/settings.js`. Tests: `crates/store/tests/flow.rs`, `subagents.rs`,
+  `dispatch.rs`, `critic.rs`, `tools.rs`, `small.rs`, `kb`, `tools/ui-tests/flow.test.mjs`.
+
 ## The app's own messages in the chat (9 Nov 2026, card #153)
 
 The chat (card panel and Router panel) draws text the app sent on its own in the centre, amber,

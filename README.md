@@ -91,6 +91,8 @@ Every agent is a Claude Code subagent running on your own plan, and the app reco
 
 Each card has its own choice of which of the six card agents run on it (all but the Monitor). Settings > Sessions sets the defaults for a new card; tick or untick them on Add card or in a card's details. Only you change them: a card's session and the Router can't. An agent that is off holds nothing, and the card's session is told to skip its step.
 
+**Card flow.** Each card can also skip Planning (a move into Planning from Backlog or Blocked goes straight to In progress) or skip Human test (once its session moves it into Human test, the app ships it for you, as Take it to: Deploy complete does). Each of these and each agent is three-way on a card: Default follows Settings > Sessions as it changes, On or Off is that card's own. A chip on the card shows each choice of its own that differs from the default, such as "No plan" or "Critic off". Your own drag into Human test never skips it.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">
