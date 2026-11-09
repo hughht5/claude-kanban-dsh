@@ -1200,7 +1200,8 @@ settings row, and the card's worktree is its ordinary `worktreePath` and `branch
   `<checkout>\.claude\worktrees\<name>` and the branch is `<name>`: `card-<n>` on live,
   `<channel>-card-<n>` on a test channel, so a test board's numbers never take a live card's
   branch. `make` runs git (no window, 15 s for all its commands together, because the board is
-  locked; git's error kept): a folder that is already that branch's worktree is used (one git
+  locked; 300 s in a test build, so `cargo test` beside other builds doesn't fail on it, card #171;
+  git's error kept): a folder that is already that branch's worktree is used (one git
   still has locked, an add stopped part way, is refused); otherwise `git worktree prune` forgets
   folders deleted by hand, then a branch with no folder gets a worktree, else a new branch from
   `origin/main` (else `main`), made with `--no-track` so it never has main as its upstream. There is no fetch, because the board is locked while a session

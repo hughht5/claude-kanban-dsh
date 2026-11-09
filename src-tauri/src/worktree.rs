@@ -26,7 +26,13 @@ use std::time::{Duration, Instant};
 /// How long all of `make`'s git commands together may take. The board is locked while a session
 /// starts, so this caps how long a start can hold it (a worktree of this repo takes well under a
 /// second).
+#[cfg(not(test))]
 const MAKE_LIMIT: Duration = Duration::from_secs(15);
+/// In a test build every caller gets a busy machine's budget (card #171): `cargo test --workspace`
+/// runs beside other cards' builds, and a git call there can take well over 15 s. The limit itself
+/// is still tested, with its own short budget.
+#[cfg(test)]
+const MAKE_LIMIT: Duration = Duration::from_secs(300);
 
 /// Where the app makes card worktrees, under the checkout.
 const UNDER: [&str; 2] = [".claude", "worktrees"];
@@ -147,21 +153,22 @@ pub fn unrecorded_note(plan: &Plan, why: &str) -> String {
     )
 }
 
-/// Runs git commands for one `make`, all within `MAKE_LIMIT`.
+/// Runs git commands for one `make`, all within its limit (`MAKE_LIMIT` unless a test sets one).
 struct Git {
     until: Instant,
+    limit: Duration,
 }
 
 impl Git {
     fn new(limit: Duration) -> Self {
-        Git { until: Instant::now() + limit }
+        Git { until: Instant::now() + limit, limit }
     }
 
     /// Runs git in `dir`, with no window, in the time left. Its output, or its error text.
     fn run(&self, dir: &Path, args: &[&str]) -> Result<String, String> {
         let what = args.iter().find(|a| !a.starts_with('-')).copied().unwrap_or("");
         if Instant::now() >= self.until {
-            return Err(format!("git {what} wasn't run: the worktree took longer than {} s", MAKE_LIMIT.as_secs()));
+            return Err(format!("git {what} wasn't run: the worktree took longer than {} s", self.limit.as_secs()));
         }
         let mut cmd = Command::new("git");
         cmd.args(["-c", "core.fsmonitor=false", "-c", "core.quotepath=off", "-C"])
@@ -196,7 +203,7 @@ impl Git {
                 Ok(None) if Instant::now() >= self.until => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!("git {what} took longer than the {} s the app allows", MAKE_LIMIT.as_secs()));
+                    return Err(format!("git {what} took longer than the {} s the app allows", self.limit.as_secs()));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(15)),
                 Err(e) => return Err(format!("git failed: {e}")),
@@ -411,6 +418,16 @@ mod tests {
 
     /// The tests' git budget: they run beside many others.
     const SLOW: Duration = Duration::from_secs(300);
+
+    /// Card #171: the time limit still holds when it runs out, and says the budget it had.
+    #[test]
+    fn git_past_its_limit_is_not_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = Git::new(Duration::ZERO).run(dir.path(), &["status"]).unwrap_err();
+        assert_eq!(e, "git status wasn't run: the worktree took longer than 0 s");
+        // A test build's own budget is a busy machine's, not the app's 15 s.
+        assert!(MAKE_LIMIT >= Duration::from_secs(300));
+    }
 
     fn card(number: i64, fields: Value) -> Card {
         Card { id: format!("card-{number}"), number, column: "Planning".into(), order: None, order_col: None, archived: false, fields: fields.as_object().cloned().unwrap(), version: 1 }

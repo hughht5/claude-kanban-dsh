@@ -915,3 +915,12 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: Hugh's move into Human test from `kb` or his own session outside the app never skips it, as his drag doesn't (`dispatch::hughs_own`) | The same revert |
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
+
+## Card #171: timing tests allow for a busy machine (9 Nov 2026)
+
+Tests only: the app's behaviour is unchanged (the live budget for a worktree's git calls stays 15 s).
+
+| Change | Undo |
+|---|---|
+| `hang_tests::the_focus_flag_under_the_board_lock_never_hangs` runs until the main thread has run 101 commands (up to 60 s) instead of a fixed 2 s; `load` takes `enough` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #171 commit>` |
+| `worktree.rs`: a test build's `MAKE_LIMIT` is 300 s (`#[cfg(test)]`), the error text names the budget the call had (`Git.limit`), and the test `git_past_its_limit_is_not_run` | The same revert |
