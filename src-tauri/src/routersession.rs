@@ -465,6 +465,10 @@ pub fn event_line(rev: &Revision, from_column: Option<&str>, own_recent: bool, t
     let by = &rev.by;
     if rev.version == 1 {
         let col = c.get("column").and_then(Value::as_str).unwrap_or("Backlog");
+        if col == "Backlog" {
+            // A card parked in Backlog is nothing for the Router to act on (card #157).
+            return None;
+        }
         return Some(format!("NEW #{} in {col} (v1, by {by}): {}", rev.number, crate::transcript::cut_words(title, 80)));
     }
     if let Some(to) = c.get("column").and_then(Value::as_str) {
@@ -970,7 +974,9 @@ mod tests {
     #[test]
     fn moves_new_cards_and_verdicts_are_events_other_edits_are_not() {
         assert_eq!(event_line(&rev("Hugh (board)", 3, json!({ "column": "Human test" })), Some("In progress"), false, "A").as_deref(), Some("MOVED #4 In progress -> Human test (v3, by Hugh (board))"));
-        assert_eq!(event_line(&rev("Hugh (panel)", 1, json!({ "column": "Backlog", "title": "A" })), None, false, "Add a thing").as_deref(), Some("NEW #4 in Backlog (v1, by Hugh (panel)): Add a thing"));
+        assert_eq!(event_line(&rev("Hugh (panel)", 1, json!({ "column": "Backlog", "title": "A" })), None, false, "Add a thing"), None, "a new Backlog card is no event");
+        assert_eq!(event_line(&rev("Hugh (panel)", 1, json!({ "title": "A" })), None, false, "Add a thing"), None, "no column means Backlog");
+        assert_eq!(event_line(&rev("Hugh (panel)", 1, json!({ "column": "Planning", "title": "A" })), None, false, "Add a thing").as_deref(), Some("NEW #4 in Planning (v1, by Hugh (panel)): Add a thing"));
         assert_eq!(event_line(&rev("card #4's session", 6, json!({ "nextStep": "x" })), None, false, "A"), None);
         assert_eq!(event_line(&rev("the app (card-router)", 6, json!({ "route": { "size": "small" } })), None, false, "A").as_deref(), Some("VERDICT #4 route small (v6, by the app (card-router))"));
     }

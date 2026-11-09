@@ -824,3 +824,6 @@ PowerShell 5.1 commands. `<checkout>` is the checkout named in the merge-lane se
 | The lane itself (`src-tauri\src\lane.rs`, `lanetools.rs`, `prompts\merge-lane.md`), `kanban_merge` (`tools.rs`, `api.rs`, `routertools.rs`), `sessions::is_app_key` and the lane plan (`sessions.rs`), `guard::lane_refusal` (`guard.rs`), the Ship it note (`dispatch.rs`), the feed's "merge lane" writers (`feed.rs`, both), `lane_status` / `lane_stop` (`main.rs`) | The same revert, then stage the live update as usual |
 | The UI: Settings › Sessions' "Ship through one merge lane per repo" box with each lane's state and Stop, on the list editor now shared with the own-worktree box (`repoListBox`, `ui\settings.js`, `ui\settings.css`); the Merger chips Waiting for the lane, Merging and Merge cancelled (`ui\board.js` `CHECKS`, `ui\board.css`); `tools\ui-tests\lane.test.mjs` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #160 UI commit>`, then stage the live update. Nothing is stored by the UI itself |
 | The prompt tests (`src-tauri\src\merger.rs`) and the docs (HANDOVER.md, README.md, AGENTS.md, docs\GUIDE.md, PLAN.md, ACCEPTANCE.md, this file) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #160 test and docs commits>`. Text only: nothing to stage |
+
+## Card #157
+Undo: `git revert <card-157 commit>`; the Router then hears of new Backlog cards again.
