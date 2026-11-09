@@ -242,49 +242,76 @@
     };
   }
 
-  // ---------- Running now (card #129): what runs, from sessions_running ----------
-  // r: {router:{state}|null, lanes:[{key,repo,state}], cards:[{cardId,number,title,column,state,
-  // session,subagents:[{id,agentType,description,started,updated}]}], outside:[{id,account,cwd,
-  // title,lastAt,cards,readable}], count}. Each row is a button whose data-open names what it
-  // opens; runningSource turns that back into the session pane's src.
+  // ---------- The agents along the top, and what runs now (card #129) ----------
+  // Hugh (9 Nov): the feed stays as it is, with the agents along its top to jump into. Two rows of
+  // tabs from sessions_running r ({router:{state}|null, lanes, lanesKnown:[{key,repo,state}],
+  // cards:[{cardId,number,title,column,state,session,subagents:[{id,agentType,description}]}],
+  // outside:[{id,account,cwd,title,lastAt,cards,readable}], count}):
+  // - the agents: Router, a Merger per merge lane, Critic, Reviewer, Tester, Reproducer (each opens
+  //   its running conversation, else its latest), and Monitor (part of the app, no conversation:
+  //   it shows only the monitor's lines in the feed);
+  // - what runs now: each card session, each subagent running in it, each session outside the app.
+  // Each tab's data-open names what it opens; runningSource turns it back into the session pane's
+  // src ("agent:<k>" and "monitor" are done by the drawer).
   const DOT={idle:"idle",working:"working",starting:"starting",permission:"asks",asks:"asks",failed:"down",down:"down"};
-  const STATE_WORD={idle:"Ready",working:"Working",starting:"Starting",permission:"Asks you",asks:"Asks you",failed:"Turn failed",down:"Down"};
+  const STATE_WORD={idle:"Ready",working:"Working",starting:"Starting",permission:"Asks you",asks:"Asks you",failed:"Turn failed",down:"Down",off:"Not running"};
   const dot=s=>`<span class="rdot r-${DOT[s]||"off"}" aria-hidden="true"></span>`;
   const leaf=p=>{const parts=String(p||"").replace(/[\\/]+$/,"").split(/[\\/]/);return parts[parts.length-1]||""};
   function ago(at,now){const d=at?new Date(at):null;if(!d||isNaN(d))return"";const m=Math.max(0,Math.round(((now instanceof Date?now:new Date())-d)/60000));return m<1?"just now":m+" min ago"}
-  function runningHtml(r,opts){
-    r=r||{};const now=opts&&opts.now,rows=[];
-    const btn=(open,body,title)=>`<li><button type="button" class="rn-row" data-open="${esc(open)}"${title?` title="${esc(title)}"`:""}>${body}</button></li>`;
-    if(r.router)rows.push(btn("router",`${dot(r.router.state)}<b>Router</b><span class="rn-m">${esc(STATE_WORD[r.router.state]||r.router.state||"")}</span>`,"Open the Router"));
-    (r.lanes||[]).forEach((l,i)=>rows.push(btn("lane:"+i,`${dot(l.state)}<b>Merge lane</b><span class="rn-t">${esc(l.repo)}</span><span class="rn-m">${esc(STATE_WORD[l.state]||l.state||"")}</span>`,`Open the merge lane for ${l.repo}`)));
-    (r.cards||[]).forEach((c,i)=>{
-      rows.push(btn("card:"+i,`${dot(c.state)}<b>#${esc(c.number)}</b><span class="rn-t">${esc(c.title)}</span><span class="rn-m">${esc(STATE_WORD[c.state]||c.state||"")}</span>`,`Open card #${c.number}'s session`));
-      (c.subagents||[]).forEach((s,j)=>{const a=agentOf(s.agentType);
-        rows.push(`<li class="rn-sub"><button type="button" class="rn-row" data-open="sub:${i}:${j}" title="Open ${esc(s.agentType)}'s own conversation"><span class="ag ${a}">${esc(a==="other"?s.agentType:WORD[a])}</span><span class="rn-t">${esc(s.description||s.agentType)}</span><span class="rn-m">running</span></button></li>`)});
-    });
-    (r.outside||[]).forEach((o,i)=>rows.push(btn("out:"+i,`<span class="rdot r-off" aria-hidden="true"></span><b>Outside</b><span class="rn-t">${esc(o.title||leaf(o.cwd)||"a session")}</span><span class="rn-m">${(o.cards||[]).slice(-3).map(n=>"#"+esc(n)).join(" ")}${(o.cards||[]).length?" · ":""}${esc(ago(o.lastAt,now))}</span>`,`Outside the app${o.cwd?": "+o.cwd:""} (read only)`)));
-    const n=r.count!=null?r.count:rows.length;
-    return`<div class="rn-head"><h3>Running now</h3><span class="rn-n">${esc(n)}</span></div>`+(rows.length?`<ul class="rn-list">${rows.join("")}</ul>`:`<p class="af-msg">Nothing is running.</p>`);
+  const KIND_TABS=["critic","reviewer","tester","reproducer"];
+  // Every lane: the running ones, then the others seen (off).
+  function lanesOf(r){
+    const out=(r.lanes||[]).slice();
+    for(const l of r.lanesKnown||[])if(!out.some(x=>x.key===l.key))out.push(l);
+    return out;
   }
-  // A Running now row's data-open, back to the session pane's src (null if it's gone).
+  const runningOf=(r,k)=>(r.cards||[]).reduce((n,c)=>n+(c.subagents||[]).filter(s=>agentOf(s.agentType)===k).length,0);
+  function runningHtml(r,opts){
+    r=r||{};const now=opts&&opts.now,monitorOn=!!(opts&&opts.monitor);
+    const tab=(open,cls,body,title,extra)=>`<button type="button" class="rn-tab ${cls}" data-open="${esc(open)}" title="${esc(title)}"${extra||""}>${body}</button>`;
+    const agents=[];
+    agents.push(tab("router","ag-router",`${dot(r.router?r.router.state:"off")}Router`,r.router?`Open the Router (${STATE_WORD[r.router.state]||r.router.state})`:"Open the Router (not running)"));
+    const lanes=lanesOf(r);
+    if(lanes.length)lanes.forEach((l,i)=>agents.push(tab("lane:"+i,"ag-merger",`${dot(l.state)}Merger <span class="rn-tsub">${esc(leaf(l.repo))}</span>`,`Open the merge lane for ${l.repo} (${STATE_WORD[l.state]||l.state})`)));
+    else agents.push(tab("lane:none","ag-merger",`${dot("off")}Merger`,"No merge lane has run yet: a repo's lane starts at its first ship"));
+    for(const k of KIND_TABS){const n=runningOf(r,k);agents.push(tab("agent:"+k,"ag-"+k,`${n?dot("working"):""}${WORD[k]}${n>1?` <span class="rn-tsub">${n}</span>`:""}`,n?`Open the running ${k}`:`Open the latest ${k}'s conversation`))}
+    agents.push(tab("monitor","ag-monitor"+(monitorOn?" on":""),"Monitor",monitorOn?"Show every agent's lines again":"The monitor is part of the app, with no conversation: show only its lines",` aria-pressed="${monitorOn}"`));
+    const live=[];
+    (r.cards||[]).forEach((c,i)=>{
+      live.push(tab("card:"+i,"rn-card",`${dot(c.state)}<b>#${esc(c.number)}</b><span class="rn-tt">${esc(c.title)}</span>`,`Open card #${c.number}'s session: ${c.title} (${STATE_WORD[c.state]||c.state})`));
+      (c.subagents||[]).forEach((s,j)=>{const a=agentOf(s.agentType);
+        live.push(tab(`sub:${i}:${j}`,"rn-subag ag-"+a,`${dot("working")}${esc(a==="other"?s.agentType:WORD[a])} <b>#${esc(c.number)}</b>`,`Open ${s.agentType}'s own conversation${s.description?": "+s.description:""}`))});
+    });
+    (r.outside||[]).forEach((o,i)=>live.push(tab("out:"+i,"rn-out",`${dot("off")}Outside <span class="rn-tt">${esc(o.title||leaf(o.cwd)||"a session")}</span>`,`Outside the app, read only${o.cwd?": "+o.cwd:""}${(o.cards||[]).length?" · "+(o.cards||[]).map(n=>"#"+n).join(" "):""} · ${ago(o.lastAt,now)}`)));
+    const n=r.count!=null?r.count:live.length;
+    return`<div class="rn-tabs" role="toolbar" aria-label="The agents">${agents.join("")}</div>`
+      +`<div class="rn-head"><h3>Running now</h3><span class="rn-n">${esc(n)}</span></div>`
+      +(live.length?`<div class="rn-tabs rn-live" role="toolbar" aria-label="Running now">${live.join("")}</div>`:`<p class="af-msg">No card session is running.</p>`);
+  }
+  // A tab's data-open, back to the session pane's src (null if it's gone, or not a session).
   function runningSource(r,open){
     if(!r||!open)return null;const p=String(open).split(":");
-    if(p[0]==="router")return r.router?{kind:"router"}:null;
-    if(p[0]==="lane"){const l=(r.lanes||[])[+p[1]];return l?{kind:"lane",key:l.key,repo:l.repo,state:l.state}:null}
+    if(p[0]==="router")return{kind:"router"};
+    if(p[0]==="lane"){const l=lanesOf(r)[+p[1]];return l?{kind:"lane",key:l.key,repo:l.repo,state:l.state}:null}
     if(p[0]==="card"){const c=(r.cards||[])[+p[1]];return c?{kind:"card",cardId:c.cardId,num:c.number,title:c.title}:null}
     if(p[0]==="sub"){const c=(r.cards||[])[+p[1]],s=c&&(c.subagents||[])[+p[2]];return s?{kind:"sub",cardId:c.cardId,num:c.number,session:c.session,id:s.id,type:s.agentType,desc:s.description,running:true}:null}
     if(p[0]==="out"){const o=(r.outside||[])[+p[1]];return o?{kind:"outside",id:o.id,cwd:o.cwd,title:o.title,account:o.account,cards:o.cards||[]}:null}
     return null;
   }
+  // An agent tab ("agent:critic"): its running subagent, as a src, if one runs (else null).
+  function runningKind(r,k){
+    for(const c of (r&&r.cards)||[])for(const s of c.subagents||[])if(agentOf(s.agentType)===k)return{kind:"sub",cardId:c.cardId,num:c.number,session:c.session,id:s.id,type:s.agentType,desc:s.description,running:true};
+    return null;
+  }
 
-  root.AgentsFeed={AGENTS,WORD,THROTTLE_MS,agentOf,agentWord,timeParts,textHtml,rowHtml,rowsHtml,itemKey,mergeOlder,mergeNewer,throttle,norm,sessionTarget,runningHtml,runningSource};
+  root.AgentsFeed={AGENTS,WORD,THROTTLE_MS,agentOf,agentWord,timeParts,textHtml,rowHtml,rowsHtml,itemKey,mergeOlder,mergeNewer,throttle,norm,sessionTarget,runningHtml,runningSource,runningKind,lanesOf};
   root.mountAgentsFeed=mountAgentsFeed;
 
   // The header's "Agents" drawer: a right-docked pane (rpane.css), not a <dialog>, so Human test
   // review keys (P, F, U, arrows) still work with it open. Esc closes it when the focus is in it,
   // or on the board. Ctrl+Shift+A opens or closes it, over a card panel too.
   if(typeof document==="undefined"||!document.querySelector||!document.querySelector("header"))return;
-  let pane=null,feed=null,back=null,running=null;
+  let pane=null,feed=null,back=null,running=null,monitorOnly=false;
   const btn=document.createElement("button");
   btn.className="ibtn agentsbtn";btn.id="agentsBtn";btn.type="button";btn.innerHTML=`Agents<span class="rn-count" hidden></span>`;
   btn.title="What the agents did, newest first (Ctrl+Shift+A)";btn.setAttribute("aria-pressed","false");btn.setAttribute("aria-controls","agentsPane");
@@ -302,10 +329,14 @@
     pane.innerHTML=`<div class="rpane-head"><h2 id="ap-ttl">Agents</h2><span class="rpane-sub">What runs now, and what they did</span><button class="ibtn x" type="button" id="ap-x" aria-label="Close the Agents pane">✕</button></div><div class="rn af" id="ap-run"></div><div class="rpane-feed" id="ap-feed"></div>`;
     document.body.append(pane);
     pane.querySelector("#ap-x").onclick=()=>closePane();
-    // A Running now row opens that session in the session pane (router.js), beside this drawer.
+    // A tab opens that session in the session pane (router.js), beside this drawer.
     pane.querySelector("#ap-run").addEventListener("click",e=>{
       const b=e.target.closest&&e.target.closest("[data-open]");if(!b)return;e.preventDefault();
-      const src=runningSource(running,b.getAttribute("data-open"));
+      const open=b.getAttribute("data-open");
+      if(open==="monitor"){monitorOnly=!monitorOnly;remountFeed();drawRunning();return}
+      if(open==="lane:none"){if(typeof status==="function")status("No merge lane has run yet: a repo's lane starts at its first ship",true);return}
+      if(open.startsWith("agent:")){openKind(open.slice(6));return}
+      const src=runningSource(running,open);
       if(!src){if(typeof status==="function")status("That session isn't running any more",true);pollRunning();return}
       if(typeof window.openSessionPane==="function")window.openSessionPane(src);
     });
@@ -315,7 +346,7 @@
     if(!pane)build();
     back=document.activeElement;
     pane.hidden=false;document.body.classList.add("rpane-open","agents-open");btn.setAttribute("aria-pressed","true");
-    if(feed)feed.refresh();else feed=mountAgentsFeed(pane.querySelector("#ap-feed"),{onCard:openCard,active:isOpen,onSession:it=>window.openSessionFromFeed&&window.openSessionFromFeed(it)});
+    if(feed)feed.refresh();else remountFeed();
     drawRunning();pollRunning();
     // The focus goes in only from the board; over a card in review it stays where it is, so the keys go on working.
     if(!(typeof panel!=="undefined"&&panel))pane.focus({preventScroll:true});
@@ -330,6 +361,23 @@
     back=null;
   }
   btn.onclick=()=>isOpen()?closePane():openPane();
+  // The feed below the tabs, every agent's or (the Monitor tab) only the monitor's.
+  function remountFeed(){
+    if(!pane)return;const el=pane.querySelector("#ap-feed");
+    if(feed){try{feed.destroy()}catch(e){}}
+    el.innerHTML="";
+    feed=mountAgentsFeed(el,{filter:monitorOnly?{agents:["monitor"]}:{},onCard:openCard,active:isOpen,onSession:it=>window.openSessionFromFeed&&window.openSessionFromFeed(it)});
+  }
+  // An agent tab: the running one of that kind, else the latest one the feed names.
+  async function openKind(k){
+    const src=runningKind(running,k);
+    if(src){if(typeof window.openSessionPane==="function")window.openSessionPane(src);return}
+    let items=[];
+    try{const r=norm(await invoke("agents_feed",{query:{agents:[k],limit:30}}));items=r.items}catch(e){}
+    const it=items.find(i=>{const t=sessionTarget(i);return t&&t.kind==="sub"});
+    if(it&&typeof window.openSessionFromFeed==="function"){window.openSessionFromFeed(it);return}
+    if(typeof status==="function")status(`No ${k} has run yet`,true);
+  }
   // Running now: read every 10 s, and every 5 s while the drawer is open, so the count on the
   // button is right with the drawer closed too.
   let runBusy=false;
@@ -345,7 +393,7 @@
     const c=btn.querySelector(".rn-count"),n=running&&running.count||0;
     if(c){c.hidden=!n;c.textContent=String(n)}
     btn.title=`What runs now, and what the agents did (Ctrl+Shift+A)${n?`: ${n} running now`:""}`;
-    if(pane){const box=pane.querySelector("#ap-run"),h=runningHtml(running||{});if(box&&box.dataset.h!==h){box.innerHTML=h;box.dataset.h=h}}
+    if(pane){const box=pane.querySelector("#ap-run"),h=runningHtml(running||{},{monitor:monitorOnly});if(box&&box.dataset.h!==h){box.innerHTML=h;box.dataset.h=h}}
   }
   pollRunning();
   let tick=0;setInterval(()=>{tick++;if(isOpen()||tick%2===0)pollRunning()},5000);

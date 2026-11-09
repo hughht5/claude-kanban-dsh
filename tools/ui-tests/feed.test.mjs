@@ -215,34 +215,47 @@ test("only a feed with onSession draws the agent as a button", () => {
 const RUN = {
   router: { state: "idle" },
   lanes: [{ key: "lane:owner/repo", repo: "owner/repo", state: "working" }],
+  lanesKnown: [{ key: "lane:owner/old", repo: "owner/old", state: "off" }, { key: "lane:owner/repo", repo: "owner/repo", state: "off" }],
   cards: [{ cardId: "card-12", number: 12, title: "Fix <it>", column: "In progress", state: "permission", session: "s-12",
     subagents: [{ id: "a1", agentType: "card-tester", description: "Test card 12" }] }],
   outside: [{ id: "o-1", account: "main", cwd: "C:/work/repo", title: null, lastAt: new Date(now - 3 * 60000).toISOString(), cards: [7, 9], readable: true }],
   count: 5,
 };
 
-test("Running now lists the Router, lanes, card sessions with their subagents, and outside sessions", () => {
+test("the agents sit along the top, then what runs now (Hugh, 9 Nov)", () => {
   const F = load().AgentsFeed;
   const h = F.runningHtml(RUN, { now });
   const opens = [...h.matchAll(/data-open="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(opens, ["router", "lane:0", "card:0", "sub:0:0", "out:0"]);
+  assert.deepEqual(opens, ["router", "lane:0", "lane:1", "agent:critic", "agent:reviewer", "agent:tester", "agent:reproducer", "monitor", "card:0", "sub:0:0", "out:0"]);
+  assert.ok(h.indexOf('aria-label="The agents"') < h.indexOf("Running now"), "the agents first");
   assert.match(h, /<span class="rn-n">5<\/span>/);
   assert.match(h, /Fix &lt;it&gt;/, "titles are escaped");
-  assert.match(h, /r-asks/, "a session at a question shows the asks dot");
-  assert.match(h, /<b>Outside<\/b><span class="rn-t">repo<\/span>/, "no title: the folder's name");
+  assert.match(h, /data-open="card:0"[^>]*><span class="rdot r-asks"/, "a session at a question shows the asks dot");
+  assert.match(h, /data-open="agent:tester"[^>]*><span class="rdot r-working"/, "a kind with one running shows it");
+  assert.match(h, /data-open="agent:critic"[^>]*>Critic</, "a kind with none running: just its name");
+  assert.match(h, /Outside <span class="rn-tt">repo<\/span>/, "no title: the folder's name");
   assert.match(h, /#7 #9 · 3 min ago/);
-  assert.match(F.runningHtml({ count: 0 }), /Nothing is running\./);
+  const quiet = F.runningHtml({ count: 0 });
+  assert.match(quiet, /No card session is running\./);
+  assert.match(quiet, /data-open="router"[^>]*><span class="rdot r-off"/, "the Router tab is there when it is off");
+  assert.match(quiet, /data-open="lane:none"/, "no lane yet: a Merger tab that says so");
+  assert.match(F.runningHtml({}, { monitor: true }), /class="rn-tab ag-monitor on"[^>]*aria-pressed="true"/);
 });
 
-test("a Running now row turns back into the session it opens", () => {
+test("a tab turns back into the session it opens", () => {
   const F = load().AgentsFeed;
   assert.deepEqual({ ...F.runningSource(RUN, "router") }, { kind: "router" });
-  assert.deepEqual({ ...F.runningSource(RUN, "lane:0") }, { kind: "lane", key: "lane:owner/repo", repo: "owner/repo", state: "working" });
+  assert.deepEqual({ ...F.runningSource({}, "router") }, { kind: "router" }, "the Router opens when it is off too");
+  assert.deepEqual({ ...F.runningSource(RUN, "lane:0") }, { kind: "lane", key: "lane:owner/repo", repo: "owner/repo", state: "working" }, "a running lane keeps its state");
+  assert.deepEqual({ ...F.runningSource(RUN, "lane:1") }, { kind: "lane", key: "lane:owner/old", repo: "owner/old", state: "off" });
+  assert.equal(F.lanesOf(RUN).length, 2, "a lane once");
   assert.deepEqual({ ...F.runningSource(RUN, "card:0") }, { kind: "card", cardId: "card-12", num: 12, title: "Fix <it>" });
   const sub = F.runningSource(RUN, "sub:0:0");
   assert.equal(sub.kind, "sub"); assert.equal(sub.session, "s-12"); assert.equal(sub.id, "a1"); assert.equal(sub.cardId, "card-12");
   const out = F.runningSource(RUN, "out:0");
   assert.equal(out.kind, "outside"); assert.equal(out.id, "o-1"); assert.deepEqual([...out.cards], [7, 9]);
   assert.equal(F.runningSource(RUN, "card:4"), null, "gone");
-  assert.equal(F.runningSource({ router: null }, "router"), null);
+  assert.equal(F.runningSource(RUN, "agent:critic"), null, "an agent tab is the drawer's to open");
+  assert.equal(F.runningKind(RUN, "tester").id, "a1", "the running tester");
+  assert.equal(F.runningKind(RUN, "critic"), null, "none running: the drawer opens the latest from the feed");
 });

@@ -265,6 +265,9 @@ pub struct LaneRun {
 pub struct Running {
     pub router: Option<RouterRun>,
     pub lanes: Vec<LaneRun>,
+    /// Every repo's merge lane this channel has run, running or not (state "off" when it isn't),
+    /// for the drawer's Merger tab (card #129: Hugh's agents along the top). Not counted.
+    pub lanes_known: Vec<LaneRun>,
     pub cards: Vec<CardRun>,
     pub outside: Vec<OutsideRun>,
     /// Everything listed: the Router, each lane, each card session, each running subagent, each outside one.
@@ -360,7 +363,7 @@ fn running(app: &AppHandle) -> CmdResult<Running> {
     let states = live.states();
     let now = Utc::now();
     // The board's lock only while the rows are read, never while a transcript is.
-    let (cards, own, wait) = {
+    let (cards, own, wait, seen) = {
         let board = app.state::<Board>();
         let store = board.0.lock().map_err(CmdError::other)?;
         let mut cards = vec![];
@@ -369,7 +372,8 @@ fn running(app: &AppHandle) -> CmdResult<Running> {
             let row = live.is_live(key).or_else(|| store.latest_session(key).ok().flatten());
             cards.push((card, state.clone(), row));
         }
-        (cards, own_ids(&store), interval(&store))
+        let seen = store.lanes_seen(crate::routersession::channel()).unwrap_or_default();
+        (cards, own_ids(&store), interval(&store), seen)
     };
     let index = Index::read();
     let mut card_runs: Vec<CardRun> = cards
@@ -402,9 +406,23 @@ fn running(app: &AppHandle) -> CmdResult<Running> {
         .filter_map(|(k, st)| kanban_store::lane_repo(k).map(|r| LaneRun { key: k.clone(), repo: r.to_string(), state: st.clone() }))
         .collect();
     lanes.sort_by(|a, b| a.repo.cmp(&b.repo));
+    let lanes_known = known_lanes(&lanes, seen.iter().map(|l| l.repo.as_str()));
     let callers = book().lock().map(|b| b.list()).unwrap_or_default();
     let outside = outside_runs(&callers, &own, |id| index.find(id), now);
-    Ok(Running { router, lanes, cards: card_runs, outside, count: 0 }.counted())
+    Ok(Running { router, lanes, lanes_known, cards: card_runs, outside, count: 0 }.counted())
+}
+
+/// Every lane: the running ones as they are, then each other repo seen, "off".
+pub fn known_lanes<'a>(running: &[LaneRun], seen: impl Iterator<Item = &'a str>) -> Vec<LaneRun> {
+    let mut out = running.to_vec();
+    for repo in seen {
+        let key = kanban_store::lane_key(repo);
+        if !out.iter().any(|l| l.key == key) {
+            out.push(LaneRun { key, repo: repo.to_string(), state: "off".into() });
+        }
+    }
+    out.sort_by(|a, b| a.repo.cmp(&b.repo));
+    out
 }
 
 /// `invoke("outside_transcript_read", {id, offset})`: an outside session's conversation, read
@@ -560,6 +578,15 @@ mod tests {
             started: Some(started.into()),
             updated: Some(updated.into()),
         }
+    }
+
+    #[test]
+    fn every_lane_seen_is_known_and_a_running_one_keeps_its_state() {
+        let running = vec![LaneRun { key: kanban_store::lane_key("owner/b"), repo: "owner/b".into(), state: "working".into() }];
+        let all = known_lanes(&running, ["owner/b", "owner/a"].into_iter());
+        assert_eq!(all.iter().map(|l| (l.repo.as_str(), l.state.as_str())).collect::<Vec<_>>(), vec![("owner/a", "off"), ("owner/b", "working")]);
+        let r = Running { router: None, lanes: running.clone(), lanes_known: all, cards: vec![], outside: vec![], count: 0 }.counted();
+        assert_eq!(r.count, 1, "only what runs is counted");
     }
 
     #[test]

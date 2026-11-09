@@ -29,23 +29,32 @@
 .af button.ag.ag-open{background:none;border:0;padding:0;text-align:left;cursor:pointer;border-radius:3px}
 .af button.ag.ag-open:hover{text-decoration:underline}
 .af button.ag.ag-open:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-/* Running now, at the top of the Agents drawer: each row opens that session in the session pane. */
-/* The drawer is a grid (router.css's .rpane): head, Running now, then the feed takes the rest. */
+/* The agents along the top of the Agents drawer, then what runs now (card #129): tabs that open
+   a session in the session pane. The drawer is a grid (router.css's .rpane): head, these tabs,
+   then the feed takes the rest. */
 #agentsPane.rpane{grid-template-rows:auto auto minmax(0,1fr)}
-#ap-run{flex:none;max-height:35vh;overflow-y:auto;padding:8px 14px 8px;border-bottom:1px solid var(--line);min-height:0}
-.rn-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+#ap-run{max-height:35vh;overflow-y:auto;padding:8px 12px 8px;border-bottom:1px solid var(--line);min-height:0}
+.rn-tabs{display:flex;flex-wrap:wrap;gap:5px}
+.rn-head{display:flex;align-items:center;gap:8px;margin:8px 0 5px}
 .rn-head h3{margin:0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .rn-n{font:600 11px var(--mono);color:var(--muted)}
-.rn-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.rn-row{display:flex;align-items:center;gap:7px;width:100%;min-width:0;background:none;border:1px solid transparent;border-radius:6px;padding:4px 6px;
-  font:inherit;font-size:12.5px;color:var(--fg);text-align:left;cursor:pointer}
-.rn-row:hover{border-color:var(--line);background:var(--accent-soft)}
-.rn-row:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.rn-row b{font-family:var(--mono);font-size:12px;flex:none}
-.rn-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rn-m{flex:none;font-size:11px;color:var(--muted);white-space:nowrap}
-.rn-sub .rn-row{padding-left:24px}
-.rn-sub .ag{flex:none;font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.04em}
+.rn-tab{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:999px;
+  padding:3px 10px;font:inherit;font-size:12px;font-weight:500;color:var(--fg);cursor:pointer;white-space:nowrap}
+.rn-tab:hover{border-color:var(--accent);background:var(--accent-soft)}
+.rn-tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.rn-tab.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.rn-tab b{font-family:var(--mono);font-size:11.5px}
+.rn-tab .rdot{width:8px;height:8px}
+.rn-tsub{font-size:11px;color:var(--muted);font-weight:400}
+.rn-tt{min-width:0;max-width:22ch;overflow:hidden;text-overflow:ellipsis}
+/* Each agent tab in its own colour (board.css's --ag-*), as its rows in the feed. */
+.rn-tab.ag-router{color:var(--ag-router,var(--accent))}
+.rn-tab.ag-critic{color:var(--ag-critic,var(--accent))}
+.rn-tab.ag-tester{color:var(--ag-tester,var(--ok))}
+.rn-tab.ag-reviewer{color:var(--ag-reviewer,var(--ok))}
+.rn-tab.ag-reproducer{color:var(--ag-reproducer,var(--info))}
+.rn-tab.ag-merger{color:var(--ag-merger,var(--bad))}
+.rn-tab.ag-monitor{color:var(--ag-monitor,var(--warn))}
 /* The count of what runs, on the Agents button. */
 .agentsbtn .rn-count{margin-left:6px;font:600 10.5px var(--mono);background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:0 6px}
 .agentsbtn .rn-count[hidden]{display:none}

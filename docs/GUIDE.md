@@ -1235,11 +1235,18 @@ Esc (with the focus in the pane) or ✕ closes it.
 
 ## Open any running session (card #129)
 
-The Agents pane starts with **Running now**: the Router, each merge lane, each card session the
-app runs (with the subagents running in it now), and each Claude Code session outside the app
-that has used this board in the last 15 minutes. The count on the **Agents** button is the same
-list, kept current with the pane closed. Click any of them and it opens in the Router's panel,
-the way the Router opens: its live log beside its chat.
+The Agents pane keeps its feed, with the agents along its top as tabs to jump into:
+
+- **The agents:** Router, a **Merger** for each repo's merge lane, Critic, Reviewer, Tester and
+  Reproducer. Each opens that agent's conversation: the one running now (its tab has a dot), else
+  the latest. **Monitor** is part of the app and has no conversation: its tab shows only its lines
+  in the feed, and again shows everyone's.
+- **Running now:** each card session the app runs, each subagent running in it, and each Claude
+  Code session outside the app that has used this board in the last 15 minutes. The count on the
+  **Agents** button is this list, kept current with the pane closed.
+
+Whatever you click opens in the Router's panel, the way the Router opens: its live log beside its
+chat.
 
 - **A card session:** its chat takes messages and images, its questions are answered there, and
   it has a Terminal tab. If the card's own panel already shows its terminal, the Terminal tab
