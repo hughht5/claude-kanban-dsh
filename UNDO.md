@@ -948,3 +948,10 @@ Tests only: the app's behaviour is unchanged (the live budget for a worktree's g
 ## Card #176: the card-merger accepts a switched-off reviewer (9 Nov 2026)
 
 Prompt text only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #176 commit>`, then stage the live update. Files: `src-tauri\src\merger.rs` (prompt and test), `src-tauri\src\stackrun.rs` (merge brief), `HANDOVER.md`. A lead session already running keeps the old merger prompt until it restarts.
+
+## Card #126: kb.exe replaced while in use (6 Nov 2026, branch `dsh-126`)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\windows\hooks.nsh`: the installer deletes old `kb.old-*.exe` copies, renames kb.exe to a free `kb.old-N.exe` (N up to 99), writes the new kb.exe, then deletes the moved copy if nothing runs it (or moves it back if the write failed); uninstall also deletes `kb.old-*.exe` and the emptied folder | `git revert` the card's commit. Leftover `kb.old-N.exe` files are only old copies, in the live folder and every test slot: `Get-ChildItem "$env:USERPROFILE\Programs\Claude Kanban DSH*\kb.old-*.exe" -ErrorAction SilentlyContinue \| Remove-Item -ErrorAction SilentlyContinue` (those still in use stay) |
+| `scripts\test-kb-locked.ps1` (new) | `Remove-Item scripts\test-kb-locked.ps1 -Confirm:$false` |
