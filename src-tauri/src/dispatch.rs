@@ -1745,7 +1745,8 @@ mod tests {
         assert!(!n.contains("card-router") && !n.contains("card-reviewer"), "{n}");
         let n = subagents_note(&s, &some, "In progress").unwrap();
         assert!(n.contains("- card-reviewer (off for this card)") && !n.contains("card-tester") && !n.contains("card-critic"), "{n}");
-        assert!(subagents_note(&s, &some, "Ship it").unwrap().contains("- card-merger (off for this card): skip the Ship it prompt's card-merger step"));
+        // Card #162: an old card's `merger: false` says nothing at ship (its lane merges it).
+        assert!(subagents_note(&s, &some, "Ship it").is_none());
         assert!(subagents_note(&s, &some, "Human test").is_none());
         // A card made before #151 follows the board: card #97's critic-off note, from the default.
         s.set_page_setting(kanban_store::CRITIC_RULE_KEY, "off").unwrap();
@@ -1755,10 +1756,11 @@ mod tests {
         // In the message for Hugh's move into Planning, and not for a card with the critic on.
         assert!(move_message(&s, &old, "Backlog", false).contains("card-critic (off by the board's default"));
         assert!(!move_message(&s, &card(json!({ "title": "T", "subagents": { "critic": true } }), "Planning"), "Backlog", false).contains("card-critic (off"));
-        // Hugh's change: the log line and the session's note name all six.
+        // Hugh's change: the log line and the session's note name all five (card #162: no
+        // card-merger, whatever an old card holds).
         let (line, note) = subagents_changed(&s, &some);
-        assert_eq!(line, "Hugh set its subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer, card-merger.");
-        assert!(note.starts_with("Hugh changed this card's subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer, card-merger.") && note.contains("Only Hugh changes this."), "{note}");
+        assert_eq!(line, "Hugh set its subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer.");
+        assert!(note.starts_with("Hugh changed this card's subagents. On: card-router, card-reproducer, card-tester. Off: card-critic, card-reviewer.") && note.contains("Only Hugh changes this."), "{note}");
         assert!(!kanban_store::looks_secret(&line) && !kanban_store::looks_secret(&note));
     }
 
@@ -1967,28 +1969,27 @@ mod tests {
 
     /// Card #146: a card in the worktree the app made for it is told where it builds, in its
     /// first message and in each move's message, once. Other cards hear nothing new.
-    /// Card #160: Ship it's message for a card whose repo ships through its merge lane says to
-    /// call kanban_merge instead of the card-merger; none for another repo or with the merger off.
+    /// Cards #160, #162: Ship it's message for every card with a branch, on any repo, says to
+    /// call kanban_merge, and never to run the card-merger; a card with no branch hears nothing
+    /// of a merge. An old card's `merger: false` changes nothing.
     #[test]
-    fn a_ship_of_a_listed_repo_is_told_to_use_its_merge_lane() {
+    fn every_ship_with_a_branch_is_told_to_use_its_merge_lane() {
         let dir = tempfile::tempdir().unwrap();
         let mut s = Store::open(dir.path().join("board.db")).unwrap();
-        let co = dir.path().join("co");
-        std::fs::create_dir_all(co.join(".git")).unwrap();
-        let mut p = Patch::new();
-        p.insert("title".into(), json!("T"));
-        p.insert("repo".into(), json!("acme/web"));
-        p.insert("column".into(), json!("Ship it"));
-        let c = s.create(None, p, "Hugh").unwrap();
-        assert!(!move_message(&s, &c, "Human test", false).contains("kanban_merge"));
-        s.set_page_setting(kanban_store::MERGE_LANE_REPOS_KEY, &json!([{ "repo": "acme/web", "checkout": co.display().to_string() }]).to_string()).unwrap();
-        let m = move_message(&s, &c, "Human test", false);
-        assert!(m.contains("ships through its merge lane") && m.contains("kanban_merge"), "{m}");
-        assert!(app_move_message(&s, &c, "Human test", "x").contains("kanban_merge"));
-        let mut off = Patch::new();
-        off.insert(kanban_store::SUBAGENTS_KEY.into(), json!({ "merger": false }));
-        let c = s.update(&c.id, c.version, &off, "Hugh (board)").unwrap();
-        assert!(!move_message(&s, &c, "Human test", false).contains("kanban_merge"), "merger off: no lane");
+        let mk = |s: &mut Store, f: Value| {
+            let mut p = f.as_object().cloned().unwrap();
+            p.insert("column".into(), json!("Ship it"));
+            s.create(None, p, "Hugh").unwrap()
+        };
+        let none = mk(&mut s, json!({ "title": "T", "repo": "acme/web" }));
+        assert!(!move_message(&s, &none, "Human test", false).contains("merge lane"), "no branch: nothing to merge");
+        for f in [json!({ "title": "T", "repo": "acme/web", "branch": "card-2" }), json!({ "title": "T", "repo": "hughht5/kanban-app", "branch": "card-3", "subagents": { "merger": false } })] {
+            let c = mk(&mut s, f);
+            for m in [move_message(&s, &c, "Human test", false), app_move_message(&s, &c, "Human test", "x")] {
+                assert!(m.contains("ships through its repo's merge lane") && m.contains("kanban_merge"), "{m}");
+                assert!(!m.contains("card-merger"), "no ship path asks for the card-merger:\n{m}");
+            }
+        }
     }
 
     #[test]

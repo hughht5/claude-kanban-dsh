@@ -1,11 +1,17 @@
-//! The merger at ship (Hugh, card #100): every card session gets a `card-merger` subagent
-//! (`agents.rs`). In Ship it, before the push, the session briefs it. It rebases the card's
-//! branch onto the latest origin/main, and every other branch of the ship onto that (a stack's,
-//! and a card Hugh dropped on it to ship as one, card #89), resolves the conflicts, reruns the
-//! repo's tests and reports PASS or FAIL with the SHAs. The session pushes, never the merger.
+//! The card-merger (Hugh, card #100; card #162): every card session gets a `card-merger`
+//! subagent (`agents.rs`), for merges onto a branch that isn't main. A stack's lead runs it to
+//! bring each finished child onto the stack's branch (its "stack" job, card #113, briefed by
+//! `stackrun::merge_brief`), and the Router could run it to integrate (card #119). It rebases,
+//! resolves the conflicts, reruns the repo's tests and reports PASS or FAIL with the SHAs. It
+//! never pushes.
 //!
-//! The app records its report on the card (`merge`), with a log line and a chip on Ship it and
-//! Deploy complete cards. There is no hold: the push comes before any app call could hold it.
+//! It no longer does a ship's merge (card #162): every ship's merge, on every repo, goes
+//! through the repo's merge lane (`lane.rs`). Its prompt refuses a ship, and its report on a card
+//! in Ship it is not recorded, so it can never overwrite a lane job. The lane's verdict is
+//! recorded with this file's `record_of`.
+//!
+//! The app records its report on the card (`merge`, or `integrate` for the Router's job), with a
+//! log line and a chip.
 //!
 //! **Its pushes are refused by the shell guard (`guard.rs`), not a deny list:** a rule like
 //! `Bash(git push:*)` in an agent's `disallowedTools` takes the whole tool away. `push_in` is
@@ -25,68 +31,52 @@ pub const MERGER: &str = "card-merger";
 /// Who its reports are recorded as.
 pub const BY: &str = "the app (card-merger subagent)";
 
-const DESCRIPTION: &str = "Brings a card's branch, and every other branch of its ship, up to date with the latest origin/main at ship time on Hugh's Claude Kanban DSH board. Run it in Ship it, before the push, and wait for its result. Brief it with the card number, the checkout, the card's branch and the other branches of the ship. It rebases, resolves conflicts and reruns the tests. It never pushes or merges a PR. It ends with CARD, VERDICT, HEAD and ORIGIN lines that the app records on the card.";
+const DESCRIPTION: &str = "Brings one finished child of a stack onto the stack's branch on Hugh's Claude Kanban DSH board (its \"stack\" job, card #113): run it as a stack's lead when the app's message says so, and wait for its result. Brief it with the job, the child's card number, the lead's worktree, the stack's branch and the child's head SHA. It rebases, resolves conflicts and reruns the tests. It never pushes, and never does a ship's merge: every ship goes through its repo's merge lane (kanban_merge). It ends with CARD, VERDICT, HEAD and ORIGIN lines that the app records on the card.";
 
-const PROMPT: &str = "You are card-merger. You prepare one card's ship on Hugh's Claude Kanban DSH board. The session that ships the card briefs you. You make the card's branch current with the latest origin/main. The session pushes. You never push.
+const PROMPT: &str = "You are card-merger. On Hugh's Claude Kanban DSH board you bring finished work onto a branch that isn't main. The session that runs you briefs you. You never push. You never do a ship's merge: every ship's merge goes through its repo's merge lane (card #162).
 
-There are three jobs. The brief names the job. If it names no job, the job is \"ship\".
-- Job \"ship\": the card is in Ship it. Do steps 1 to 11.
-- Job \"stack\" (card #113): bring one finished child of a stack onto the stack's branch. Do step 1, then the STACK JOB below.
+There are two jobs. The brief names the job. If it names no job, the job is \"stack\".
+- Job \"stack\" (card #113): a stack's lead briefs you to bring one finished child of the stack onto the stack's branch. Do steps 1 to 6, then the STACK JOB below.
 - Job \"integrate\" (card #119): the Router briefs you (MODE: integrate). Bring one card's finished branch onto the integration branch. Do the INTEGRATE JOB below only.
+If the brief asks for a ship (a card in Ship it, or a branch to bring up to date with origin/main before a push), stop. Change nothing. Report VERDICT: FAIL with the line \"- ships go through the repo's merge lane (kanban_merge), not the card-merger\".
 
-1. Read the card. Use kanban_get_card with the card number from the brief.
-   - Job ship: if the card is not in the column \"Ship it\", stop. Change nothing. Report VERDICT: FAIL with the line \"- the card is in <column>, not Ship it\".
-   - Job stack: the card must be a child of a stack (kanban_stack_list), in the column \"Human test\", with test.state \"passed\" and review.state \"passed\". If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
-2. Go to the checkout that the brief names. If git status --porcelain shows work that is not committed, stop. Change nothing. Report FAIL and name the files.
-3. Find the branches of the ship. Use kanban_stack_list with the card's number: every card in the stack ships on the card's branch. The brief can also name the branch of a card that Hugh dropped on this card to ship as one (card #89).
-4. Run git fetch origin. Record these SHAs before you change anything:
-   - HEAD of the card's branch.
-   - origin/<the card's branch>. Write \"none\" if it does not exist.
-   - HEAD of each other branch of the ship.
-   Run git worktree list. A branch that is checked out in another worktree is rebased and reset in that worktree (git -C <its path> ...). First check git -C <its path> status --porcelain: if it shows work that is not committed, stop and report FAIL.
-5. Rebase. Do not make merge commits.
-   - Rebase the card's branch onto origin/main.
-   - Then rebase each other branch of the ship onto the card's branch, and fast-forward the card's branch to it.
-6. Resolve each conflict. Keep the work of both sides. Use the repo's own merge rules: the rules in your brief, else the rules in the repo's CLAUDE.md or AGENTS.md (for example a version that is origin/main's version plus one, or a changelog where you keep both sides, newest first). Apply a version rule also when there is no conflict.
+1. Read the card. Use kanban_get_card with the card number from the brief. The card must be a child of a stack (kanban_stack_list), in the column \"Human test\", with test.state \"passed\" and review.state \"passed\". If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
+2. Go to the worktree that the brief names. If git status --porcelain shows work that is not committed, stop. Change nothing. Report FAIL and name the files.
+3. Resolve each conflict. Keep the work of both sides. Use the repo's own merge rules: the rules in your brief, else the rules in the repo's CLAUDE.md or AGENTS.md (for example a version that is the base's version plus one, or a changelog where you keep both sides, newest first). Apply a version rule also when there is no conflict.
    - If you cannot resolve a conflict safely, stop and report FAIL. Name the file.
-   Commit every change that you make. A change that is not part of a rebase (for example the version) is its own commit, with \"(card #<n>)\" in its message. Before you report PASS, git status --porcelain must be clean in each checkout that you used.
-7. For hughht5/kanban-app (built on main or on a stack branch): examine each commit in origin/main..HEAD. Each commit message must contain \"(card #<n>)\" for a card of this ship. A commit that does not is a FAIL. Name the commit.
-8. Run the repo's checks that do not need a dev stack:
+   Commit every change that you make. A change that is not part of a rebase (for example the version) is its own commit, with \"(card #<n>)\" in its message. Before you report PASS, git status --porcelain must be clean in the worktree.
+4. Run the repo's checks that do not need a dev stack:
    - The commands that your brief names, if it names them.
    - This kanban app's own repo: cargo test --workspace (first export PATH=\"$HOME/.cargo/bin:$PATH\").
    - Another repo: the test command in its README or CLAUDE.md.
    A check that fails is a FAIL. Give the command and the error.
-9. If the result is FAIL: run git rebase --abort if a rebase is in progress. Then put each branch back to its SHA from step 4 (git checkout <branch>, then git reset --hard <sha>), in the worktree where it is checked out. Before each git reset --hard, run git status --porcelain again. If it shows a file that you did not change, another person works in that checkout: do not reset. Report FAIL and say that the checkout needs Hugh. Leave the checkout as it was.
-10. Do not push. Do not run git push, gh pr merge or gh api (the app refuses them). Do not merge a PR. Do not change the branch main locally, except when main is the card's branch. Do not change or move a card. Do not run kb or claude config. Do not install, quit or restart an app.
-11. Run git fetch origin again. Record origin/<the card's branch> again.
+5. If the result is FAIL: run git rebase --abort if a rebase is in progress. Then put the branch you changed back to the SHA you recorded (git checkout <branch>, then git reset --hard <sha>). Before each git reset --hard, run git status --porcelain again. If it shows a file that you did not change, another person works in that checkout: do not reset. Report FAIL and say that the checkout needs Hugh. Leave the checkout as it was.
+6. Do not push. Do not run git push, gh pr merge or gh api (the app refuses them). Do not merge a PR. Never change the branch main. Do not change or move a card. Do not run kb or claude config. Do not install, quit or restart an app.
 
 STACK JOB. The brief names the lead's worktree, the stack's branch and the child's head SHA.
    a. In the lead's worktree, do step 2. Then run git fetch origin, and record HEAD of the stack's branch and origin/<the stack's branch> (\"none\" if it does not exist).
-   b. Run git checkout --detach <the child's head SHA>. Then rebase it onto the stack's branch: git rebase <the stack's branch>. Resolve conflicts as in step 6, and commit as step 6 says.
+   b. Run git checkout --detach <the child's head SHA>. Then rebase it onto the stack's branch: git rebase <the stack's branch>. Do not make merge commits. Resolve conflicts as in step 3, and commit as step 3 says.
    c. Fast-forward the stack's branch to the result: git checkout <the stack's branch>, then git merge --ff-only <the rebased SHA>.
    d. Do not check out, rebase or reset the child's own branch. Do not change main. Do not push.
-   e. Run the checks of step 8. If the result is FAIL, do step 9 for the stack's branch.
-   f. Do step 11 for the stack's branch. Report as below: CARD is the child's number, HEAD is the stack's branch, ORIGIN is origin/<the stack's branch>.
-
+   e. Run the checks of step 4. If the result is FAIL, do step 5 for the stack's branch (back to its HEAD from a).
+   f. Run git fetch origin again, and record origin/<the stack's branch> again. Report as below: CARD is the child's number, HEAD is the stack's branch, ORIGIN is origin/<the stack's branch> before (from a) and after.
 
 INTEGRATE JOB. The brief names the card, the card's branch, the integration branch and the integration worktree.
    a. Read the card (kanban_get_card). Its test.state and review.state must be \"passed\", and it must not be in Ship it or Deploy complete. If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
    b. Go to the integration worktree. Do step 2. Make the lock: mkdir \"$(git rev-parse --git-common-dir)/kanban-integrate.lock\". If the folder is there already, another merge runs: stop and report FAIL. Remove the lock (rmdir) before you report, PASS or FAIL.
    c. git checkout <the integration branch>. Record its HEAD SHA, and origin/<the integration branch> (\"none\" if it does not exist).
-   d. git merge --no-ff <the card's branch> -m \"Integrate <the card's branch> (card #<n>)\". In this job merge commits are allowed. Resolve conflicts as in step 6. If you cannot resolve a conflict safely, run git merge --abort and report FAIL. Name the file.
+   d. git merge --no-ff <the card's branch> -m \"Integrate <the card's branch> (card #<n>)\". In this job merge commits are allowed. Resolve conflicts as in step 3. If you cannot resolve a conflict safely, run git merge --abort and report FAIL. Name the file.
    e. Never change main. Never rebase. Never push.
-   f. Run cargo test --workspace -j 4 (first export PATH=\"$HOME/.cargo/bin:$PATH\"). If a test fails, report FAIL with the first failure. Then, after the check of step 9, git reset --hard <the HEAD from c>.
+   f. Run cargo test --workspace -j 4 (first export PATH=\"$HOME/.cargo/bin:$PATH\"). If a test fails, report FAIL with the first failure. Then, after the check of step 5, git reset --hard <the HEAD from c>.
    g. Report as below, with one more line before CARD: MODE: integrate. Also add a line TESTS: pass, or TESTS: fail <the first failure>. HEAD is the integration branch. ORIGIN is origin/<the integration branch> before and after.
-
-SHIP OF AN INTEGRATION BRANCH. If the brief says that the card's branch is an integration branch, in step 5 do not rebase it: merge origin/main into it one time (one merge commit), then do steps 6 to 11.
 
 Report what you did, each conflict and how you resolved it, and each check with its result. Then end your reply with these lines, and nothing after them:
 CARD: #<the card's number>
 VERDICT: PASS
-HEAD: <the SHA of the card's branch now>
-ORIGIN: <origin/<branch> before, from step 4> <origin/<branch> after, from step 11>
+HEAD: <the SHA of the branch you brought the work onto, now>
+ORIGIN: <origin/<that branch> before> <origin/<that branch> after>
 - <one line for each thing you changed: a rebase, a conflict and how you resolved it, a version change>
-If the result is not a pass, write VERDICT: FAIL, and make each \"- \" line a thing that failed. The app reads these lines to record the merge on the card. The session pushes only after a PASS.";
+If the result is not a pass, write VERDICT: FAIL, and make each \"- \" line a thing that failed. The app reads these lines to record the merge on the card.";
 
 pub const AGENT: Agent = Agent {
     name: MERGER,
@@ -245,6 +235,16 @@ fn moved(r: &Report) -> Option<(&str, &str)> {
     r.origin.as_ref().filter(|(a, b)| a != b).map(|(a, b)| (a.as_str(), b.as_str()))
 }
 
+/// Why a card-merger's report on a card in `column` with lane-job state `merge` isn't recorded
+/// (card #162): a ship's merge is its lane's, so a card in Ship it, or with a lane job waiting
+/// or running, keeps its `merge` record as the lane writes it.
+pub fn not_a_ship(column: &str, merge: Option<&str>) -> Option<String> {
+    if column == "Ship it" {
+        return Some("a card in Ship it: every ship's merge goes through its repo's merge lane (kanban_merge)".into());
+    }
+    merge.filter(|m| kanban_store::MERGE_WAITING.contains(m)).map(|m| format!("a card whose merge lane job is {m}"))
+}
+
 /// A card-merger finished in session `row_id`: its report goes on the card it names (the
 /// session's own card or one in its stack). An origin that moved also tells Hugh.
 fn on_stop(app: &AppHandle, row_id: &str, body: &Value) {
@@ -272,6 +272,12 @@ fn on_stop(app: &AppHandle, row_id: &str, body: &Value) {
             rec["state"] = json!("failed");
         }
         line = format!("Integrate: {line}");
+    }
+    // Card #162: a ship's merge is its lane's. A report on a card in Ship it, or on one whose
+    // lane job waits or runs, would overwrite that job, so it isn't recorded.
+    if let Some(why) = (!integrate).then(|| not_a_ship(&card.column, kanban_store::merge_state(&card))).flatten() {
+        let _ = store.add_log(&card.id, &format!("Not recorded: the card-merger subagent reported on {why}"), BY);
+        return;
     }
     let mut patch = Patch::new();
     patch.insert(if integrate { INTEGRATE_KEY } else { MERGE_KEY }.into(), rec.clone());
@@ -445,8 +451,29 @@ mod tests {
 
     #[test]
     fn its_prompt_asks_for_the_lines_the_app_reads() {
-        for needed in ["CARD:", "VERDICT: PASS", "HEAD:", "ORIGIN:", "Ship it", "git rebase --abort", "(card #<n>)", "plus one", "kanban_stack_list", "You never push", "git worktree list", "Commit every change", "do not reset", "STACK JOB", "Job \"stack\"", "git checkout --detach", "git merge --ff-only", "Do not check out, rebase or reset the child's own branch"] {
+        for needed in ["CARD:", "VERDICT: PASS", "HEAD:", "ORIGIN:", "git rebase --abort", "(card #<n>)", "plus one", "kanban_stack_list", "You never push", "Commit every change", "do not reset", "STACK JOB", "Job \"stack\"", "git checkout --detach", "git merge --ff-only", "Do not check out, rebase or reset the child's own branch"] {
             assert!(PROMPT.contains(needed), "the prompt doesn't say {needed}");
+        }
+    }
+
+    /// Card #162: the card-merger no longer does a ship. Its description and prompt say so and
+    /// never speak of ship time; it refuses a ship's brief; and its report on a card in Ship it,
+    /// or on one with a lane job waiting or running, isn't recorded.
+    #[test]
+    fn the_merger_does_no_ship() {
+        for t in [DESCRIPTION, PROMPT] {
+            assert!(!t.contains("at ship time") && !t.contains("before the push") && !t.contains("Job \"ship\""), "{t}");
+            assert!(t.contains("merge lane"), "{t}");
+        }
+        assert!(DESCRIPTION.contains("stack") && !DESCRIPTION.contains("Run it in Ship it"));
+        assert!(PROMPT.contains("If the brief asks for a ship") && PROMPT.contains("not the card-merger"));
+        assert!(!PROMPT.contains("SHIP OF AN INTEGRATION BRANCH"));
+        assert!(not_a_ship("Ship it", None).is_some_and(|w| w.contains("merge lane")));
+        for st in ["queued", "running"] {
+            assert!(not_a_ship("Human test", Some(st)).is_some(), "{st}");
+        }
+        for st in [None, Some("passed"), Some("failed"), Some("cancelled")] {
+            assert_eq!(not_a_ship("Human test", st), None, "a stack child's merge is recorded: {st:?}");
         }
     }
 
@@ -460,35 +487,29 @@ mod tests {
         }
     }
 
+    /// Cards #160, #162: the merge lane's step is both ship prompts' only merge step: ask with
+    /// kanban_merge (needs-hugh when it finds no checkout), and on a PASS check the branch, reset
+    /// to the lane's commit and check the range-diff before the push (or main's fast-forward).
+    /// No card-merger, no condition on the app's note, no rebase of the session's own.
     #[test]
-    fn both_ship_prompts_have_the_merger_step() {
-        let ship_it = include_str!("../../prompts/ship-it.md");
-        let kanban_app = include_str!("../../prompts/kanban-app.md");
-        for (name, text) in [("ship-it.md", ship_it), ("kanban-app.md", kanban_app)] {
-            assert!(text.contains("card-merger"), "{name} has no card-merger step");
-            let plain = text.replace(['*', '`'], "").to_lowercase();
-            assert!(plain.contains("if your session has the card-merger subagent"), "{name}'s step isn't conditional");
-            assert!(text.contains("needs-hugh"), "{name} doesn't stop on a FAIL");
-        }
-        assert!(ship_it.contains("--force-with-lease"));
-        assert!(kanban_app.contains("--ff-only"));
-    }
-
-    /// Card #160: both ship prompts have the merge lane's step: ask with kanban_merge, and on a
-    /// PASS check the branch, reset to the lane's commit and check the range-diff before pushing.
-    #[test]
-    fn both_ship_prompts_have_the_merge_lane_step() {
+    fn both_ship_prompts_merge_only_through_the_lane() {
         let ship_it = include_str!("../../prompts/ship-it.md");
         let kanban_app = include_str!("../../prompts/kanban-app.md");
         for (name, text) in [("ship-it.md", ship_it), ("kanban-app.md", kanban_app)] {
             let plain = text.replace(['*', '`'], "").to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
-            assert!(plain.contains("if the app's note says this repo ships through its merge lane"), "{name}'s lane step isn't conditional on the app's note");
             for must in ["kanban_merge", "git range-diff", "git reset --hard", "git status --porcelain", "git rev-parse HEAD", "needs-hugh"] {
                 assert!(text.contains(must), "{name}'s lane step doesn't say {must}");
             }
-            assert!(plain.contains("don't run the card-merger"), "{name} doesn't say to skip the card-merger for a lane");
-            assert!(plain.contains("merge lane"), "{name} doesn't name the merge lane");
+            for must in ["every ship's merge goes through", "merge lane", "found no checkout for the repo", "don't rebase or merge the branch yourself"] {
+                assert!(plain.contains(must), "{name} doesn't say {must}");
+            }
+            assert!(!text.contains("card-merger"), "{name} still names the card-merger");
+            assert!(!plain.contains("if the app's note says this repo ships through its merge lane"), "{name}'s lane step is still conditional");
+            assert!(!plain.contains("git rebase origin/main"), "{name} still has the session rebase itself");
         }
+        assert!(ship_it.contains("--force-with-lease"));
+        assert!(ship_it.replace(['*', '`'], "").contains("If the card has no branch"), "ship-it.md has a no-branch path");
+        assert!(kanban_app.contains("--ff-only"));
     }
 
     /// Card #160: the lane's own rules say it never pushes and works detached, and never moves a
@@ -510,7 +531,7 @@ mod tests {
         assert!(tests_failed("TESTS: fail agents::x panicked"));
         assert!(!tests_failed("TESTS: pass"));
         assert_ne!(INTEGRATE_KEY, MERGE_KEY, "the ship record is never touched");
-        for must in ["INTEGRATE JOB", "merge commits are allowed", "Never change main", "kanban-integrate.lock", "MODE: integrate", "TESTS:", "SHIP OF AN INTEGRATION BRANCH"] {
+        for must in ["INTEGRATE JOB", "merge commits are allowed", "Never change main", "kanban-integrate.lock", "MODE: integrate", "TESTS:"] {
             assert!(PROMPT.contains(must), "{must}");
         }
     }

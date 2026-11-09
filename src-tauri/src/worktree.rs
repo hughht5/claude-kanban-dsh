@@ -11,8 +11,8 @@
 //!   on a test board (`test-card-<n>`, `test3-card-<n>`): a test board's card numbers run ahead
 //!   of the live board's, and must never take a live card's branch.
 //! - The branch starts from `origin/main` (else `main`) as this machine last saw it. The app
-//!   doesn't fetch: the board is locked while a session starts. The ship's merger rebases the
-//!   branch onto the latest `origin/main` (card #100).
+//!   doesn't fetch: the board is locked while a session starts. The repo's merge lane rebases
+//!   the branch onto the latest `origin/main` at ship (cards #160, #162).
 //! - A stack's cards keep their own flow (card #113), and a card that already has a
 //!   `worktreePath` keeps it.
 
@@ -87,7 +87,7 @@ fn norm(s: &str) -> String {
     s.trim().replace('\\', "/").trim_end_matches('/').to_ascii_lowercase()
 }
 
-fn same_path(a: &str, b: &str) -> bool {
+pub fn same_path(a: &str, b: &str) -> bool {
     norm(a) == norm(b)
 }
 

@@ -109,10 +109,19 @@ pub fn login_dirs(repo: &str) -> Vec<String> {
 /// The folder a repo's card sessions start in: its `folder` in `repos.json` (repo names compare
 /// without case), else the home folder.
 pub fn repo_folder_in(list: &[Repo], repo: Option<&str>, home: &Path) -> PathBuf {
-    repo.and_then(|r| list.iter().find(|x| x.repo.eq_ignore_ascii_case(r.trim())))
-        .filter(|x| !x.folder.trim().is_empty())
-        .map(|x| expand(x.folder.trim(), home))
-        .unwrap_or_else(|| home.to_path_buf())
+    repo.and_then(|r| folder_in(list, r, home)).unwrap_or_else(|| home.to_path_buf())
+}
+
+/// `repo`'s own `folder` in `list` (names compare without case), if it has one: unlike
+/// `repo_folder_in`, no home folder for a repo that isn't listed.
+pub fn folder_in(list: &[Repo], repo: &str, home: &Path) -> Option<PathBuf> {
+    list.iter().find(|x| x.repo.eq_ignore_ascii_case(repo.trim())).filter(|x| !x.folder.trim().is_empty()).map(|x| expand(x.folder.trim(), home))
+}
+
+/// `repo`'s `folder` in `repos.json`, if listed with one: the last place the merge lane looks
+/// for a repo's checkout (card #162).
+pub fn folder_for(repo: &str) -> Option<PathBuf> {
+    folder_in(&repos(), repo, &home())
 }
 
 /// One row of Settings' repo list (card #155): what Hugh can change there. Everything else a
@@ -402,6 +411,10 @@ mod tests {
         assert_eq!(repo_folder_in(&list, Some("acme/docs"), h), h.to_path_buf());
         assert_eq!(repo_folder_in(&list, Some("other/x"), h), h.to_path_buf());
         assert_eq!(repo_folder_in(&list, None, h), h.to_path_buf());
+        // The merge lane's last place to look (card #162): only a listed folder, never home.
+        assert_eq!(folder_in(&list, " acme/WEB ", h), Some(h.join("web-main")));
+        assert_eq!(folder_in(&list, "acme/docs", h), None);
+        assert_eq!(folder_in(&list, "other/x", h), None);
     }
 
     #[test]

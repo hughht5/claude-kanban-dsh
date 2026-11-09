@@ -1,8 +1,13 @@
-//! The merge lanes (card #160): one Claude Code session the app owns per repo Hugh lists in
-//! Settings › Sessions ("Ship through one merge lane per repo", `sessions.merge_lane_repos`). It
-//! does the ship's merge for every card of that repo, one at a time, in its own detached
-//! worktree, and keeps its conversation across ships, so it resolves conflicts with what it
-//! learnt merging the earlier ones. The card's own session still pushes and ships.
+//! The merge lanes (cards #160, #162): one Claude Code session the app owns per repo. It does
+//! the ship's merge for every card of that repo with a branch, one at a time, in its own
+//! detached worktree, and keeps its conversation across ships, so it resolves conflicts with
+//! what it learnt merging the earlier ones. The card's own session still pushes and ships.
+//!
+//! - Platform-wide (card #162): every repo ships through its lane; there is no list and no
+//!   card-merger at ship. At `kanban_merge` the app finds the lane's checkout (`find_checkout`:
+//!   the card's worktree's main checkout, else the own-worktree list's, else `repos.json`'s
+//!   folder), and keys the lane by the GitHub repo its `origin` names, so a card whose `repo` is
+//!   an old name of the repo shares the lane. The checkout is kept on the job (`merge.checkout`).
 //!
 //! - Built like the Router (card #119): not a card; key `lane:<repo>` in the live session map;
 //!   outside the cap and the start queue; never paused by the card idle rule; main account; its
@@ -70,9 +75,102 @@ impl Lanes {
     }
 }
 
-/// The lane's worktree for a listed repo on this channel.
+/// The lane's worktree in `entry`'s checkout on this channel.
 pub fn worktree_of(entry: &MergeLaneRepo) -> PathBuf {
     crate::worktree::lane_path(Path::new(&entry.checkout), kanban_store::channel())
+}
+
+/// The checkout a lane's worktree `cwd` is in (`<checkout>\.claude\worktrees\<lane name>`), if
+/// it is one: for a lane Settings shows from its last session.
+pub fn checkout_of_lane_path(cwd: &str) -> Option<String> {
+    let p = Path::new(cwd.trim());
+    let wt = p.parent()?;
+    let claude = wt.parent()?;
+    let named = |q: &Path, n: &str| q.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.eq_ignore_ascii_case(n));
+    (named(wt, "worktrees") && named(claude, ".claude")).then(|| claude.parent().map(|c| c.display().to_string())).flatten()
+}
+
+// ---- Where a lane works: its checkout and its repo (card #162) ----
+
+/// The GitHub `owner/name` (lower case) a remote URL names, if it is GitHub's: https, ssh and
+/// scp forms, with or without `.git` and a user (a token in an https URL is never kept).
+pub fn github_repo(url: &str) -> Option<String> {
+    let u = url.trim();
+    let lower = u.to_ascii_lowercase();
+    let at = lower.find("github.com")?;
+    // github.com must be the host: at the start, or after `//`, `@` or `.`.
+    if at > 0 && !matches!(&lower[at - 1..at], "/" | "@" | ".") {
+        return None;
+    }
+    let rest = &u[at + "github.com".len()..];
+    let rest = match rest.strip_prefix(':') {
+        // `ssh://host:22/owner/name`: a port. Else `git@host:owner/name` (scp form).
+        Some(r) => match r.find('/') {
+            Some(i) if i > 0 && lower.starts_with("ssh://") && r[..i].chars().all(|c| c.is_ascii_digit()) => &r[i + 1..],
+            _ => r,
+        },
+        None => rest.strip_prefix('/')?,
+    };
+    let rest = rest.trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut parts = rest.split('/');
+    let (owner, name) = (parts.next()?, parts.next()?);
+    let ok = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && s != "." && s != "..";
+    (parts.next().is_none() && ok(owner) && ok(name)).then(|| format!("{owner}/{name}").to_ascii_lowercase())
+}
+
+/// The places the app looks for a card's lane checkout, in order (card #162).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Places {
+    /// The card's `worktreePath`.
+    pub worktree: Option<PathBuf>,
+    /// The card's repo's checkout on Settings › Sessions' own-worktree list.
+    pub own: Option<PathBuf>,
+    /// The card's repo's `folder` in `repos.json`.
+    pub folder: Option<PathBuf>,
+}
+
+/// A path as one string for each folder: absolute, no `\\?\`, no trailing separator.
+fn clean_path(p: &Path) -> PathBuf {
+    let c = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    PathBuf::from(c.to_string_lossy().trim_start_matches(r"\\?\").trim_end_matches(['\\', '/']).to_string())
+}
+
+/// The main checkout of the repo `dir` is in (a checkout or one of its worktrees), and the
+/// GitHub repo its `origin` names; or why not.
+fn checkout_at(dir: &Path) -> Result<MergeLaneRepo, String> {
+    if !dir.is_dir() {
+        return Err("no such folder".into());
+    }
+    let common = crate::worktree::git(dir, &["rev-parse", "--git-common-dir"]).map_err(|e| format!("not a git checkout ({e})"))?;
+    let common = Path::new(common.trim());
+    let common = if common.is_absolute() { common.to_path_buf() } else { dir.join(common) };
+    let common = clean_path(&common);
+    if !common.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case(".git")) {
+        return Err(format!("its git folder {} isn't a checkout's .git", common.display()));
+    }
+    let checkout = common.parent().map(Path::to_path_buf).ok_or("its git folder has no checkout")?;
+    let url = crate::worktree::git(&checkout, &["remote", "get-url", "origin"]).map_err(|_| format!("{} has no origin remote", checkout.display()))?;
+    let repo = github_repo(&url).ok_or_else(|| format!("{}'s origin isn't a GitHub owner/name", checkout.display()))?;
+    Ok(MergeLaneRepo { repo, checkout: checkout.display().to_string() })
+}
+
+/// Card #162: the lane's place for a card's merge. The first that works of: the main checkout
+/// of the card's worktree, the own-worktree list's checkout, the `repos.json` folder; each must
+/// be a git checkout whose `origin` names a GitHub repo. Else a refusal naming where it looked.
+/// Runs git: call it with no lock of the board held.
+pub fn find_checkout(p: &Places) -> Result<MergeLaneRepo, String> {
+    let mut tried: Vec<String> = vec![];
+    for (what, place) in [("the card's worktree", &p.worktree), ("its repo on Settings › Sessions › Build each card in its own worktree", &p.own), ("its repo's folder in repos.json", &p.folder)] {
+        match place {
+            None => tried.push(format!("{what}: none")),
+            Some(d) => match checkout_at(d) {
+                Ok(found) => return Ok(found),
+                Err(why) => tried.push(format!("{what} ({}): {why}", d.display())),
+            },
+        }
+    }
+    Err(format!("the app found no git checkout with a GitHub origin for this card's merge. It looked at {}. Report needs-hugh with this reason", tried.join("; ")))
 }
 
 // ---- A job, as the card's `merge` record holds it ----
@@ -86,6 +184,9 @@ pub struct Job {
     pub base: String,
     pub branch: String,
     pub worktree: String,
+    /// The checkout its lane works in (card #162), found when the card asked. Empty on a job an
+    /// older build asked for.
+    pub checkout: String,
     pub branches: Vec<String>,
     pub rules: Option<String>,
     pub checks: Option<String>,
@@ -113,6 +214,7 @@ pub fn job_of(card: &Card) -> Option<Job> {
         base: s(m, "base"),
         branch: s(m, "branch"),
         worktree: s(m, "worktree"),
+        checkout: s(m, "checkout"),
         branches: m.get("branches").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
         rules: m.get("rules").and_then(Value::as_str).map(str::to_string),
         checks: m.get("checks").and_then(Value::as_str).map(str::to_string),
@@ -127,10 +229,10 @@ pub fn job_of(card: &Card) -> Option<Job> {
 /// What `tick` knows about one lane at one pass.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Facts {
-    /// The repo is still on Hugh's list.
-    pub listed: bool,
     /// Its session is running (or a start is under way).
     pub live: bool,
+    /// It runs in another checkout's lane worktree than its job's (two checkouts of one repo).
+    pub elsewhere: bool,
     /// Ready, idle and nothing being typed: a message may be typed now.
     pub free: bool,
     /// How long it has sat idle, when it is.
@@ -180,8 +282,8 @@ pub fn decide(f: &Facts) -> Action {
     if !j.in_ship_it {
         return Action::Cancel("the card left Ship it".into());
     }
-    if !f.listed {
-        return Action::GiveUp("the repo is no longer on the merge-lane list in Settings".into());
+    if j.checkout.trim().is_empty() {
+        return Action::GiveUp("this merge names no checkout for its lane (an older build of the app asked for it)".into());
     }
     if j.running {
         if j.started_at.is_some_and(|t| f.now - t >= TIMEOUT) {
@@ -201,6 +303,10 @@ pub fn decide(f: &Facts) -> Action {
     // A dropped job's note goes first, so the lane is clean for the next one.
     if f.pending {
         Action::Type
+    } else if f.elsewhere {
+        // Free and in another checkout's worktree: stop it, and the next pass starts it where
+        // this job's checkout is (its conversation is kept).
+        Action::Stop
     } else {
         Action::Brief
     }
@@ -215,16 +321,14 @@ pub struct Ask<'a> {
     pub archived: bool,
     /// `kanban_store::ship_started` said its ship has started.
     pub ship_started: bool,
-    pub listed: bool,
-    pub merger_on: bool,
     pub branch: Option<&'a str>,
     pub worktree: Option<&'a str>,
     /// Its current `merge` state, if any.
     pub merge_state: Option<&'a str>,
 }
 
-/// Why a card's `kanban_merge` is refused, if it is. The uncommitted-work check needs git and
-/// comes after.
+/// Why a card's `kanban_merge` is refused, if it is. The uncommitted-work check and the lane's
+/// checkout (`find_checkout`) need git and come after.
 pub fn merge_refused(a: &Ask) -> Option<String> {
     if a.archived {
         return Some("the card is archived".into());
@@ -235,14 +339,8 @@ pub fn merge_refused(a: &Ask) -> Option<String> {
     if !a.ship_started {
         return Some("the card's ship hasn't started (it waits its turn in the ship queue): wait for the Ship it prompt".into());
     }
-    if !a.listed {
-        return Some("this card's repo doesn't ship through a merge lane (Settings › Sessions): use the card-merger subagent, as the Ship it prompt says".into());
-    }
-    if !a.merger_on {
-        return Some("Hugh has the merger off for this card: no merge, by the lane or the card-merger".into());
-    }
     if a.branch.is_none() {
-        return Some("the card has no branch: set `branch` on the card first".into());
+        return Some("the card has no branch, so there is nothing to merge. If it has code on a branch, set `branch` on the card and ask again; if not, go on with the Ship it prompt's no-branch path".into());
     }
     if a.worktree.is_none() {
         return Some("the card has no worktreePath: set it to the folder its branch is checked out in".into());
@@ -292,22 +390,28 @@ fn now() -> String {
 }
 
 /// `kanban_merge`: the card's own session asks its repo's lane for the ship's merge. The board
-/// is let go while git reads the card's worktree.
+/// is let go while git reads the card's worktree and finds the lane's checkout.
 pub fn request(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value, String> {
     let branches = branches_arg(args)?;
     let rules = text_arg(args, "rules")?;
     let checks = text_arg(args, "checks")?;
     let board = app.state::<Board>();
-    let (card_id, worktree) = {
+    let (card_id, worktree, places) = {
         let store = board.0.lock().map_err(|e| e.to_string())?;
         let own = crate::tools::caller_card(app, &store, caller).ok_or("kanban_merge is for a card's own session, for its own card's ship")?;
         let card = store.get(&own).map_err(|e| e.to_string())?;
         if args.get("card").and_then(Value::as_i64).is_some_and(|n| n != card.number) {
             return Err(format!("kanban_merge asks for your own card's merge (#{}) only", card.number));
         }
-        check(&store, &card)?;
+        check(&card)?;
         let wt = card.fields.get("worktreePath").and_then(Value::as_str).unwrap_or("").trim().to_string();
-        (card.id, wt)
+        let repo = card.fields.get("repo").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty());
+        let places = Places {
+            worktree: (!wt.is_empty()).then(|| PathBuf::from(&wt)),
+            own: repo.and_then(|r| store.own_worktree_repo_for(r)).map(|r| PathBuf::from(r.checkout)),
+            folder: repo.and_then(crate::private::folder_for),
+        };
+        (card.id, wt, places)
     };
     // Outside the board's lock: the card's worktree must be clean, and its HEAD is the base.
     let dir = Path::new(&worktree);
@@ -317,13 +421,15 @@ pub fn request(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Va
         return Err(format!("refused: your worktree has work that isn't committed ({}). Commit it, then ask again", files.join(", ").trim()));
     }
     let base = crate::worktree::git(dir, &["rev-parse", "HEAD"]).map_err(|e| format!("refused: couldn't read HEAD in {worktree}: {e}"))?;
+    // The lane's checkout and repo (card #162), kept on the job so a restart needn't look again.
+    let entry = find_checkout(&places).map_err(|e| format!("refused: {e}"))?;
     let mut store = board.0.lock().map_err(|e| e.to_string())?;
     let card = store.get(&card_id).map_err(|e| e.to_string())?;
     // Read again: the card may have moved while git ran.
-    let entry = check(&store, &card)?;
+    check(&card)?;
     let branch = card.fields.get("branch").and_then(Value::as_str).unwrap_or("").trim().to_string();
     let key = lane_key(&entry.repo);
-    let mut rec = json!({ "state": "queued", "lane": key, "base": base, "at": now(), "branch": branch, "worktree": worktree, "by": format!("card #{}'s session", card.number) });
+    let mut rec = json!({ "state": "queued", "lane": key, "checkout": entry.checkout, "base": base, "at": now(), "branch": branch, "worktree": worktree, "by": format!("card #{}'s session", card.number) });
     if !branches.is_empty() {
         rec["branches"] = json!(branches);
     }
@@ -336,30 +442,31 @@ pub fn request(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Va
     let mut patch = Patch::new();
     patch.insert(MERGE_KEY.into(), rec);
     store.update(&card.id, card.version, &patch, BY).map_err(|e| e.to_string())?;
-    let _ = store.add_log(&card.id, &format!("Asked the merge lane for {}'s merge: {branch} at {}{}", entry.repo, short(&base), if branches.is_empty() { String::new() } else { format!(", with {}", branches.join(", ")) }), BY);
+    let _ = store.add_log(
+        &card.id,
+        &format!("Asked {}'s merge lane (in {}) for this card's merge: {branch} at {}{}", entry.repo, entry.checkout, short(&base), if branches.is_empty() { String::new() } else { format!(", with {}", branches.join(", ")) }),
+        BY,
+    );
     drop(store);
     let _ = app.emit("cards-changed", ());
     Ok(json!(format!("The merge lane has it ({branch} at {}). End your turn: the app sends you its verdict.", short(&base))))
 }
 
-/// `merge_refused` for `card` as it is on the board now; its repo's list entry when allowed.
-fn check(store: &Store, card: &Card) -> Result<MergeLaneRepo, String> {
+/// `merge_refused` for `card` as it is on the board now.
+fn check(card: &Card) -> Result<(), String> {
     let text = |k: &str| card.fields.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
-    let entry = text("repo").and_then(|r| store.merge_lane_repo_for(r));
     let ask = Ask {
         column: &card.column,
         archived: card.archived,
         ship_started: kanban_store::ship_started(card).is_some(),
-        listed: entry.is_some(),
-        merger_on: store.subagent_on(card, "merger"),
         branch: text("branch"),
         worktree: text("worktreePath"),
         merge_state: kanban_store::merge_state(card),
     };
-    if let Some(why) = merge_refused(&ask) {
-        return Err(format!("refused: {why}"));
+    match merge_refused(&ask) {
+        Some(why) => Err(format!("refused: {why}")),
+        None => Ok(()),
     }
-    entry.ok_or_else(|| "refused: no merge lane for this repo".into())
 }
 
 fn short(sha: &str) -> &str {
@@ -419,7 +526,7 @@ pub fn verdict_message(n: i64, state: &str, detail: &str, base: &str, head: Opti
     let changed = if lines.is_empty() { String::new() } else { format!("\nWhat it did:\n{}", lines.iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n")) };
     match (state, head, onto) {
         ("passed", Some(head), Some(onto)) => format!(
-            "The merge lane passed card #{n}'s merge: your branch's commits (base {base}) are rebased onto origin/main at {onto}, as commit {head}. Nothing is pushed, and your branch hasn't moved yet.{changed}\n\nNow, in your worktree {worktree}:\n1. Check that git status --porcelain is empty and git rev-parse HEAD is {base}. If not, your branch moved since you asked: report kanban_ship_result needs-hugh with what you found, and stop.\n2. Run git reset --hard {head}.\n3. Run git range-diff {onto} {base} {head}. Each of your own commits must be there, intact, apart from the conflict resolutions listed above. If one is missing or changed in another way, report needs-hugh with what range-diff shows, and stop.\n4. Then go on as step 1a of the Ship it prompt says after the merger's PASS (the push with --force-with-lease, and the rest of the ship). Don't run the card-merger subagent."
+            "The merge lane passed card #{n}'s merge: your branch's commits (base {base}) are rebased onto origin/main at {onto}, as commit {head}. Nothing is pushed, and your branch hasn't moved yet.{changed}\n\nNow, in your worktree {worktree}:\n1. Check that git status --porcelain is empty and git rev-parse HEAD is {base}. If not, your branch moved since you asked: report kanban_ship_result needs-hugh with what you found, and stop.\n2. Run git reset --hard {head}.\n3. Run git range-diff {onto} {base} {head}. Each of your own commits must be there, intact, apart from the conflict resolutions listed above. If one is missing or changed in another way, report needs-hugh with what range-diff shows, and stop.\n4. Then go on as step 1a of your Ship it prompt says after the lane's PASS (for most repos, the push with --force-with-lease; for this app's own repo, the fast-forward of main), and the rest of the ship."
         ),
         _ => format!(
             "The merge lane's verdict on card #{n}'s merge: {} ({detail}). Your branch is as it was: the lane moves no branch.{changed}\n\nReport kanban_ship_result needs-hugh with that reason, and stop. Hugh decides what happens next.",
@@ -428,17 +535,17 @@ pub fn verdict_message(n: i64, state: &str, detail: &str, base: &str, head: Opti
     }
 }
 
-/// Card #160's note on the Ship it message for a card whose repo ships through its merge lane.
-/// None for any other card, or one Hugh has the merger off on (`subagents_note` says so).
-pub fn lane_note(store: &Store, card: &Card, column: &str) -> Option<String> {
-    if column != "Ship it" || !store.subagent_on(card, "merger") {
+/// The note on the Ship it message for every card with a branch, on every repo (cards #160,
+/// #162): its merge goes through its repo's merge lane. None for a card with no branch (nothing
+/// to merge: the ship prompt's no-branch path) and outside Ship it. It reads only the card, so it
+/// runs no git with the board locked: `kanban_merge` finds the lane's checkout.
+pub fn lane_note(_store: &Store, card: &Card, column: &str) -> Option<String> {
+    if column != "Ship it" {
         return None;
     }
-    let repo = card.fields.get("repo").and_then(Value::as_str)?;
-    let entry = store.merge_lane_repo_for(repo)?;
+    let branch = card.fields.get("branch").and_then(Value::as_str).map(str::trim).filter(|b| !b.is_empty())?;
     Some(format!(
-        "{} ships through its merge lane (card #160). In step 1a, don't run the card-merger subagent. Commit your work first, then call kanban_merge: with branches for a card Hugh dropped on this one to ship as one, and the repo's merge rules and check commands as you would have briefed the merger (rules, checks). Then end your turn. The lane merges in its own worktree and leaves your branch alone. The app sends you its verdict and every line of what it changed, and says what to do next.",
-        entry.repo
+        "Your branch {branch} ships through its repo's merge lane (cards #160, #162): every ship's merge does. In step 1a, commit your work first, then call kanban_merge: with branches for a card Hugh dropped on this one to ship as one, and the repo's merge rules and check commands (rules, checks). Then end your turn. The lane merges in its own worktree and leaves your branch alone. The app sends you its verdict and every line of what it changed, and says what to do next. If kanban_merge refuses because it found no checkout for the repo, report needs-hugh with its reason; fix any other refusal it names and ask again."
     ))
 }
 
@@ -467,8 +574,10 @@ pub fn plan(store: &Store, api: Option<crate::api::ApiInfo>, base: &Path, resume
     }
 }
 
-/// Starts `entry`'s lane, or resumes its last conversation on this channel when its transcript
-/// is here. Makes its worktree first (git, capped at 15 s, with no lock of the board held).
+/// Starts `entry`'s lane (its job's repo and checkout), or resumes its last conversation on this
+/// channel when its transcript is here and it ran in this lane worktree. Makes its worktree
+/// first (git, capped at 15 s, with no lock of the board held). Refused when another lane runs
+/// in that worktree: two lanes never share one.
 pub fn start(app: &AppHandle, entry: &MergeLaneRepo) -> Result<String, String> {
     let key = lane_key(&entry.repo);
     let live = app.state::<Arc<Sessions>>().inner().clone();
@@ -476,6 +585,10 @@ pub fn start(app: &AppHandle, entry: &MergeLaneRepo) -> Result<String, String> {
         return Ok("running".into());
     }
     let path = worktree_of(entry);
+    let here = path.display().to_string();
+    if let Some(other) = live.watch().into_iter().map(|w| w.card_id).filter(|k| is_lane_key(k) && k != &key).find(|k| live.is_live(k).is_some_and(|r| crate::worktree::same_path(&r.cwd, &here))) {
+        return Err(format!("the merge lane {} already works in {here}; two lanes never share a worktree", lane_repo(&other).unwrap_or(&other)));
+    }
     let made = crate::worktree::make_lane(Path::new(&entry.checkout), &path)?;
     let api = app.state::<crate::Api>().0.clone();
     let base = crate::board_path().parent().map(|p| p.join("sessions")).unwrap_or_default();
@@ -484,7 +597,7 @@ pub fn start(app: &AppHandle, entry: &MergeLaneRepo) -> Result<String, String> {
     let last = store.latest_lane_session(&entry.repo, kanban_store::channel()).map_err(|e| e.to_string())?;
     let resume = last
         .as_ref()
-        .filter(|r| Path::new(&r.cwd).is_dir() && crate::transcript::find(&r.account, &r.claude_session_id).is_some())
+        .filter(|r| crate::worktree::same_path(&r.cwd, &here) && Path::new(&r.cwd).is_dir() && crate::transcript::find(&r.account, &r.claude_session_id).is_some())
         .map(|r| (r.claude_session_id.clone(), r.cwd.clone()));
     let (resume_id, run_in) = match resume {
         Some((id, c)) => (Some(id), c),
@@ -534,28 +647,63 @@ pub fn state_word(live: bool, session_state: &str, ready: bool, job: Option<&Job
     }
 }
 
+/// One lane Settings lists (card #162): its key, checkout and worktree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listed {
+    pub key: String,
+    pub checkout: String,
+    pub worktree: String,
+}
+
+/// The lanes Settings lists: each that has a job, a running session (`running`: key and cwd) or
+/// a session on this channel before (`seen`), by repo. Its worktree is where it runs, else its
+/// job's checkout's lane worktree, else its last session's; its checkout is its job's, else the
+/// one that worktree is in.
+pub fn lanes_listed(jobs: &[Job], seen: &[kanban_store::LaneSession], running: &[(String, String)]) -> Vec<Listed> {
+    let mut keys: BTreeSet<String> = jobs.iter().map(|j| j.lane.clone()).filter(|k| is_lane_key(k)).collect();
+    keys.extend(running.iter().map(|(k, _)| k.clone()).filter(|k| is_lane_key(k)));
+    keys.extend(seen.iter().map(|s| lane_key(&s.repo)));
+    keys.into_iter()
+        .map(|key| {
+            let job = jobs.iter().find(|j| j.lane == key && !j.checkout.trim().is_empty());
+            let job_wt = job.map(|j| worktree_of(&MergeLaneRepo { repo: String::new(), checkout: j.checkout.clone() }).display().to_string());
+            let worktree = running
+                .iter()
+                .find(|(k, _)| k == &key)
+                .map(|(_, c)| c.clone())
+                .or(job_wt)
+                .or_else(|| seen.iter().find(|s| lane_key(&s.repo) == key).map(|s| s.cwd.clone()))
+                .unwrap_or_default();
+            let checkout = job.map(|j| j.checkout.clone()).or_else(|| checkout_of_lane_path(&worktree)).unwrap_or_default();
+            Listed { key, checkout, worktree }
+        })
+        .collect()
+}
+
 pub fn status(app: &AppHandle) -> Vec<Status> {
     let live = app.state::<Arc<Sessions>>();
-    let (list, jobs, (model, effort)) = {
+    let (seen, jobs, (model, effort)) = {
         let board = app.state::<Board>();
         let Ok(store) = board.0.lock() else { return vec![] };
-        (store.merge_lane_repos(), store.lane_jobs_all().unwrap_or_default(), store.lane_model_effort())
+        (store.lanes_seen(kanban_store::channel()).unwrap_or_default(), store.lane_jobs_all().unwrap_or_default(), store.lane_model_effort())
     };
+    let jobs: Vec<Job> = jobs.iter().filter_map(job_of).collect();
+    let running: Vec<(String, String)> = live.watch().into_iter().map(|w| w.card_id).filter(|k| is_lane_key(k)).filter_map(|k| live.is_live(&k).map(|r| (k, r.cwd))).collect();
     let starting: BTreeSet<String> = app.try_state::<Lanes>().and_then(|l| l.0.lock().ok().map(|m| m.iter().filter(|(_, v)| v.starting).map(|(k, _)| k.clone()).collect())).unwrap_or_default();
-    list.iter()
-        .map(|e| {
-            let key = lane_key(&e.repo);
-            let job = jobs.iter().filter_map(job_of).find(|j| j.lane == key);
-            let w = live.watch_one(&key);
+    lanes_listed(&jobs, &seen, &running)
+        .into_iter()
+        .map(|l| {
+            let job = jobs.iter().find(|j| j.lane == l.key);
+            let w = live.watch_one(&l.key);
             let state = match &w {
-                Some(w) => state_word(true, &w.state, w.ready, job.as_ref()),
-                None if starting.contains(&key) => "starting",
-                None => state_word(false, "", false, job.as_ref()),
+                Some(w) => state_word(true, &w.state, w.ready, job),
+                None if starting.contains(&l.key) => "starting",
+                None => state_word(false, "", false, job),
             };
             Status {
-                repo: e.repo.clone(),
-                checkout: e.checkout.clone(),
-                worktree: worktree_of(e).display().to_string(),
+                repo: lane_repo(&l.key).unwrap_or("").to_string(),
+                checkout: l.checkout,
+                worktree: l.worktree,
                 state: state.into(),
                 card: job.map(|j| j.number),
                 model: model.clone(),
@@ -727,29 +875,38 @@ pub fn tick(app: &AppHandle) {
     let live = app.state::<Arc<Sessions>>().inner().clone();
     let watches: HashMap<String, crate::sessions::Watch> = live.watch().into_iter().filter(|w| is_lane_key(&w.card_id)).map(|w| (w.card_id.clone(), w)).collect();
     let mem_keys: Vec<String> = lanes.0.lock().map(|m| m.iter().filter(|(_, v)| v.starting || !v.pending.is_empty()).map(|(k, _)| k.clone()).collect()).unwrap_or_default();
-    let (list, jobs) = {
+    let jobs = {
         let board = app.state::<Board>();
         let Ok(store) = board.0.lock() else { return };
         let waiting = store.lane_jobs_waiting().unwrap_or(0);
         if waiting == 0 && watches.is_empty() && mem_keys.is_empty() {
             return;
         }
-        (store.merge_lane_repos(), if waiting > 0 { store.lane_jobs_all().unwrap_or_default() } else { vec![] })
+        if waiting > 0 {
+            store.lane_jobs_all().unwrap_or_default()
+        } else {
+            vec![]
+        }
     };
     let free: BTreeSet<String> = if watches.is_empty() { BTreeSet::new() } else { live.free().into_iter().filter(|k| is_lane_key(k)).collect() };
     let jobs: Vec<Job> = jobs.iter().filter_map(job_of).collect();
-    let mut keys: BTreeSet<String> = list.iter().map(|e| lane_key(&e.repo)).filter(|k| jobs.iter().any(|j| &j.lane == k)).collect();
-    keys.extend(watches.keys().cloned());
+    let mut keys: BTreeSet<String> = watches.keys().cloned().collect();
     keys.extend(mem_keys);
     keys.extend(jobs.iter().map(|j| j.lane.clone()).filter(|k| is_lane_key(k)));
     let now = chrono::Utc::now();
     for key in keys {
-        let entry = list.iter().find(|e| lane_key(&e.repo) == key).cloned();
         let job = jobs.iter().find(|j| j.lane == key).cloned();
+        // The lane's place is its job's (card #162): the GitHub repo its key names, and the
+        // checkout found when the card asked.
+        let entry = job.as_ref().filter(|j| !j.checkout.trim().is_empty()).map(|j| MergeLaneRepo { repo: lane_repo(&key).unwrap_or("").to_string(), checkout: j.checkout.clone() });
         let (starting, pending, starts) = lanes.0.lock().map(|m| m.get(&key).map(|v| (v.starting, !v.pending.is_empty(), v.starts)).unwrap_or_default()).unwrap_or_default();
         let w = watches.get(&key);
+        let elsewhere = match (&entry, w.is_some()) {
+            (Some(e), true) => live.is_live(&key).is_some_and(|r| !crate::worktree::same_path(&r.cwd, &worktree_of(e).display().to_string())),
+            _ => false,
+        };
         let facts = Facts {
-            listed: entry.is_some(),
+            elsewhere,
             live: w.is_some() || starting,
             free: free.contains(&key) && !starting,
             idle_for: w.filter(|w| w.state == "idle").map(|w| w.in_state),
@@ -807,7 +964,7 @@ fn act(app: &AppHandle, lanes: &Lanes, key: &str, action: Action, job: Option<&J
                 let _ = store.add_log(&card.id, "The merge lane ended during this merge (a crash, a Stop or an app restart): the app resumes it once", BY);
                 // The job again with the note, for a lane whose conversation couldn't be resumed.
                 let repo = card.fields.get("repo").and_then(Value::as_str).unwrap_or("").to_string();
-                let history = store.recent_merges(&repo, HISTORY, Some(&card.id)).unwrap_or_default();
+                let history = store.recent_merges(key, &repo, HISTORY, Some(&card.id)).unwrap_or_default();
                 let job_text = brief(&card, j, &history, &worktree_of(&entry));
                 drop(store);
                 mem(lanes, key, |m| m.pending.push_back(format!("{}\n\nThe job, as it was given:\n{job_text}", resume_note(j.number))));
@@ -840,7 +997,7 @@ fn act(app: &AppHandle, lanes: &Lanes, key: &str, action: Action, job: Option<&J
                 let Ok(store) = board.0.lock() else { return };
                 let Ok(card) = store.get_by_number(j.number) else { return };
                 let repo = card.fields.get("repo").and_then(Value::as_str).unwrap_or("").to_string();
-                let history = store.recent_merges(&repo, HISTORY, Some(&card.id)).unwrap_or_default();
+                let history = store.recent_merges(key, &repo, HISTORY, Some(&card.id)).unwrap_or_default();
                 brief(&card, j, &history, &lane_wt)
             };
             if live.send_message(key, &text).is_err() {
@@ -907,6 +1064,7 @@ mod tests {
             base: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b".into(),
             branch: "card-7".into(),
             worktree: "C:/co/.claude/worktrees/card-7".into(),
+            checkout: "C:/co".into(),
             branches: vec![],
             rules: None,
             checks: None,
@@ -917,7 +1075,7 @@ mod tests {
     }
 
     fn facts(j: Option<Job>) -> Facts {
-        Facts { listed: true, live: false, free: false, idle_for: None, job: j, pending: false, starts: 0, now: chrono::Utc::now() }
+        Facts { live: false, elsewhere: false, free: false, idle_for: None, job: j, pending: false, starts: 0, now: chrono::Utc::now() }
     }
 
     #[test]
@@ -950,13 +1108,27 @@ mod tests {
     }
 
     #[test]
-    fn a_card_that_leaves_ship_it_cancels_its_job_and_an_unlisted_repo_gives_up() {
+    fn a_card_that_leaves_ship_it_cancels_its_job_and_a_job_with_no_checkout_gives_up() {
         for running in [false, true] {
             let mut j = job(running);
             j.in_ship_it = false;
             assert!(matches!(decide(&Facts { live: true, free: true, ..facts(Some(j)) }), Action::Cancel(w) if w.contains("left Ship it")));
         }
-        assert!(matches!(decide(&Facts { listed: false, ..facts(Some(job(false))) }), Action::GiveUp(w) if w.contains("no longer on the merge-lane list")));
+        // Card #162: a job an older build asked for has no checkout, so no lane can take it.
+        let mut old = job(false);
+        old.checkout = String::new();
+        assert!(matches!(decide(&facts(Some(old))), Action::GiveUp(w) if w.contains("names no checkout")));
+    }
+
+    /// Card #162: a lane free in another checkout's worktree (two checkouts of one repo) stops,
+    /// so the next pass starts it in its job's checkout; one busy there is left to finish.
+    #[test]
+    fn a_lane_in_another_checkout_stops_before_the_next_brief() {
+        let f = Facts { live: true, free: true, elsewhere: true, ..facts(Some(job(false))) };
+        assert_eq!(decide(&f), Action::Stop);
+        assert_eq!(decide(&Facts { pending: true, ..f.clone() }), Action::Type, "its note first");
+        assert_eq!(decide(&Facts { free: false, ..f.clone() }), Action::Nothing);
+        assert_eq!(decide(&Facts { elsewhere: false, ..f.clone() }), Action::Brief);
     }
 
     #[test]
@@ -972,7 +1144,7 @@ mod tests {
     }
 
     fn ask<'a>() -> Ask<'a> {
-        Ask { column: "Ship it", archived: false, ship_started: true, listed: true, merger_on: true, branch: Some("card-7"), worktree: Some("C:/w"), merge_state: None }
+        Ask { column: "Ship it", archived: false, ship_started: true, branch: Some("card-7"), worktree: Some("C:/w"), merge_state: None }
     }
 
     #[test]
@@ -982,9 +1154,7 @@ mod tests {
             (Ask { column: "Human test", ..ask() }, "not Ship it"),
             (Ask { archived: true, ..ask() }, "archived"),
             (Ask { ship_started: false, ..ask() }, "hasn't started"),
-            (Ask { listed: false, ..ask() }, "doesn't ship through a merge lane"),
-            (Ask { merger_on: false, ..ask() }, "merger off"),
-            (Ask { branch: None, ..ask() }, "no branch"),
+            (Ask { branch: None, ..ask() }, "nothing to merge"),
             (Ask { worktree: None, ..ask() }, "no worktreePath"),
             (Ask { merge_state: Some("queued"), ..ask() }, "already waiting"),
             (Ask { merge_state: Some("running"), ..ask() }, "already running"),
@@ -1064,10 +1234,11 @@ mod tests {
 
     #[test]
     fn a_job_is_read_from_the_merge_record() {
-        let c = card(7, json!({ "merge": { "state": "running", "lane": "lane:acme/web", "base": "abc1234", "branch": "card-7", "worktree": "C:/w", "branches": ["d-1"], "startedAt": "2026-11-09T10:00:00.000Z", "resumes": 1 } }));
+        let c = card(7, json!({ "merge": { "state": "running", "lane": "lane:acme/web", "checkout": "C:/co", "base": "abc1234", "branch": "card-7", "worktree": "C:/w", "branches": ["d-1"], "startedAt": "2026-11-09T10:00:00.000Z", "resumes": 1 } }));
         let j = job_of(&c).unwrap();
         assert!(j.running && j.in_ship_it);
         assert_eq!((j.lane.as_str(), j.base.as_str(), j.branches.clone(), j.resumes), ("lane:acme/web", "abc1234", vec!["d-1".to_string()], 1));
+        assert_eq!(j.checkout, "C:/co", "the checkout is kept on the job, so a restart needn't look again");
         assert!(j.started_at.is_some());
         assert!(job_of(&card(7, json!({ "merge": { "state": "passed" } }))).is_none());
         assert!(job_of(&card(7, json!({}))).is_none());
@@ -1096,26 +1267,201 @@ mod tests {
         assert!(PROMPT.len() < 9000, "the system prompt is {} characters", PROMPT.len());
     }
 
+    /// Card #162: every Ship it card with a branch, on any repo, listed anywhere or not, is told
+    /// to use its lane; a card with no branch has nothing to merge. An old card's `merger: false`
+    /// and card #160's saved list change nothing.
     #[test]
-    fn the_lane_note_is_for_a_listed_repo_in_ship_it_with_the_merger_on() {
+    fn the_lane_note_is_for_every_ship_with_a_branch() {
         let dir = tempfile::tempdir().unwrap();
         let mut s = Store::open(dir.path().join("board.db")).unwrap();
-        let co = dir.path().join("co");
-        std::fs::create_dir_all(co.join(".git")).unwrap();
-        let mut p = Patch::new();
-        p.insert("title".into(), json!("T"));
-        p.insert("repo".into(), json!("acme/web"));
-        p.insert("column".into(), json!("Ship it"));
-        let c = s.create(None, p, "Hugh").unwrap();
-        assert_eq!(lane_note(&s, &c, "Ship it"), None, "not listed");
-        s.set_page_setting(kanban_store::MERGE_LANE_REPOS_KEY, &json!([{ "repo": "acme/web", "checkout": co.display().to_string() }]).to_string()).unwrap();
-        let n = lane_note(&s, &c, "Ship it").expect("a note for a listed repo");
-        assert!(n.contains("kanban_merge") && n.contains("don't run the card-merger") && n.contains("end your turn"), "{n}");
-        assert_eq!(lane_note(&s, &c, "In progress"), None, "only Ship it");
-        let mut off = Patch::new();
-        off.insert(kanban_store::SUBAGENTS_KEY.into(), json!({ "merger": false }));
-        let c = s.update(&c.id, c.version, &off, "Hugh (board)").unwrap();
-        assert_eq!(lane_note(&s, &c, "Ship it"), None, "the merger is off: no lane either");
+        let mk = |s: &mut Store, f: Value| {
+            let mut p = f.as_object().cloned().unwrap();
+            p.insert("column".into(), json!("Ship it"));
+            s.create(None, p, "Hugh").unwrap()
+        };
+        for repo in ["acme/web", "someone/else", "hughht5/kanban-app"] {
+            let c = mk(&mut s, json!({ "title": "T", "repo": repo, "branch": "card-9" }));
+            let n = lane_note(&s, &c, "Ship it").unwrap_or_else(|| panic!("no note for {repo}"));
+            for must in ["card-9", "merge lane", "kanban_merge", "end your turn", "needs-hugh", "no checkout"] {
+                assert!(n.contains(must), "{repo}: {must}:\n{n}");
+            }
+            assert!(!n.contains("card-merger"), "{n}");
+            assert_eq!(lane_note(&s, &c, "In progress"), None, "only Ship it");
+        }
+        // No repo at all: still its branch's lane (kanban_merge says if it finds no checkout).
+        let c = mk(&mut s, json!({ "title": "T", "branch": "b-1" }));
+        assert!(lane_note(&s, &c, "Ship it").is_some());
+        // No branch, or an empty one: nothing to merge.
+        let c = mk(&mut s, json!({ "title": "T", "repo": "acme/web" }));
+        assert_eq!(lane_note(&s, &c, "Ship it"), None);
+        let c = mk(&mut s, json!({ "title": "T", "repo": "acme/web", "branch": " " }));
+        assert_eq!(lane_note(&s, &c, "Ship it"), None);
+        // An old card with the merger off, and card #160's list naming another repo: no change.
+        s.set_setting("sessions.merge_lane_repos", &json!([{ "repo": "other/repo", "checkout": "C:/x" }]).to_string()).unwrap();
+        let c = mk(&mut s, json!({ "title": "T", "repo": "acme/web", "branch": "card-3", "subagents": { "merger": false } }));
+        assert!(lane_note(&s, &c, "Ship it").is_some());
+    }
+
+    #[test]
+    fn a_remote_url_names_its_github_repo_or_none() {
+        for (url, want) in [
+            ("https://github.com/Hughht5/Claude-Kanban-DSH.git", Some("hughht5/claude-kanban-dsh")),
+            ("https://github.com/acme/web", Some("acme/web")),
+            ("https://github.com/acme/web/", Some("acme/web")),
+            ("https://x-access-token:abc123@github.com/acme/web.git", Some("acme/web")),
+            ("git@github.com:acme/web.git", Some("acme/web")),
+            ("ssh://git@github.com/acme/web.git", Some("acme/web")),
+            ("ssh://git@github.com:22/acme/web.git", Some("acme/web")),
+            ("git@github.com:123org/web.git", Some("123org/web")),
+            ("  https://www.github.com/acme/my.repo_1  ", Some("acme/my.repo_1")),
+            ("https://gitlab.com/acme/web.git", None),
+            ("https://notgithub.com/acme/web", None),
+            ("https://github.com/acme", None),
+            ("https://github.com/acme/web/tree/main", None),
+            ("C:/repos/origin.git", None),
+            ("", None),
+        ] {
+            assert_eq!(github_repo(url).as_deref(), want, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_lane_worktree_names_its_checkout() {
+        assert_eq!(checkout_of_lane_path("C:/co/web/.claude/worktrees/merge-lane").map(|c| PathBuf::from(c)), Some(PathBuf::from("C:/co/web")));
+        assert_eq!(checkout_of_lane_path(r"C:\co\web\.claude\worktrees\test2-merge-lane").map(|c| PathBuf::from(c)), Some(PathBuf::from(r"C:\co\web")));
+        assert_eq!(checkout_of_lane_path("C:/co/web"), None);
+        assert_eq!(checkout_of_lane_path("C:/co/web/other/worktrees/merge-lane"), None);
+    }
+
+    /// Settings lists each lane with a job, a running session or an earlier one, once per repo;
+    /// a job's checkout is its place.
+    #[test]
+    fn the_lanes_listed_are_each_lane_once_with_its_place() {
+        let mut j = job(true);
+        j.lane = "lane:acme/web".into();
+        j.checkout = "C:/co/web".into();
+        let seen = |repo: &str, cwd: &str| kanban_store::LaneSession {
+            seq: 1,
+            id: "l".into(),
+            repo: repo.into(),
+            claude_session_id: "c".into(),
+            channel: "live".into(),
+            account: "main".into(),
+            cwd: cwd.into(),
+            model: None,
+            effort: None,
+            started_at: "t".into(),
+        };
+        let l = lanes_listed(
+            &[j],
+            &[seen("acme/web", "C:/old/web/.claude/worktrees/merge-lane"), seen("acme/api", "C:/co/api/.claude/worktrees/merge-lane")],
+            &[("lane:acme/docs".into(), "C:/co/docs/.claude/worktrees/merge-lane".into())],
+        );
+        assert_eq!(l.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["lane:acme/api", "lane:acme/docs", "lane:acme/web"]);
+        assert_eq!(PathBuf::from(&l[0].checkout), PathBuf::from("C:/co/api"));
+        assert_eq!(PathBuf::from(&l[1].checkout), PathBuf::from("C:/co/docs"));
+        assert_eq!(l[2].checkout, "C:/co/web", "the job's checkout wins over an old session's");
+        assert_eq!(PathBuf::from(&l[2].worktree), crate::worktree::lane_path(Path::new("C:/co/web"), kanban_store::channel()));
+        assert!(lanes_listed(&[], &[], &[]).is_empty());
+    }
+
+    // ---- The checkout, on scratch repos (card #162) ----
+
+    fn sh(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git").current_dir(dir).args(args).output().expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A checkout `name` under `t` with one commit and `origin` set to `url` (none if empty).
+    fn repo_with_origin(t: &Path, name: &str, url: &str) -> PathBuf {
+        let co = t.join(name);
+        std::fs::create_dir_all(&co).unwrap();
+        sh(&co, &["init", "-q", "-b", "main"]);
+        std::fs::write(co.join("a.txt"), "a").unwrap();
+        sh(&co, &["add", "a.txt"]);
+        sh(&co, &["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "a"]);
+        if !url.is_empty() {
+            sh(&co, &["remote", "add", "origin", url]);
+        }
+        co
+    }
+
+    fn same(a: &str, b: &Path) -> bool {
+        crate::worktree::same_path(&clean_path(Path::new(a)).display().to_string(), &clean_path(b).display().to_string())
+    }
+
+    /// The order: the card's worktree's main checkout, else the own-worktree list's checkout,
+    /// else the repos.json folder; each a git checkout whose origin names a GitHub repo. With
+    /// none, a refusal that names each place and why.
+    #[test]
+    fn the_lanes_checkout_is_found_in_order_or_refused_saying_where_it_looked() {
+        if std::process::Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let main = repo_with_origin(t.path(), "dsh", "https://github.com/Hughht5/Claude-Kanban-DSH.git");
+        let other = repo_with_origin(t.path(), "other", "git@github.com:acme/web.git");
+        let no_origin = repo_with_origin(t.path(), "bare-ish", "");
+        let not_github = repo_with_origin(t.path(), "lab", "https://gitlab.com/acme/web.git");
+        let plain = t.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let wt = main.join(".claude").join("worktrees").join("card-5");
+        sh(&main, &["worktree", "add", "-q", "-b", "card-5", wt.to_str().unwrap()]);
+        let p = |w: Option<&Path>, o: Option<&Path>, f: Option<&Path>| Places { worktree: w.map(Path::to_path_buf), own: o.map(Path::to_path_buf), folder: f.map(Path::to_path_buf) };
+        // 1. The card's worktree's main checkout, whatever the others say.
+        let got = find_checkout(&p(Some(&wt), Some(&other), Some(&other))).unwrap();
+        assert_eq!(got.repo, "hughht5/claude-kanban-dsh", "lower case, from origin");
+        assert!(same(&got.checkout, &main), "{} is {}", got.checkout, main.display());
+        // A card working in the checkout itself: that checkout.
+        assert!(same(&find_checkout(&p(Some(&main), None, None)).unwrap().checkout, &main));
+        // 2. No usable worktree: the own-worktree list's checkout.
+        let gone = t.path().join("gone");
+        let got = find_checkout(&p(Some(&gone), Some(&other), Some(&main))).unwrap();
+        assert_eq!(got.repo, "acme/web");
+        assert!(same(&got.checkout, &other));
+        // 3. Then the repos.json folder; one inside a worktree resolves to its main checkout.
+        let got = find_checkout(&p(Some(&plain), None, Some(&wt))).unwrap();
+        assert!(same(&got.checkout, &main));
+        // A checkout whose origin isn't GitHub, or that has none, is passed over.
+        assert_eq!(find_checkout(&p(Some(&no_origin), Some(&not_github), Some(&other))).unwrap().repo, "acme/web");
+        // None: refused, naming each place and why, and saying to report needs-hugh.
+        let e = find_checkout(&p(Some(&gone), Some(&not_github), None)).unwrap_err();
+        for must in ["no git checkout", "the card's worktree", "no such folder", "own worktree", "isn't a GitHub owner/name", "repos.json: none", "needs-hugh"] {
+            assert!(e.contains(must), "{must}: {e}");
+        }
+        let e = find_checkout(&p(Some(&plain), Some(&no_origin), None)).unwrap_err();
+        assert!(e.contains("not a git checkout") && e.contains("has no origin remote"), "{e}");
+        assert!(find_checkout(&Places::default()).unwrap_err().contains("the card's worktree: none"));
+    }
+
+    /// Lanes are keyed by the origin's repo: a card whose `repo` is an old name of it (built in
+    /// its checkout) and the repo's own cards get one lane key and one lane worktree; a card of
+    /// another repo gets its own, in its own checkout, so two lanes never share a worktree.
+    #[test]
+    fn a_lane_is_keyed_by_its_origin_so_an_alias_shares_it() {
+        if std::process::Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let main = repo_with_origin(t.path(), "dsh", "https://github.com/hughht5/claude-kanban-dsh.git");
+        let web = repo_with_origin(t.path(), "web", "https://github.com/acme/web");
+        let old = main.join(".claude").join("worktrees").join("card-4");
+        sh(&main, &["worktree", "add", "-q", "-b", "card-4", old.to_str().unwrap()]);
+        // A hughht5/kanban-app card in a worktree of the checkout; a claude-kanban-dsh card with
+        // no worktree that resolves (its own-worktree list entry); a card of another repo.
+        let alias = find_checkout(&Places { worktree: Some(old), ..Places::default() }).unwrap();
+        let own = find_checkout(&Places { worktree: Some(t.path().join("missing")), own: Some(main.clone()), ..Places::default() }).unwrap();
+        let other = find_checkout(&Places { folder: Some(web.clone()), ..Places::default() }).unwrap();
+        assert_eq!(lane_key(&alias.repo), lane_key(&own.repo));
+        assert_eq!(lane_key(&alias.repo), "lane:hughht5/claude-kanban-dsh");
+        assert_eq!(worktree_of(&alias), worktree_of(&own), "one lane worktree for the repo");
+        assert_ne!(lane_key(&other.repo), lane_key(&own.repo));
+        assert_ne!(worktree_of(&other), worktree_of(&own), "two lanes never share a worktree");
+        // A test board's lane of the same repo has its own worktree, beside live's.
+        let ch = |c: &str| crate::worktree::lane_path(Path::new(&own.checkout), c);
+        assert_ne!(ch("live"), ch("test"));
+        assert_ne!(ch("test"), ch("test2"));
     }
 
     #[test]
