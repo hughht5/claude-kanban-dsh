@@ -77,7 +77,8 @@
 #   4. looks at the turns and the cards once more: a card given another slot meanwhile stops it
 #      (it lets go of install.lock first); a turn or a card given meanwhile sends it back to 1;
 #   5. takes the DSH lock folder (or uses it when it is already this run's; a folder left by
-#      a run that has ended is renamed aside), installs (steps 2 to 7), then lets go of both.
+#      a run that has ended, or an older writer's an hour old, is renamed aside), installs
+#      (steps 2 to 7), then lets go of both.
 # The apps write those files and show install.lock's phase; the script only reads them and
 # never calls an app. A run's owner is KANBAN_LOCK_OWNER, else KANBAN_CARD, else "hugh".
 # install.lock and the wait file carry the run's channel.
@@ -253,16 +254,28 @@ function Test-LockAppAlive($AppPid, $AppStart) {
 }
 
 # A DSH lock folder whose owner file names a process that has ended (or a reused pid) is
-# dead: it is renamed aside (never deleted). $true when it was moved.
+# dead, and one an older writer made (no pid line) is stale once it is $DshStaleMinutes old,
+# as the app counts it (card #149): either is renamed aside (never deleted). A folder whose
+# pid still runs is kept, whatever its age. $true when it was moved.
+$DshStaleMinutes = 60
 function Move-DeadDshLock {
     $lines = @(Get-DshOwnerLines)
-    if ($lines.Count -lt 2 -or $lines[1] -notmatch '^pid\s+(\d+)\s+(\S+)$') { return $false }
-    if (Test-LockAppAlive $Matches[1] $Matches[2]) { return $false }
+    if ($lines.Count -ge 2 -and $lines[1] -match '^pid\s+(\d+)\s+(\S+)$') {
+        if (Test-LockAppAlive $Matches[1] $Matches[2]) { return $false }
+        $why = "belonged to a run that has ended (owner $($lines[0]), $($lines[1]))"
+    } else {
+        try { $made = (Get-Item -LiteralPath $DshLockDir -ErrorAction Stop).CreationTimeUtc } catch { return $false }
+        $age = [int][math]::Floor(([datetime]::UtcNow - $made).TotalMinutes)
+        if ($age -lt $DshStaleMinutes) { return $false }
+        $o = 'not written'
+        if ($lines.Count -gt 0 -and $lines[0]) { $o = $lines[0] }
+        $why = "is stale: an older run's (owner $o, no pid line), made $age min ago"
+    }
     $aside = "$(Split-Path -Leaf $DshLockDir).released-$([datetime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", [Globalization.CultureInfo]::InvariantCulture))"
     try {
         Rename-Item -LiteralPath $DshLockDir -NewName $aside -ErrorAction Stop
     } catch { return $false }
-    Write-Warning "The DSH lock folder belonged to a run that has ended (owner $($lines[0]), $($lines[1])): moved it aside to $aside."
+    Write-Warning "The DSH lock folder $($why): moved it aside to $aside."
     return $true
 }
 

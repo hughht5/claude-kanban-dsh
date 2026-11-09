@@ -1283,10 +1283,25 @@ covered only cards that knew about it.
 **Shape.** Two layers.
 - *Turns* (the app, `crates/store/src/testapp.rs`, JSON in the setting `testapp.queue`; the live
   app's board is the real queue): a **tester** turn per card session, one at a time, and an
-  exclusive **install** turn that goes to the front. Pure logic, clock passed in.
+  exclusive **install** turn that goes to the front. Pure logic, clock passed in. A card whose
+  session isn't running keeps its place but is passed over, by the pump (`next`) and by a take
+  (`take_now`, card #149): with nobody holding the turn and nothing outside the queue blocking,
+  a take from a card first in line, or behind only paused cards, gets the turn in its reply.
+  **A stopped card's turn (card #168):** when the turn is a card's (it holds it, or nobody does and
+  it is first in line `blocked` doesn't stop) and its session isn't running, `step` marks it
+  (`to_wake`, `woke_at` on its `Turn` or `Waiting`, once per turn or place) and the pump starts its
+  session (`wake`): its app conversation resumed, else a new one in its worktree, through
+  `begin_session` (why "testapp"), so the cap and start queue apply. A conversation only in the
+  desktop app is never started. For `WAKE_GRACE_MINUTES` (5) a woken card in line keeps the turn's
+  place (`next` and `take_now` give it to nobody behind it); once its session runs, `next` gives
+  it the turn and its usual message. Then the line moves on, and it keeps its place. If the start
+  fails, the card's log says why: a held turn ends, and a place in line is
+  passed over at once (`wake_failed`). It asks again (a take) to be woken again. The status shows
+  `waking` on the holder and line entries; the board shows "starting its session".
   `src-tauri/src/testapp.rs` runs it: the pump every 2 s from `dispatch::run` (its first run is the
   start-up check), the `kanban_test_app` tool, `kb testapp`, the page's commands. "Your turn" and
-  "your turn ended" are queued messages only: no session is resumed for them (router decision R2).
+  "your turn ended" are queued messages only: no session is resumed for them (router decision R2),
+  except a stopped card's own turn, above (card #168).
   `copy_board` resets the queue, so a test board never inherits the live holder.
 - *The script's lock and waits* (`scripts\install.ps1 -Channel test`, mode now): it builds first,
   then takes `install.lock` and waits before quitting the test app. It never calls the app.
@@ -1328,7 +1343,9 @@ and `-DshLockDir` runs just this, against fixtures: `scripts\test-install-lock.p
 exists with another owner, the app gives no new turn and the script waits; the new script also takes
 that folder itself (owner file: the owner, then `pid <pid> <start>`) and removes it only if it made
 it and still owns it. A folder whose pid line names a dead process blocks nobody, and the next run
-renames it aside and takes it. Hugh's Release renames it
+renames it aside and takes it. A folder an older writer made (no pid line) is stale once it is 60 min
+old (`DSH_STALE_MINUTES`, card #149): it then blocks nobody either, and the next run renames it aside
+too. A folder whose pid still runs blocks whatever its age. Hugh's Release renames it
 to `.dsh-test-app.lock.released-<time>`. The lock only protects runs of a script from a base that
 has #115: older worktrees' `install.ps1` ignore it. Remove `read_dsh`/`release_dsh` and the
 script's DSH folder block when the last DSH card is in Deploy complete or Done.

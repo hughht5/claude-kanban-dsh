@@ -34,6 +34,9 @@ pub const TESTER_COLUMNS: [&str; 2] = ["In progress", "Human test"];
 pub const INSTALL_WAIT_MINUTES: i64 = 10;
 /// An install turn whose install hasn't been seen within this long ends.
 pub const INSTALL_START_MINUTES: i64 = 15;
+/// A card whose turn came while its session was stopped (card #168): the app starts its
+/// session, and for this long it keeps the turn's place first in line; then the line moves on.
+pub const WAKE_GRACE_MINUTES: i64 = 5;
 
 pub const TESTER: &str = "tester";
 pub const INSTALL: &str = "install";
@@ -83,6 +86,9 @@ pub struct Turn {
     /// An install turn: an install by its owner has been seen holding install.lock.
     #[serde(default)]
     pub install_seen: bool,
+    /// When the app started this card's stopped session for this turn (card #168), at most once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub woke_at: Option<String>,
 }
 
 /// A place in line.
@@ -96,6 +102,17 @@ pub struct Waiting {
     /// The last time the asker asked again (installs only; a card waits for its message).
     #[serde(default)]
     pub seen_at: Option<String>,
+    /// When the app started this card's stopped session because the turn was its own (card
+    /// #168). A start that failed is stamped WAKE_GRACE_MINUTES back, so the line moves on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub woke_at: Option<String>,
+}
+
+impl Waiting {
+    /// Its session is being started for its turn, within WAKE_GRACE_MINUTES (card #168).
+    pub fn waking(&self, now: DateTime<Utc>) -> bool {
+        self.woke_at.as_deref().and_then(parse).map_or(false, |w| now - w < Duration::minutes(WAKE_GRACE_MINUTES))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -168,28 +185,46 @@ impl TestAppQueue {
         self.holder.as_ref().map_or(false, |h| h.who.same(kind, card_id, owner))
     }
 
-    /// Asks for a turn. The asker gets it now when nobody holds it, nobody is in line ahead
-    /// of it, and `blocked` (the old DSH lock folder belongs to someone else) is false.
+    /// Asks for a turn, with every card in line taken as live and `blocked` the same for
+    /// everyone: `take_now` with fixed answers.
+    pub fn take(&mut self, ask: Ask, now: DateTime<Utc>, blocked: bool) -> Take {
+        self.take_now(ask, now, |_| true, |_| blocked)
+    }
+
+    /// Asks for a turn. The asker gets it now when nobody holds it, `blocked(owner)` is false
+    /// for it (nobody else has the test app outside this queue), and nobody in line ahead of
+    /// it could be given it now: the same rule as `next`, so an install ahead always counts,
+    /// a card ahead only while its session is live (`live`), and a waiter that `blocked` stops
+    /// doesn't. That holds when it asks again from its place in line too (card #149), so a
+    /// card first in line, or behind only paused cards, gets the turn on its own take.
     /// Otherwise it goes in line: an install in front of every tester (behind earlier
     /// installs), a tester at the back. Asking again keeps the place, or renews a held turn.
-    pub fn take(&mut self, ask: Ask, now: DateTime<Utc>, blocked: bool) -> Take {
+    pub fn take_now(&mut self, ask: Ask, now: DateTime<Utc>, live: impl Fn(&str) -> bool, blocked: impl Fn(&str) -> bool) -> Take {
         let at = stamp(now);
         if let Some(h) = self.holder.as_mut().filter(|h| h.who.same(&ask.kind, ask.card_id.as_deref(), &ask.owner)) {
             h.renewed_at = at;
             return Take::Renewed;
         }
-        if let Some(p) = self.place(ask.card_id.as_deref(), &ask.owner, &ask.kind) {
-            self.line[p - 1].seen_at = Some(at);
-            return Take::Waiting(p);
-        }
-        if self.holder.is_none() && self.line.is_empty() && !blocked {
-            self.holder = Some(Turn { who: ask, given_at: at.clone(), renewed_at: at, install_seen: false });
+        let place = self.place(ask.card_id.as_deref(), &ask.owner, &ask.kind);
+        // Where it stands, or would stand: an install behind the installs, a tester at the back.
+        let i = place.map(|p| p - 1).unwrap_or_else(|| if ask.kind == INSTALL { self.line.iter().take_while(|x| x.who.kind == INSTALL).count() } else { self.line.len() });
+        // A card ahead whose session is being started for its turn counts too (card #168).
+        let ahead_can = self.line[..i].iter().any(|w| (w.who.card_id.as_deref().map_or(true, &live) || w.waking(now)) && !blocked(&w.who.owner));
+        if self.holder.is_none() && !ahead_can && !blocked(&ask.owner) {
+            if place.is_some() {
+                self.line.remove(i);
+            }
+            self.holder = Some(Turn { who: ask, given_at: at.clone(), renewed_at: at, install_seen: false, woke_at: None });
             return Take::Given;
         }
+        if let Some(p) = place {
+            self.line[p - 1].seen_at = Some(at);
+            // It asked again, so its session runs: a later stop may be woken again.
+            self.line[p - 1].woke_at = None;
+            return Take::Waiting(p);
+        }
         self.next_seq += 1;
-        let install = ask.kind == INSTALL;
-        let w = Waiting { who: ask, asked_at: at.clone(), seq: self.next_seq, seen_at: Some(at) };
-        let i = if install { self.line.iter().take_while(|x| x.who.kind == INSTALL).count() } else { self.line.len() };
+        let w = Waiting { who: ask, asked_at: at.clone(), seq: self.next_seq, seen_at: Some(at), woke_at: None };
         self.line.insert(i, w);
         Take::Waiting(i + 1)
     }
@@ -262,19 +297,51 @@ impl TestAppQueue {
 
     /// With nobody holding the turn, gives it to the first in line who can use it: an
     /// install always can; a card only if its session is live (`live`). A paused card keeps
-    /// its place and is passed over until its session runs again. `blocked(owner)`: someone
+    /// its place and is passed over until its session runs again, except while the app starts
+    /// its session for this turn (`Waiting::waking`, card #168): then nobody behind it gets it. `blocked(owner)`: someone
     /// else has the test app outside this queue (an install holding install.lock, the other
     /// board's turn, the old DSH lock folder), so only that owner, if it waits here, gets it.
     pub fn next(&mut self, now: DateTime<Utc>, live: impl Fn(&str) -> bool, blocked: impl Fn(&str) -> bool) -> Option<Turn> {
         if self.holder.is_some() {
             return None;
         }
-        let i = self.line.iter().position(|w| w.who.card_id.as_deref().map_or(true, &live) && !blocked(&w.who.owner))?;
+        let i = self.line.iter().position(|w| !blocked(&w.who.owner) && (w.who.card_id.as_deref().map_or(true, &live) || w.waking(now)))?;
+        if self.line[i].who.card_id.as_deref().is_some_and(|id| !live(id)) {
+            return None;
+        }
         let w = self.line.remove(i);
         let at = stamp(now);
-        let t = Turn { who: w.who, given_at: at.clone(), renewed_at: at, install_seen: false };
+        let t = Turn { who: w.who, given_at: at.clone(), renewed_at: at, install_seen: false, woke_at: None };
         self.holder = Some(t.clone());
         Some(t)
+    }
+
+    /// The card whose turn it is but whose session isn't live, and hasn't been started for it
+    /// yet (card #168): the holder, or with nobody holding it the first in line `blocked`
+    /// doesn't stop. It is stamped as woken (once per turn or place), and the app starts its
+    /// session. An install, a live card, or one woken already gives None.
+    pub fn to_wake(&mut self, now: DateTime<Utc>, live: impl Fn(&str) -> bool, blocked: impl Fn(&str) -> bool) -> Option<String> {
+        if let Some(h) = self.holder.as_mut() {
+            let id = h.who.card_id.clone().filter(|id| !live(id) && h.woke_at.is_none())?;
+            h.woke_at = Some(stamp(now));
+            return Some(id);
+        }
+        let w = self.line.iter_mut().find(|w| !blocked(&w.who.owner))?;
+        let id = w.who.card_id.clone().filter(|id| !live(id) && w.woke_at.is_none())?;
+        w.woke_at = Some(stamp(now));
+        Some(id)
+    }
+
+    /// The app couldn't start `card_id`'s session for its turn (card #168): a holder's turn
+    /// ends (returned), and a card in line keeps its place but is passed over from now on.
+    pub fn wake_failed(&mut self, card_id: &str, now: DateTime<Utc>) -> Option<Turn> {
+        if self.holder.as_ref().is_some_and(|h| h.who.card_id.as_deref() == Some(card_id)) {
+            return self.holder.take();
+        }
+        if let Some(w) = self.line.iter_mut().find(|w| w.who.card_id.as_deref() == Some(card_id)) {
+            w.woke_at = Some(stamp(now - Duration::minutes(WAKE_GRACE_MINUTES)));
+        }
+        None
     }
 
     /// When the holder's turn ends by itself: `renewed_at` plus the limit.
@@ -771,6 +838,65 @@ mod tests {
         assert_eq!(q.take(card(3), t(1), false), Take::Waiting(2));
     }
 
+    /// Card #149: #131 sat first in line with nobody holding the turn, and asking again only
+    /// kept its place. Now its own take gives it the turn.
+    #[test]
+    fn a_card_first_in_line_with_no_holder_gets_it_on_its_own_take() {
+        let mut q = TestAppQueue::default();
+        assert_eq!(q.take(card(131), t(0), true), Take::Waiting(1), "blocked when it first asked");
+        assert_eq!(q.take(card(131), t(1), true), Take::Waiting(1), "still blocked: keeps its place");
+        assert_eq!(q.take(card(131), t(2), false), Take::Given);
+        assert_eq!(holder(&q).as_deref(), Some("#131"));
+        assert!(q.line.is_empty(), "it left the line for the turn");
+        assert_eq!(q.holder.as_ref().unwrap().given_at, stamp(t(2)));
+    }
+
+    /// Card #149's second form: #126 sat first in line with no session for days, and #131
+    /// stayed number 2 behind it. A paused card ahead is passed over, as `next` does, and
+    /// keeps its place.
+    #[test]
+    fn a_paused_card_ahead_doesn_t_hold_up_a_live_card_s_take() {
+        let mut q = TestAppQueue::default();
+        q.take(card(126), t(0), true);
+        let live = |id: &str| id != "card-126";
+        assert_eq!(q.take_now(card(131), t(1), live, FREE), Take::Given);
+        assert_eq!(line(&q), ["#126"], "the paused card keeps its place");
+        // Asking again from second place, with the paused card still ahead.
+        let mut q = TestAppQueue::default();
+        q.take(card(126), t(0), true);
+        q.take(card(131), t(0), true);
+        assert_eq!(q.take_now(card(131), t(1), live, FREE), Take::Given);
+        assert_eq!(line(&q), ["#126"]);
+        // Once the paused card is live again, it is ahead and a new take waits behind it.
+        let mut q = TestAppQueue::default();
+        q.take(card(126), t(0), true);
+        assert_eq!(q.take_now(card(131), t(1), ALL_LIVE, FREE), Take::Waiting(2));
+    }
+
+    #[test]
+    fn a_take_still_waits_for_a_holder_a_live_card_ahead_an_install_or_a_block() {
+        // A holder.
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), false);
+        assert_eq!(q.take_now(card(2), t(1), ALL_LIVE, FREE), Take::Waiting(1));
+        assert_eq!(q.take_now(card(2), t(2), ALL_LIVE, FREE), Take::Waiting(1));
+        // An install in line goes first, live or not (it has no session), even paused cards'.
+        let mut q = TestAppQueue::default();
+        q.take(Ask::install("router", "wave 3"), t(0), true);
+        assert_eq!(q.take_now(card(2), t(1), |_| false, FREE), Take::Waiting(2));
+        // Someone outside the queue (an install holding install.lock, a fresh DSH folder).
+        let mut q = TestAppQueue::default();
+        assert_eq!(q.take_now(card(2), t(1), ALL_LIVE, |o| o != "hugh"), Take::Waiting(1));
+        assert_eq!(q.take_now(card(2), t(2), ALL_LIVE, |o| o != "hugh"), Take::Waiting(1));
+        assert!(q.holder.is_none());
+        // A waiter ahead that the block stops (it isn't the block's owner) doesn't count: the
+        // block's own owner gets it, as `next` would give it.
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), true);
+        assert_eq!(q.take_now(card(105), t(1), ALL_LIVE, |o| o != "105"), Take::Given);
+        assert_eq!(line(&q), ["#1"]);
+    }
+
     #[test]
     fn an_install_goes_to_the_front_behind_other_installs() {
         let mut q = TestAppQueue::default();
@@ -855,6 +981,80 @@ mod tests {
         q.force();
         assert!(q.next(t(2), live, FREE).is_none(), "the only waiting card is paused");
         assert_eq!(q.next(t(3), ALL_LIVE, FREE).map(|h| h.who.label), Some("#2".into()));
+    }
+
+    /// Card #168: a stopped card first in line is woken once and keeps the turn's place for
+    /// WAKE_GRACE_MINUTES; then the line moves on and it keeps its place.
+    #[test]
+    fn a_stopped_card_first_in_line_is_woken_once_and_holds_the_line_for_the_grace() {
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), false);
+        q.take(card(2), t(0), false);
+        q.take(card(3), t(0), false);
+        let stopped = |id: &str| id != "card-2";
+        // With a holder, a live holder has nothing to wake, nor does anyone in line.
+        assert_eq!(q.to_wake(t(1), stopped, FREE), None);
+        q.force();
+        assert_eq!(q.to_wake(t(1), stopped, FREE).as_deref(), Some("card-2"));
+        assert_eq!(q.to_wake(t(1), stopped, FREE), None, "only once");
+        assert!(q.next(t(2), stopped, FREE).is_none(), "#3 doesn't jump the waking #2");
+        // #3 asking again doesn't either.
+        assert_eq!(q.take_now(card(3), t(2), stopped, FREE), Take::Waiting(2));
+        // Once its session runs, it gets the turn.
+        assert_eq!(q.next(t(3), ALL_LIVE, FREE).map(|h| h.who.label), Some("#2".into()));
+        // A blocked waiter is skipped: the first one it doesn't stop is the one woken.
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), false);
+        q.take(card(2), t(0), false);
+        q.force();
+        let none_live = |_: &str| false;
+        assert_eq!(q.to_wake(t(1), none_live, |o| o == "1").as_deref(), Some("card-2"));
+        // After the grace the line moves on, and the woken card keeps its place.
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), false);
+        q.take(card(2), t(0), false);
+        q.take(card(3), t(0), false);
+        q.force();
+        assert_eq!(q.to_wake(t(1), stopped, FREE).as_deref(), Some("card-2"));
+        assert!(q.next(t(1 + WAKE_GRACE_MINUTES - 1), stopped, FREE).is_none());
+        assert_eq!(q.next(t(1 + WAKE_GRACE_MINUTES), stopped, FREE).map(|h| h.who.label), Some("#3".into()));
+        assert_eq!(line(&q), ["#2"]);
+        assert_eq!(q.to_wake(t(20), stopped, FREE), None, "never woken twice for one place");
+        // Asking again (its session runs) clears it, so a later stop is woken again.
+        q.force();
+        q.take_now(card(2), t(21), stopped, |_| true);
+        assert_eq!(q.to_wake(t(22), stopped, FREE).as_deref(), Some("card-2"));
+    }
+
+    #[test]
+    fn a_holder_given_the_turn_while_stopped_is_woken_once_and_a_failed_start_ends_it() {
+        let mut q = TestAppQueue::default();
+        q.take(card(1), t(0), false);
+        q.take(card(2), t(0), false);
+        let none_live = |_: &str| false;
+        assert_eq!(q.to_wake(t(1), none_live, FREE).as_deref(), Some("card-1"));
+        assert_eq!(q.to_wake(t(1), none_live, FREE), None);
+        // An install holder has no session to start.
+        let mut i = TestAppQueue::default();
+        i.take(Ask::install("router", "wave 3"), t(0), false);
+        assert_eq!(i.to_wake(t(1), none_live, FREE), None);
+        // The start failed: the turn ends, and the next card's wait is its own.
+        assert_eq!(q.wake_failed("card-1", t(2)).map(|h| h.who.label), Some("#1".into()));
+        assert!(q.holder.is_none());
+        // A card in line whose start failed is passed over at once.
+        assert_eq!(q.to_wake(t(2), none_live, FREE).as_deref(), Some("card-2"));
+        assert!(q.wake_failed("card-2", t(3)).is_none());
+        assert!(q.next(t(3), none_live, FREE).is_none());
+        assert!(!q.line[0].waking(t(3)));
+        assert_eq!(line(&q), ["#2"]);
+    }
+
+    #[test]
+    fn a_queue_from_before_card_168_reads_and_one_without_wakes_writes_no_new_fields() {
+        let old = r##"{"holder":{"kind":"tester","cardId":"card-1","card":1,"owner":"1","label":"#1","givenAt":"2026-11-09T00:00:00Z","renewedAt":"2026-11-09T00:00:00Z"},"line":[{"kind":"tester","cardId":"card-2","card":2,"owner":"2","label":"#2","askedAt":"2026-11-09T00:00:00Z","seq":2}],"nextSeq":2}"##;
+        let q: TestAppQueue = serde_json::from_str(old).unwrap();
+        assert!(q.holder.as_ref().unwrap().woke_at.is_none() && q.line[0].woke_at.is_none());
+        assert!(!serde_json::to_string(&q).unwrap().contains("wokeAt"));
     }
 
     #[test]
