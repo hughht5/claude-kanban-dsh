@@ -12,7 +12,8 @@ export const UI = path.resolve(here, "..", "..", "ui");
 // The files a board face needs, in index.html's order (panel.js, stacks.js and the rest are left out).
 export const FILES = ["labels.js", "board.js", "small.js", "needs.js", "check-size.js", "steps.js", "done-when.js", "waits.js", "changes.js", "filterbar.js", "face.js", "archive-ask.js"];
 
-export function boot({ files = FILES, invoke = {} } = {}) {
+// `storage`: a localStorage for the page (card #132's held places), else one that keeps nothing.
+export function boot({ files = FILES, invoke = {}, storage = null } = {}) {
   const html = fs.readFileSync(path.join(UI, "index.html"), "utf8");
   const at = html.indexOf("<body>") + 6, body = html.slice(at, html.indexOf("<script", at));
   const document = makeDocument(body);
@@ -20,7 +21,7 @@ export function boot({ files = FILES, invoke = {} } = {}) {
   const ctx = {
     document, Event, console,
     location: { hash: "" },
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    localStorage: storage || { getItem: () => null, setItem() {}, removeItem() {} },
     CSS: { escape: (s) => String(s) },
     navigator: { clipboard: { writeText: async () => {} } },
     getSelection: () => ({ removeAllRanges() {}, addRange() {} }),

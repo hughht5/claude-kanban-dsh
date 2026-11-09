@@ -735,3 +735,12 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 | Change | Undo |
 |---|---|
 | The critic's prompt, notes after a PASS, the HUGH: and small-card holds, build notes in the In progress message, one critique for a small card (`critic.rs`, `agents.rs`, `router.rs`, `dispatch.rs`, `crates/store/src/cards.rs`), with tests, the Settings help, the example prompts and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #144 commit>`, then install as usual. No data change: a record's `notes` and `hugh` keys are ignored by an older build. |
+
+## Card #132: a card keeps its place after its need clears (9 Nov 2026, branch `dsh-132`)
+
+| Change | Undo |
+|---|---|
+| Held places in `ui\needs.js` (`pinFirst`, `loadNeeds`, `holdOf`, `pruneHolds`, `endHolds`, `heldIn`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #132 commit>`. The board's `localStorage` key `wb.heldPlaces` stays in the WebView profile; an older build ignores it |
+| `placeCard` in `ui\board.js` works on the column as shown and numbers it when a card is pinned or held | Same revert. Card `order` values a drag wrote stay, as after any drag |
+| `tools\ui-tests\order.test.mjs`, the `storage` option of `boot` in `tools\ui-tests\harness.mjs` | Same revert |
+| `docs\GUIDE.md`, `HANDOVER.md` text | Same revert |

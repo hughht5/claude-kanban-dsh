@@ -1,7 +1,7 @@
 // "Needs you" cards and the 7-day usage badge. Uses board.js's helpers ($, esc, invoke, render, ago).
 // A card needs Hugh when its session waits at a permission prompt, failed, or ended a turn he
 // hasn't opened the card since (needs.rs). Such cards go to the top of their own column, newest
-// first, with an icon. The header shows each account's 7-day usage (never the 5-hour figure).
+// first, with an icon, and keep that place once the need clears (held places, below). The header shows each account's 7-day usage (never the 5-hour figure).
 let needs={}; // cardId -> {reason, detail, at, unread}
 
 const NEED_ICON={
@@ -19,18 +19,78 @@ function needText(n){
 function needIcon(id){const n=needs[id];if(!n||!NEED_ICON[n.reason])return"";const t=esc(needText(n));
   return`<span class="need n-${esc(n.reason)}" role="img" aria-label="${t}" title="${t}">${NEED_ICON[n.reason]}</span>`}
 const needClass=id=>needs[id]?" needs":"";
-// Cards that need Hugh first (newest event first), the rest in the column's own order.
-function pinFirst(list){
-  const at=c=>Date.parse(needs[c.id].at||"")||0;
-  const p=list.filter(c=>needs[c.id]).sort((a,b)=>at(b)-at(a));
-  return p.length?p.concat(list.filter(c=>!needs[c.id])):list;
+// Held places (card #132): when a card's need clears (he opened it, a prompt was answered), it keeps
+// its place at the top instead of dropping down the column. A hold is {at, col, made}: the need's
+// own time (its place among the pinned cards), the column it was in, and when the hold was made.
+// It ends when the card needs him again (the new need puts it on top), when it is seen in another
+// column, archived or gone (for good: moving back doesn't bring it back), when it entered its
+// column after the hold was made (a move out and back between two loads), or when Hugh drags it
+// (placeCard calls endHolds; a drop into the pinned cards ends the column's holds too). No hold is
+// made for a card that moved column while it needed him (it entered its column over MOVED_SLACK
+// after its need began), nor for one he dragged while it needed him (noHold): his move or drop
+// stands. Kept in localStorage, `wb.heldPlaces`, so a reload or a restart keeps them; without it,
+// for the page.
+const HELD_KEY="wb.heldPlaces";
+let held={}; // cardId -> {at, col, made}
+const noHold=new Map(); // cardId -> the column he dragged it in while it needed him
+// A session's own move lands just after the turn end that made its need; Hugh's comes later.
+const MOVED_SLACK=30000;
+try{const h=JSON.parse(localStorage.getItem(HELD_KEY)||"{}");if(h&&typeof h==="object"&&!Array.isArray(h))held=h}catch(e){}
+function saveHeld(){try{localStorage.setItem(HELD_KEY,JSON.stringify(held))}catch(e){}}
+const sinceOf=c=>typeof c.columnSince==="number"?c.columnSince:Date.parse(c.columnSince||"")||0;
+// The card's hold while it still counts, else null.
+function holdOf(c){
+  const h=c&&held[c.id];if(!h||typeof h!=="object"||isArch(c)||colOf(c)!==h.col)return null;
+  const s=sinceOf(c);return s&&Number(h.made)&&s>Number(h.made)?null:h;
 }
+// Pinned to the top of its column: it needs Hugh or holds a place (pinFirst, placeCard).
+const isPinned=c=>!!needs[c.id]||!!holdOf(c);
+// The cards of a column that hold a place (placeCard's drag).
+const heldIn=col=>cards.filter(c=>colOf(c)===col&&!needs[c.id]&&holdOf(c)).map(c=>c.id);
+function endHolds(ids){let ch=false;for(const id of ids)if(held[id]){delete held[id];ch=true}if(ch)saveHeld()}
+// Drops for good the holds that no longer count: card gone, archived, in another column or moved
+// back in since. Only once the board has its cards.
+function pruneHolds(){
+  if(!loaded)return;
+  const gone=Object.keys(held).filter(id=>{const c=cards.find(x=>x.id===id);return!c||!holdOf(c)});
+  endHolds(gone);
+}
+// Each card whose need went since the last read gets a hold; one that needs him again loses it.
+function noteHolds(old,now){
+  let ch=false;
+  for(const id of Object.keys(old)){
+    if(now[id])continue;const c=cards.find(x=>x.id===id);
+    const dragged=noHold.get(id);noHold.delete(id);
+    if(!c||isArch(c)||dragged===colOf(c))continue;
+    const s=sinceOf(c),t=Date.parse(old[id].at||"");
+    if(s&&t&&s>t+MOVED_SLACK)continue;
+    held[id]={at:old[id].at||"",col:colOf(c),made:Date.now()};ch=true;
+  }
+  for(const id of Object.keys(now))if(held[id]){delete held[id];ch=true}
+  if(ch)saveHeld();
+  return ch;
+}
+// Cards that need Hugh or hold a place first (newest need first, a held card by the need it had),
+// the rest in the column's own order.
+function pinFirst(list){
+  const atOf=c=>{const n=needs[c.id];if(n)return n.at;const h=holdOf(c);return h?h.at:null};
+  const top=list.filter(c=>atOf(c)!==null);
+  if(!top.length)return list;
+  const at=c=>Date.parse(atOf(c)||"")||0;
+  top.sort((a,b)=>at(b)-at(a));
+  return top.concat(list.filter(c=>atOf(c)===null));
+}
+boardHooks.rendered.push(pruneHolds);
 
-let needsTimer=null;
+let needsTimer=null,needsSeq=0;
 async function loadNeeds(){
+  const mine=++needsSeq;
   let n;try{n=await invoke("needs_you")}catch(e){return}
-  if(JSON.stringify(n)===JSON.stringify(needs))return;
-  needs=n||{};render();
+  if(mine!==needsSeq)return; // a newer read was asked for meanwhile: its answer counts, not this one
+  n=n||{};
+  const ch=noteHolds(needs,n);
+  if(!ch&&JSON.stringify(n)===JSON.stringify(needs))return;
+  needs=n;render();
 }
 // Several events often arrive together (a Stop is an activity and a needs change): one read for them.
 const needsSoon=()=>{clearTimeout(needsTimer);needsTimer=setTimeout(loadNeeds,120)};

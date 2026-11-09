@@ -398,22 +398,31 @@ async function archiveDrop(id){const c=cards.find(x=>x.id===id);if(!c||isArch(c)
 // Drop a card at a position: above beforeId, or after the last card shown when beforeId is null.
 async function placeCard(id,col,beforeId){
   const c=cards.find(x=>x.id===id);if(!c||isArch(c)||busy)return;
-  const full=colCards(col),rest=full.filter(x=>x.id!==id);
+  // The column as shown: cards that need Hugh or hold a place first (needs.js, card #132).
+  const pins=typeof pinFirst==="function",full=pins?pinFirst(colCards(col)):colCards(col),rest=full.filter(x=>x.id!==id);
+  const pinN=pins?rest.filter(isPinned).length:0; // the pinned cards lead `rest`
   let idx;
   if(beforeId){idx=rest.findIndex(x=>x.id===beforeId);if(idx<0)idx=rest.length}
   else{const vis=[...document.querySelectorAll(`.col[data-col="${CSS.escape(col)}"] .card`)].map(k=>k.dataset.id).filter(x=>x!==id);
     const last=vis.length?rest.findIndex(x=>x.id===vis[vis.length-1]):-1;idx=last+1}
   const same=colOf(c)===col;
   if(same&&full.findIndex(x=>x.id===id)===idx)return;
-  const prev=rest[idx-1],next=rest[idx];
+  // A pinned card's order says nothing about where it shows, so a drop just below the pinned cards
+  // has no card above it; a drop among them numbers the whole column.
+  const into=idx<pinN,prev=idx>pinN?rest[idx-1]:null,next=rest[idx];
   let order;
-  if((prev&&!hasOrd(prev))||(next&&!hasOrd(next))){
-    // A neighbour has no order yet: number the whole column as it is shown, with the moved card in its new place.
+  if(into||(prev&&!hasOrd(prev))||(next&&!hasOrd(next))||(prev&&next&&!(prev.order<next.order))){
+    // Dropped among the pinned cards, a neighbour has no order yet, or the orders run backwards:
+    // number the whole column as it is shown, with the moved card in its new place. A drop among the
+    // pinned cards ends the column's holds: their places are manual order now.
     const arr=[...rest];arr.splice(idx,0,c);busy=true;
     const res=[];for(const [i,x] of arr.entries())res.push(x.id===id||(hasOrd(x)&&x.order===i+1)?true:await write(x.id,{order:i+1,orderCol:col},true));
     busy=false;if(res.includes(false))return;
     order=idx+1;
+    if(into)endHolds(heldIn(col));
   }else order=prev&&next?(prev.order+next.order)/2:next?next.order-1:prev?prev.order+1:1;
+  // The dragged card's own place is his drop now: no hold, and none when its need clears.
+  if(pins){endHolds([id]);if(needs[id])noHold.set(id,col)}
   if(same){busy=true;const ok=await write(id,{order,orderCol:col},true);busy=false;if(ok)status(`Reordered ${col}`)}
   else moveCard(id,col,{order,orderCol:col});
 }

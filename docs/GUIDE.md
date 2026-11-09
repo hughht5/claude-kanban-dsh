@@ -281,6 +281,12 @@ A card waiting on you says what for, in one line under its title, and its panel 
 box; click again to take it out). It combines with other terms, so `is:waiting label:DSH` works.
 The icon, the pinning to the top and the tray count are as before.
 
+A card that rose to the top because it needed you keeps its place once its need clears (card
+#132): open it, read it or answer it, and it stays exactly where it is instead of dropping down the
+column. A card that needs you later goes above it. It stays until it moves to another column, you
+drag a card in that column, or it needs you again. A drag still lands exactly where you drop it.
+The board remembers these places across a reload or a restart.
+
 The app hides secrets before any of this reaches the board: a link keeps only its host and first
 path segment ("https://host/m/…"), with no query and no user or password; tokens, `Authorization`
 headers and `key=value`, `key: value` or JSON pairs with token, secret, key, password or auth in
