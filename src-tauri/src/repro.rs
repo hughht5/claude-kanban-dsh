@@ -274,8 +274,16 @@ pub fn source_label(source: &str) -> (String, &'static str) {
 /// signature: card #102 calls it.
 pub fn mark_needed(store: &mut Store, card: &Card, source: &str, note: &str) -> Result<(Card, bool), String> {
     let (label, by) = source_label(source);
-    if !store.subagent_on(card, "reproducer") {
-        store.add_log(&card.id, &format!("Bug report ({label}): Hugh has the card-reproducer off for this card, so it isn't asked for and nothing is held."), by).map_err(|e| e.to_string())?;
+    // Card #151: Hugh's choice of the reproducer. A stack's card follows its lead's, whose
+    // session runs it for the stack (as `stack_problem` asks it to).
+    let lead = card.stack_of().and_then(|_| store.stack_lead(card).ok().flatten());
+    let whose = lead.as_ref().unwrap_or(card);
+    if !store.subagent_on(whose, "reproducer") {
+        let off = match &lead {
+            Some(l) => format!("its stack's lead #{} has the card-reproducer off", l.number),
+            None => "Hugh has the card-reproducer off for this card".to_string(),
+        };
+        store.add_log(&card.id, &format!("Bug report ({label}): {off}, so it isn't asked for and nothing is held."), by).map_err(|e| e.to_string())?;
         return Ok((card.clone(), false));
     }
     // A stack's card doesn't install the test app, so it can't be held for a proof: the lead's
@@ -783,6 +791,27 @@ mod tests {
         // A card made now has it off from the start, and its gate holds nothing.
         let n = s.create(None, json!({ "title": "N", "column": "In progress" }).as_object().cloned().unwrap(), "test").unwrap();
         assert!(!mark_needed(&mut s, &n, "report-a-bug", "x").unwrap().1);
+    }
+
+    // Card #151: a stack's card follows its lead's choice of the reproducer, as stack_problem does.
+    #[test]
+    fn a_stack_card_follows_its_leads_reproducer() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        let lead = s.create(None, p(json!({ "title": "L", "column": "In progress" })), "test").unwrap();
+        let kid = s.create_in_stack(p(json!({ "title": "K", "column": "In progress", "subagents": { "reproducer": false } })), lead.number, "test").unwrap();
+        // Lead on, child off: the stack's line, never "off".
+        assert!(!mark_needed(&mut s, &kid, "found-a-problem", "x").unwrap().1);
+        let log: Vec<String> = s.log(&kid.id).unwrap().into_iter().map(|l| l.text).collect();
+        assert!(log.iter().any(|l| l.contains("this is a stack's card")) && !log.iter().any(|l| l.contains("off")), "{log:?}");
+        // Lead off: the child's log says so.
+        let lead = s.get(&lead.id).unwrap();
+        s.update(&lead.id, lead.version, &p(json!({ "subagents": { "reproducer": false } })), "Hugh (board)").unwrap();
+        let kid = s.get(&kid.id).unwrap();
+        assert!(!mark_needed(&mut s, &kid, "found-a-problem", "y").unwrap().1);
+        let n = lead.number;
+        assert!(s.log(&kid.id).unwrap().iter().any(|l| l.text.contains(&format!("its stack's lead #{n} has the card-reproducer off"))));
     }
 
     #[test]
