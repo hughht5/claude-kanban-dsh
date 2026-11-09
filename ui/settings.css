@@ -43,3 +43,10 @@
 .st-set{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .st-set legend{font-size:13.5px;font-weight:600;margin-bottom:4px;padding:0}
 .st-radio{display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer}
+/* The merge lanes (card #160): each listed repo's lane, its state chip and its Stop button. */
+.st-lanebox{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.st-lanelist{display:flex;flex-direction:column;gap:6px}
+.st-lane{align-items:center;flex-wrap:wrap}
+.st-lrepo{font-size:13.5px;min-width:0;overflow-wrap:anywhere}
+.chip.lane-off{color:var(--muted)} .chip.lane-idle{color:var(--ok)} .chip.lane-merging{color:var(--info)}
+.chip.lane-starting{color:var(--warn);border-style:dashed} .chip.lane-down{color:var(--bad)}

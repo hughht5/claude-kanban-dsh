@@ -31,11 +31,12 @@ function openSettings(which){
   show();
   root.querySelector("#st-close").focus();
 }
-function closeSettings(){if(!root)return;document.removeEventListener("keydown",keys,true);root.remove();root=null;const g=$("#settingsBtn");if(g)g.focus()}
+function closeSettings(){if(!root)return;laneUnwatch();document.removeEventListener("keydown",keys,true);root.remove();root=null;const g=$("#settingsBtn");if(g)g.focus()}
 function keys(e){if(e.key==="Escape"&&root){e.preventDefault();e.stopPropagation();closeSettings()}}
 window.openSettings=openSettings;window.closeSettings=closeSettings;
 
 function show(){
+  laneUnwatch();
   root.querySelectorAll("[data-sec]").forEach(b=>b.setAttribute("aria-current",b.dataset.sec===section?"page":"false"));
   const m=root.querySelector("#st-main");m.innerHTML=`<p class="meta">Loading…</p>`;
   ({columns,templates,profiles,sessions,stacks,router})[section](m).catch(e=>{m.innerHTML=`<p class="msg err">Couldn't load this: ${esc(errText(e))}</p>`});
@@ -215,6 +216,7 @@ async function sessions(m){
   await ruleBox(m,TODO_TOOLS_RULE); // card #106
   await smallReposBox(m);
   await ownWorktreeBox(m); // card #146
+  await mergeLaneBox(m); // card #160
 }
 
 // Card #146: the repos whose cards each build in their own git worktree, which the app makes
@@ -222,30 +224,91 @@ async function sessions(m){
 // starts, so several cards of one repo build at once. Empty is off. Changes are kept in the
 // settings log, shown here.
 const OWN_WT_KEY="sessions.own_worktree_repos";
-async function ownWorktreeBox(m){
-  let g=null,err="";try{g=await invoke("get_setting",{key:OWN_WT_KEY})}catch(e){err=errText(e)}
+const ownWorktreeBox=m=>repoListBox(m,{key:OWN_WT_KEY,cls:"st-ownwt",p:"w",title:"Build each card in its own worktree",
+  help:"For the repos listed here, when a card's first session starts the app makes the card its own git worktree inside the checkout (.claude\\worktrees\\card-&lt;n&gt;, on a new branch card-&lt;n&gt; from origin/main), puts it on the card, and starts the session there. Several cards of one repo then build at the same time, and none of them works in the checkout itself. A stack's cards, and a card that already has a worktree, are left as they are. Empty is off (the default).",
+  empty:"No repos: each card's session starts in its repo's folder."});
+
+// A list of {repo, checkout} rows saved as one setting, with its last 5 changes from the settings
+// log: the own-worktree list (card #146) and the merge-lane list (card #160). `p` makes its ids
+// and classes (st-<p>add, st-<p>row, ...); `help` is HTML; `after(b)` draws more below the list.
+async function repoListBox(m,o){
+  const p=o.p;
+  let g=null,err="";try{g=await invoke("get_setting",{key:o.key})}catch(e){err=errText(e)}
   let rows=[];try{rows=JSON.parse(g&&g.value||"[]")}catch(e){rows=[]}if(!Array.isArray(rows))rows=[];
-  const b=document.createElement("div");b.className="st-box st-ownwt";m.appendChild(b);
-  const row=(r,i)=>`<div class="row st-wrow" data-i="${i}"><input class="st-wr" placeholder="owner/name" value="${esc(r.repo||"")}" aria-label="Repo">
-    <input class="st-wc" placeholder="C:\\Users\\you\\repo" value="${esc(r.checkout||"")}" aria-label="Checkout folder"><button class="btn ghost st-wx" type="button">Remove</button></div>`;
+  const b=document.createElement("div");b.className="st-box "+o.cls;m.appendChild(b);
+  const row=(r,i)=>`<div class="row st-${p}row" data-i="${i}"><input class="st-${p}r" placeholder="owner/name" value="${esc(r.repo||"")}" aria-label="Repo">
+    <input class="st-${p}c" placeholder="C:\\Users\\you\\repo" value="${esc(r.checkout||"")}" aria-label="Checkout folder"><button class="btn ghost st-${p}x" type="button">Remove</button></div>`;
   async function draw(msgText,kind){
-    let log=[];try{log=await invoke("get_setting_log",{key:OWN_WT_KEY,limit:5})}catch(e){}
-    b.innerHTML=`<p class="st-radio"><b>Build each card in its own worktree</b></p>
-    <p class="meta">For the repos listed here, when a card's first session starts the app makes the card its own git worktree inside the checkout (.claude\\worktrees\\card-&lt;n&gt;, on a new branch card-&lt;n&gt; from origin/main), puts it on the card, and starts the session there. Several cards of one repo then build at the same time, and none of them works in the checkout itself. A stack's cards, and a card that already has a worktree, are left as they are. Empty is off (the default).</p>
-    ${rows.map(row).join("")||`<p class="meta">No repos: each card's session starts in its repo's folder.</p>`}
-    <div class="row"><button class="btn ghost" id="st-wadd" type="button">Add a repo</button><button class="btn" id="st-wsave" type="button"${g?"":" disabled"}>Save</button><span class="msg" id="st-wmsg"></span></div>
+    let log=[];try{log=await invoke("get_setting_log",{key:o.key,limit:5})}catch(e){}
+    b.innerHTML=`<p class="st-radio"><b>${esc(o.title)}</b></p>
+    <p class="meta">${o.help}</p>
+    ${rows.map(row).join("")||`<p class="meta">${esc(o.empty)}</p>`}
+    <div class="row"><button class="btn ghost" id="st-${p}add" type="button">Add a repo</button><button class="btn" id="st-${p}save" type="button"${g?"":" disabled"}>Save</button><span class="msg" id="st-${p}msg"></span></div>
     ${log.length?`<p class="meta">Changes:</p><ul class="log">${log.map(x=>{let v=[];try{v=JSON.parse(x.value)}catch(e){}const list=Array.isArray(v)&&v.length?v.map(r=>esc(r.repo)).join(", "):"none (off)";
       return`<li><time>${esc(x.at)}</time>${esc(x.by)}: ${list}</li>`}).join("")}</ul>`:""}`;
-    const msg=b.querySelector("#st-wmsg");
+    const msg=b.querySelector(`#st-${p}msg`);
     if(!g)note(msg,"Couldn't read this setting: "+err,"err");else if(msgText)note(msg,msgText,kind);
-    const read=()=>{rows=[...b.querySelectorAll(".st-wrow")].map(d=>({repo:d.querySelector(".st-wr").value.trim(),checkout:d.querySelector(".st-wc").value.trim()}))};
-    b.querySelectorAll(".st-wx").forEach(x=>x.onclick=()=>{read();rows.splice(+x.closest(".st-wrow").dataset.i,1);draw()});
-    b.querySelector("#st-wadd").onclick=()=>{read();rows.push({repo:"",checkout:""});draw()};
-    b.querySelector("#st-wsave").onclick=async()=>{read();
-      try{const x=await invoke("set_setting",{key:OWN_WT_KEY,value:JSON.stringify(rows)});rows=JSON.parse(x);await draw("Saved","ok")}
+    const read=()=>{rows=[...b.querySelectorAll(`.st-${p}row`)].map(d=>({repo:d.querySelector(`.st-${p}r`).value.trim(),checkout:d.querySelector(`.st-${p}c`).value.trim()}))};
+    b.querySelectorAll(`.st-${p}x`).forEach(x=>x.onclick=()=>{read();rows.splice(+x.closest(`.st-${p}row`).dataset.i,1);draw()});
+    b.querySelector(`#st-${p}add`).onclick=()=>{read();rows.push({repo:"",checkout:""});draw()};
+    b.querySelector(`#st-${p}save`).onclick=async()=>{read();
+      try{const x=await invoke("set_setting",{key:o.key,value:JSON.stringify(rows)});rows=JSON.parse(x);await draw("Saved","ok")}
       catch(e){note(msg,"Not saved: "+errText(e),"err")}};
+    if(o.after)await o.after(b);
   }
   await draw();
+}
+
+// Card #160: the repos whose ships go through one merge lane each, an app-owned session that
+// merges that repo's ships one at a time in its own worktree and keeps what it learnt. Below the
+// list: the lanes' model and effort (saved at once), and each listed repo's lane with its state
+// and a Stop button, polled while this section is open and redrawn on `lanes-changed`.
+const LANE_KEY="sessions.merge_lane_repos";
+const LANE_WORD={off:"Off",starting:"Starting",idle:"Idle",merging:"Merging",down:"Down"};
+let laneTimer=0,laneOff=null,laneGen=0;
+function laneUnwatch(){laneGen++;if(laneTimer)clearInterval(laneTimer);laneTimer=0;if(laneOff){try{laneOff()}catch(e){}laneOff=null}}
+const laneWord=s=>{const w=LANE_WORD[s.state]||String(s.state||"");return s.card&&(s.state==="merging"||s.state==="starting"||s.state==="down")?`${w} #${s.card}`:w};
+const mergeLaneBox=m=>repoListBox(m,{key:LANE_KEY,cls:"st-lanes",p:"l",title:"Ship through one merge lane per repo",
+  help:"Each repo listed here ships through one merge lane: a session the app owns that does the merge at ship for every card of the repo, one at a time, in its own worktree (.claude\\worktrees\\merge-lane), and keeps what it learnt for the next. It starts when a card's Ship it asks it to merge, and stops after 15 minutes with nothing to do; its conversation is kept. It never pushes: the card's session still does. Repos not listed keep the card-merger subagent. Empty is off (the default).",
+  empty:"No repos: every ship uses the card-merger subagent.",after:laneStatus});
+async function laneStatus(b){
+  laneUnwatch();
+  const get=async k=>{try{return await invoke("get_setting",{key:k})}catch(e){return null}};
+  const [mo,ef]=await Promise.all([get("lanes.model"),get("lanes.effort")]);
+  const model=mo&&(mo.value||mo.default)||"claude-opus-5-5",effort=ef&&(ef.value||ef.default)||"high";
+  const models=MODELS.some(([v])=>v===model)?MODELS:[...MODELS,[model,model]];
+  const d=document.createElement("div");d.className="st-lanebox";b.appendChild(d);
+  d.innerHTML=`<div class="st-row"><label class="f">Lane model<select class="tx" id="st-lmodel"${mo?"":" disabled"}>${models.map(([v,n])=>opt(v,model,n)).join("")}</select></label>
+    <label class="f">Lane effort<select class="colsel" id="st-leffort"${ef?"":" disabled"}>${EFFORTS.map(x=>opt(x,effort)).join("")}</select></label>
+    <span class="msg" id="st-lsetmsg"></span></div>
+   <p class="meta">Default: Opus 5.5, effort high. A change applies the next time a lane starts.</p>
+   <div class="st-lanelist" aria-live="polite"></div>`;
+  const sm=d.querySelector("#st-lmodel"),se=d.querySelector("#st-leffort"),smsg=d.querySelector("#st-lsetmsg");
+  let pm=model,pe=effort;
+  const save=async(key,el,prev,set)=>{try{const x=await invoke("set_setting",{key,value:el.value});set(x);note(smsg,"Saved","ok")}catch(e){el.value=prev;note(smsg,"Not saved: "+errText(e),"err")}};
+  sm.onchange=()=>save("lanes.model",sm,pm,x=>{pm=x});
+  se.onchange=()=>save("lanes.effort",se,pe,x=>{pe=x});
+  const list=d.querySelector(".st-lanelist");
+  const nameOf=v=>(MODELS.find(([k])=>k===v)||[v,v])[1];
+  const drawLanes=lanes=>{
+    if(!Array.isArray(lanes)||!lanes.length){list.innerHTML="";return}
+    list.innerHTML=lanes.map(s=>`<div class="row st-lane" data-repo="${esc(s.repo)}"><b class="st-lrepo">${esc(s.repo)}</b>
+      <span class="tag chip lane-${esc(s.state)}" data-lane="${esc(s.state)}">${esc(laneWord(s))}</span>
+      <span class="meta" title="${esc(s.worktree||"")}">${esc(nameOf(s.model))} · effort ${esc(s.effort)}</span>
+      <button class="btn ghost st-lstop" type="button"${s.live?"":" disabled"} title="Stop this lane. Its conversation is kept, and a merge it was doing is resumed once.">Stop</button></div>`).join("");
+    list.querySelectorAll(".st-lstop").forEach(x=>x.onclick=async()=>{
+      const repo=x.closest(".st-lane").dataset.repo,s=lanes.find(l=>l.repo===repo)||{};
+      if(s.state==="merging"&&!confirm(`Stop ${repo}'s merge lane? It is merging #${s.card}: the app resumes it once.`))return;
+      x.disabled=true;
+      try{drawLanes(await invoke("lane_stop",{repo}))}catch(e){x.disabled=false;note(smsg,"Couldn't stop it: "+errText(e),"err")}});
+  };
+  const refresh=async()=>{
+    if(!root||!root.contains(d)){laneUnwatch();return}
+    try{drawLanes(await invoke("lane_status"))}catch(e){list.innerHTML=`<p class="msg err">Couldn't read the lanes: ${esc(errText(e))}</p>`}};
+  await refresh();
+  const gen=laneGen;
+  laneTimer=setInterval(refresh,3000);
+  try{const ev=window.__TAURI__&&window.__TAURI__.event;if(ev)ev.listen("lanes-changed",refresh).then(u=>{if(gen===laneGen&&root)laneOff=u;else u()}).catch(()=>{})}catch(e){}
 }
 
 // Small-change auto-ship (card #104): the repos whose small, fully checked cards go on to Ship it

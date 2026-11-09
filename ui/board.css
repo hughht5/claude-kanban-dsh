@@ -77,6 +77,8 @@ input[type=search]{background:var(--panel);border:1px solid var(--line);border-r
 .chip.route{color:var(--muted)} .chip.route-small{color:var(--ok)} .chip.route-split{color:var(--info)}
 .chip.small-wait{color:var(--warn);border-style:dashed} .chip.small-went{color:var(--warn)} .chip.small-stop{color:var(--bad);background:none;font:inherit;cursor:pointer} .chip.small-stop:hover{background:var(--line)}
 .chip.test-passed{color:var(--ok)} .chip.test-failed{color:var(--bad)} .chip.test-unclear{color:var(--warn)}
+/* The merge lane (card #160): a job waiting for its repo's lane, merging, or dropped. */
+.chip.test-queued{color:var(--muted);border-style:dashed} .chip.test-running{color:var(--info)} .chip.test-cancelled{color:var(--muted)}
 /* The card-reproducer (card #112): its chip states, and its proof box in the panel. */
 .chip.test-needed{color:var(--warn)} .chip.test-reproduced{color:var(--bad)} .chip.test-fixed{color:var(--ok)} .chip.test-not-reproduced{color:var(--warn)}
 .repro .rp-runs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}

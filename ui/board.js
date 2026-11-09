@@ -62,12 +62,16 @@ const CHECKS=[
   // The card-reproducer (card #112): its own states, and its chip on a Blocked card too (NOT REPRODUCED sends it there).
   {key:"repro",row:"Reproducer",chip:{needed:"Bug to reproduce",reproduced:"Bug reproduced",fixed:"Fix proved","not-reproduced":"Not reproduced",unclear:"Repro unclear"},cols:["In progress","Human test","Blocked"],
    labels:{needed:"A bug to reproduce",reproduced:"Bug reproduced",fixed:"Fix proved","not-reproduced":"Not reproduced",unclear:"Unclear"}},
-  {key:"merge",row:"Merger",chip:{passed:"Merged",failed:"Merge failed",unclear:"Merge unclear"},cols:["Ship it","Deploy complete"]},
+  // Card #160: a repo's merge lane adds a job's states: waiting for the lane, merging and cancelled.
+  {key:"merge",row:"Merger",chip:{queued:"Waiting for the lane",running:"Merging",passed:"Merged",failed:"Merge failed",unclear:"Merge unclear",cancelled:"Merge cancelled"},cols:["Ship it","Deploy complete"],
+   labels:{queued:"Waiting for the merge lane",running:"Merging in the merge lane",passed:"Passed",failed:"Failed",unclear:"Unclear",cancelled:"Cancelled"},
+   title:t=>{const r=typeof t.lane==="string"&&t.lane.startsWith("lane:")?t.lane.slice(5):"";return r?`In the merge lane for ${r}`:""}},
 ];
 const CHECK_LABEL={needed:"Needed",passed:"Passed",failed:"Failed",unclear:"Unclear"};
 const checkOf=(c,k)=>c[k]&&typeof c[k]==="object"&&typeof c[k].state==="string"?c[k]:null;
-const checkChip=(c,ch)=>{const t=checkOf(c,ch.key);if(!t||!Object.hasOwn(ch.chip,t.state)||!ch.cols.includes(colOf(c))||(ch.hide&&ch.hide(t)))return"";const det=t.detail?String(t.detail):"";
-  return`<span class="tag chip test-${esc(t.state)}" data-check="${esc(ch.key)}"${det&&!SECRET.test(det)?` title="${esc(det)}"`:""}>${esc(ch.chip[t.state])}</span>`};
+const checkChip=(c,ch)=>{const t=checkOf(c,ch.key);if(!t||!Object.hasOwn(ch.chip,t.state)||!ch.cols.includes(colOf(c))||(ch.hide&&ch.hide(t)))return"";
+  const det=t.detail&&!SECRET.test(String(t.detail))?String(t.detail):"",tip=[ch.title?ch.title(t):"",det].filter(Boolean).join(": ");
+  return`<span class="tag chip test-${esc(t.state)}" data-check="${esc(ch.key)}"${tip?` title="${esc(tip)}"`:""}>${esc(ch.chip[t.state])}</span>`};
 const testChip=c=>CHECKS.map(ch=>checkChip(c,ch)).join("");
 // The panel's rows: the state, when, how many FAILs since the reset, and what failed.
 // Card #151: a subagent Hugh has off on the card says so in its row, and why.
