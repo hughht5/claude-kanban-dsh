@@ -2,6 +2,7 @@
 // The app needs its WebView debug port: start it with
 //   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 --remote-allow-origins=http://127.0.0.1:9333
 // (live 9333; the test app gets 9334 from scripts/install.ps1 -Channel test).
+//   CDP_HOST=[::1] reaches an app that listens on IPv6 only (the test app can share its port with another WebView on 127.0.0.1).
 //
 //   node tools/cdp.mjs eval "<expression>"            the port in CDP_PORT, else 9333
 //   CDP_PORT=9334 node tools/cdp.mjs shot <out.png> [light|dark] [css selector]
@@ -140,7 +141,7 @@ export function withBuild(png, build) {
 async function connect(port) {
   let pages;
   try {
-    pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+    pages = await (await fetch(`http://${process.env.CDP_HOST || "127.0.0.1"}:${port}/json`)).json();
   } catch (e) {
     throw new Fail(`Nothing answers on port ${port}: is the app running with its debug port?`);
   }
