@@ -84,17 +84,17 @@ below, in place of Planning step 1:
   stack's branch or to `main`. It pushes its own branch (`git push origin <its branch>`), never
   `main`.
 - **Children don't install a test app for the owner.** A child builds, runs
-  `cargo test --workspace`, `/code-review`, its review and its test on its own branch, and commits
-  there. Its `nextStep` starts "Built on `<branch>`, commit `<short sha>`; the lead merges it and
-  installs the stack", then its numbered steps for the stack's test app and "Broken if: ...". If a
-  change can only be checked in the running app, the child takes a test app of its own for its own
-  checks and its card-tester (In progress steps 4b to 6a); it keeps it only while In progress, so
-  say in the hand-over that the owner tests it on the lead's install. A bug report on a child
+  `cargo test --workspace`, `/code-review`, then its review and its test together on its own
+  branch, and commits there. Its `nextStep` starts "Built on `<branch>`, commit `<short sha>`; the
+  lead merges it and installs the stack", then its numbered steps for the stack's test app and
+  "Broken if: ...". If a change can only be checked in the running app, the child takes a test app
+  of its own for its own checks and its review and test (In progress steps 4b to 6a); it keeps it
+  only while In progress, so say in the hand-over that the owner tests it on the lead's install. A bug report on a child
   doesn't hold it for the reproducer: the child puts the steps that show the bug in its hand-over,
   and the lead's `card-reproducer` proves the fix on the lead's install.
 - **The lead installs once.** When the stack is ready, the lead installs the stack's branch in its
   own test app (In progress steps 4b and 5), checks it (step 6) and runs its own `card-tester` on
-  that install (step 6a). Its `nextStep` starts "Installed in <its test app> (Claude Kanban DSH
+  that install (step 6a; its review counts as passed once every child's has). Its `nextStep` starts "Installed in <its test app> (Claude Kanban DSH
   Test N), stack branch `<branch>`, commit `<short sha>`".
 - **Ship it** runs on the lead, once, for the whole stack (the Ship it section below).
 
@@ -145,12 +145,8 @@ is your home folder.
 2. Tests for every data rule and migration; `cargo test --workspace` must pass (see AGENTS.md).
 3. Run `/code-review` on your diff and fix what it finds.
 4. Write the undo into `UNDO.md`; update `README.md`/`HANDOVER.md` if behaviour changed.
-4a. If your session has the `card-reviewer` subagent, have it review your diff now, before the
-   install (in-progress.md, *Review and test it with subagents*). Put `(card #<n>)` in your commit
-   messages so it finds them. Fix what it finds and run a fresh one. If your session has no
-   `card-reviewer`, say so on the card and go on, but leave the move to Human test to the owner
-   (yours would be refused while the review rule is on), or ask them to turn the rule off or restart
-   the session.
+4a. Don't run the `card-reviewer` yet: it runs together with the `card-tester` in step 6a, once
+   the build is installed (card #162). Put `(card #<n>)` in your commit messages so it finds them.
 4b. **Your test app** (cards #115 and #147). If `kanban_test_app` is in your tools, call it with
    action `take` before step 5. The first take gives this card a test app of its own (Test,
    Test 2, ...) and a turn on it, or a place in line: then end your turn; the app sends you a
@@ -173,11 +169,18 @@ is your home folder.
    your message as `![what it shows](C:/path/to/shot.png)`, so the owner sees it in the card's
    chat. On a Mac only: there is no tools/cdp.mjs and no screenshot. Check the change through `kb`
    and the app's API, and tell the owner what to look at.
-6a. Then have the `card-tester` subagent test it (in-progress.md, *Review and test it with
-   subagents*): brief it with the card number, the deliverables, the commit, and your test app with
-   its CDP port, and fix what it finds. The move to Human test is refused until the latest review
-   and test have both passed. A fix after a pass means running both again. On a Mac only: brief
-   the card-tester to check through `kb` and the API, not cdp.mjs.
+6a. Then run the `card-reviewer` and the `card-tester` together (in-progress.md, *Review and test
+   it together*): two Agent calls in one message, both in the background, and wait for both
+   notifications. Brief the reviewer with the card number, your worktree and your branch. Brief
+   the tester with the card number, the deliverables, the commit, and your test app with its CDP
+   port. On any FAIL, from either one, fix it, install the fix (step 5) and run both again: a
+   review's fix needs a new test, and a test's fix needs a new review. The move to Human test is
+   refused until the latest review and test have both passed, and while either pass started
+   before the other's latest FAIL. If your session lacks the `card-reviewer` or the
+   `card-tester`, say so on the card, run the one it has, and leave the move to Human test to the
+   owner (yours would be refused while that rule is on), or ask them to turn the rule off or
+   restart the session. On a Mac only: brief the card-tester to check through `kb` and the API,
+   not cdp.mjs.
 6b. If the card has `doneWhenChecks` (and `kanban_update_card` lists `doneWhen`), mark each check as
    you verify it in step 6, and say in the tester's brief that the card has them: its `CHECK <n>`
    lines mark them on the card.

@@ -12,7 +12,7 @@ pub const REVIEWER: &str = "card-reviewer";
 /// Who its verdicts are recorded as.
 pub const BY: &str = "the app (card-reviewer subagent)";
 
-const DESCRIPTION: &str = "Independent reviewer of one card's diff on Hugh's Claude Kanban DSH board. Run it, and wait for its result, before the card-tester and before you move a card from In progress to Human test. Brief it with the card number and where the change is (the checkout and branch), not your conclusions. It reads the diff, changes nothing, and ends with CARD and VERDICT lines that the app records on the card.";
+const DESCRIPTION: &str = "Independent reviewer of one card's diff on Hugh's Claude Kanban DSH board. Run it together with the card-tester, once the build is installed (both Agent calls in one message, in the background), and wait for both results before you move a card from In progress to Human test. Brief it with the card number and where the change is (the checkout and branch), not your conclusions. It reads the diff, changes nothing, and ends with CARD and VERDICT lines that the app records on the card.";
 
 const PROMPT: &str = "You are card-reviewer. You review the change for one card on Hugh's Claude Kanban DSH board. The session that made the change briefs you. Do not trust what the brief says about the work. Read the work yourself.
 
@@ -80,10 +80,10 @@ pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
     let latest = not_passed(&CHECK, card, to, &crate::tester::BEFORE_TEST, &crate::tester::INTO_TEST, store.subagent_on(card, "reviewer"))?;
     Some(format!(
         "Card #{n} has no subagent review that passed since it last came into In progress (Hugh's rule: a subagent reviews the diff of every card before Human test).{latest} Do these steps:
-1. Run the card-reviewer subagent before the card-tester. Use the Agent tool with subagent_type \"{REVIEWER}\". If it runs in the background, wait for its notification before you move the card.
+1. Run the card-reviewer subagent. Use the Agent tool with subagent_type \"{REVIEWER}\". If the card-tester must run again too, start both in one message (card #162: they run together). If it runs in the background, wait for its notification before you move the card.
 2. Brief it like a stranger. Give the card number (#{n}) and where the change is (the checkout and branch). It finds the card's commits by \"(card #{n})\" in their messages. If the card changed no repo, say what it delivered and where. Do not give your conclusions.
 3. It ends with CARD and VERDICT lines. The app records its verdict on the card.
-4. Fix what it finds. Then run it again.
+4. Fix what it finds. Then run it again, and the card-tester too: a fix after a pass means running both again.
 5. Move the card when its latest verdict is PASS. After its third FAIL, the app moves the card to Blocked.
 If your session has no card-reviewer subagent (it started before this rule), say so on the card and ask Hugh to turn the rule off or restart the session.",
         n = card.number

@@ -108,9 +108,10 @@ and isn't done into `nextStep`, and ask.
 ## Review and test it with subagents
 
 The owner's rules: every card's diff is reviewed by a subagent, and every card is tested by
-a subagent, before it goes to Human test. The app holds you to both: a move from In
-progress to Human test (or past it) is refused until the card's latest subagent review and latest
-subagent test have both passed. A card with no diff (Done) needs neither.
+a subagent, before it goes to Human test. The two run together, on the installed build. The app
+holds you to both: a move from In progress to Human test (or past it) is refused until the card's
+latest subagent review and latest subagent test have both passed, and while either pass started
+before the other's latest FAIL. A card with no diff (Done) needs neither.
 
 ### Prove a reported bug first
 
@@ -123,7 +124,7 @@ card comes back to them with proof instead of another round of testing by hand. 
 owner's Found a problem, Fail in Human test or Report a bug, or a card-tester FAIL line that starts
 `- BUG:`. The app then sets the card's `repro` to needed, and holds the move to Human test until
 the latest reproducer run says FIXED (or NOT REPRODUCED). A card-reviewer's `- BUG:` line isn't a
-report: it is found in the diff before the install, so fix it in the review loop.
+report: it is found in the diff, not in the running app, so fix it in the review-and-test loop.
 
 If your session has the **`card-reproducer`** subagent (the Agent tool lists it), do these steps.
 If it doesn't (the session started before this rule), the move to Human test is still held: say so
@@ -151,53 +152,52 @@ A message from the owner that they didn't mark as a bug follows the usual loop. 
 they saw, you may still run the reproducer before and after the fix (the app records both); else log
 `Not a bug report: <why>` on the card.
 
-### Review it first
+### Review and test it together
 
-If your session has the **`card-reviewer`** subagent (the Agent tool lists it), do these steps.
-If it doesn't (the session started before this rule), say so on the card and go on to the test,
-but leave the move to Human test to the owner: yours would be refused while the review rule is on.
-Or ask them to turn the rule off or restart the session.
+The **`card-reviewer`** reads the diff and the **`card-tester`** tries the installed build. Neither
+needs the other's result, so they run at the same time. If your session lacks either one (the Agent
+tool doesn't list it: the session started before its rule), say so on the card, run the one it has,
+and leave the move to Human test to the owner: yours would be refused while that rule is on. Or ask
+them to turn the rule off or restart the session.
 
-1. Once the build is done and your own checks pass, run the `card-reviewer`: the Agent tool with
-   `subagent_type: "card-reviewer"`. Wait for its report. If it runs in the background, wait for
-   its notification.
-2. Brief it with the card number and where the change is (the worktree and branch). Don't give
-   it your conclusions. It finds the card's own commits by `(card #<n>)` in their messages, so put
-   that in every commit message. If the card changed no repo, say what it delivered and where.
-3. It reads the diff, changes nothing, and ends with `CARD: #<n>` and `VERDICT: PASS`, or
-   `VERDICT: FAIL` with one line per problem. The app records it on the card (`review`, shown as
-   Reviewed or Review failed).
-4. On a FAIL, fix what it found and run a fresh reviewer. Its third FAIL since the card came into
-   In progress sends the card to Blocked with the findings: the app does that itself.
-5. Review before you test: a fix after the tester's pass means running both again.
-
-### Then test it
-
-1. Once the review has passed, run the **`card-tester`** subagent: the Agent
-   tool with `subagent_type: "card-tester"`, and wait for its report (if it runs in the background,
-   wait for its notification before you move the card). The app gives every card session this
-   subagent; it can't edit files or move cards.
-2. **Brief it like a stranger**, because it starts with no memory of your work and shouldn't take
-   on your conclusions. Give it the card number, every deliverable from the summary, where the
-   change is (worktree, branch, PR) and how to try it (the dev stack and which login; for the
-   kanban app, the card's own test app (`kanban_test_app` take names it) and its CDP port, 9334
-   for Test or 9333+N for Test N, and dry-run cards). Don't tell it what you found. If the
-   card has `doneWhenChecks` (and `kanban_update_card` lists `doneWhen`), say so in the brief: the
-   tester reads them from the card and ends with one `CHECK <n>: PASS|FAIL` line per check, which
-   the app marks on the card its `CARD` line names. A PASS that fails a check counts as a FAIL.
-3. It tests the real thing, fixes nothing, and ends with `CARD: #<n>` and `VERDICT: PASS`, or
-   `VERDICT: FAIL` with one line per failure. The app reads those lines when it finishes and
-   records the verdict on the card (`test`, shown as Tested or Test failed).
-4. **On a FAIL**, fix what it found, run your own checks again, then run a fresh tester. After
-   three failed rounds, stop: log what fails and move the card to Blocked with the reason in
-   `blockedReason`.
-5. If your card leads a stack and `kanban_stack_list` shows a `stage` for each child, each child
-   reviews and tests itself on its own branch, and you test the integrated build (*If your card
-   leads a stack*). Otherwise, as before: review and test each child before you move it, with the
-   child's number in each brief so the `CARD` line names it, and review and test the lead's own
-   work too: the app moves the stack to Human test only once the lead's own review and test have
-   passed.
-6. A failure that is a bug a person can see in the app or page comes on a line that starts
+1. **Install it first.** Once the build is done and your own checks pass, put the build where the
+   tester will try it: the card's dev stack serves your latest commit (for the kanban app, the build
+   is installed in the card's own test app).
+2. **Start both at once.** Two Agent calls in one message: `subagent_type: "card-reviewer"` and
+   `subagent_type: "card-tester"`, both with `run_in_background: true`. Then wait for both
+   notifications before you move the card or start either one again.
+3. **Brief the reviewer** with the card number and where the change is (the worktree and branch).
+   Don't give it your conclusions. It finds the card's own commits by `(card #<n>)` in their
+   messages, so put that in every commit message. If the card changed no repo, say what it
+   delivered and where. It reads the diff, changes nothing, and ends with `CARD: #<n>` and
+   `VERDICT: PASS`, or `VERDICT: FAIL` with one line per problem. The app records it on the card
+   (`review`, shown as Reviewed or Review failed).
+4. **Brief the tester like a stranger**, because it starts with no memory of your work and
+   shouldn't take on your conclusions. Give it the card number, every deliverable from the summary,
+   where the change is (worktree, branch, PR, commit) and how to try it (the dev stack and which
+   login; for the kanban app, the card's own test app (`kanban_test_app` take names it) and its CDP
+   port, 9334 for Test or 9333+N for Test N, and dry-run cards). Don't tell it what you found. If
+   the card has `doneWhenChecks` (and `kanban_update_card` lists `doneWhen`), say so in the brief:
+   the tester reads them from the card and ends with one `CHECK <n>: PASS|FAIL` line per check,
+   which the app marks on the card its `CARD` line names. A PASS that fails a check counts as a
+   FAIL. It tests the real thing, fixes nothing, and ends with `CARD: #<n>` and `VERDICT: PASS`, or
+   `VERDICT: FAIL` with one line per failure. The app records it on the card (`test`, shown as
+   Tested or Test failed).
+5. **On any FAIL, from either one**, fix what it found, run your own checks again, install the fix
+   again, and run both again, together (step 2). A review's fix needs a new test, and a test's fix
+   needs a new review. The app holds you to this: it refuses the move to Human test while the
+   test's pass started before the reviewer's latest FAIL, or the review's pass started before the
+   tester's latest FAIL, and its refusal says which to run again.
+6. **Three FAILs.** The reviewer's third FAIL since the card came into In progress sends the card
+   to Blocked with the findings: the app does that itself. After three failed test rounds, stop:
+   log what fails and move the card to Blocked with the reason in `blockedReason`.
+7. If your card leads a stack and `kanban_stack_list` shows a `stage` for each child, each child
+   reviews and tests itself on its own branch, both together, and you test the integrated build
+   (*If your card leads a stack*). Otherwise, as before: review and test each child before you
+   move it, both together, with the child's number in each brief so the `CARD` line names it, and
+   review and test the lead's own work too: the app moves the stack to Human test only once the
+   lead's own review and test have passed, neither started before the other's latest FAIL.
+8. A failure that is a bug a person can see in the app or page comes on a line that starts
    `- BUG:`.
 
 Say in the hand-over that the subagent review and test passed, and what they looked at. If the card
@@ -368,9 +368,9 @@ and the lead merges it into the stack's branch:
 - **No PR and no dev stack.** Only the lead pushes, opens the stack's PR and boots a dev stack. Do
   *Build* steps 1 to 5 and 8 on your branch, without the push, the PR, the dev stack (steps 6 and 7)
   and the logins. Verify what you can without a stack, and say what is left for the stack's build.
-- **Review and test on your branch.** Run your `card-reviewer` and then your `card-tester` (*Review
-  and test it with subagents*), briefed with this card's number, your worktree and your branch. The
-  move to Human test needs both passed.
+- **Review and test on your branch.** Run your `card-reviewer` and your `card-tester` together
+  (*Review and test it together*), briefed with this card's number, your worktree and your branch.
+  The move to Human test needs both passed, neither started before the other's latest FAIL.
 - **Hand over on this card.** Write your own how-to-test into `nextStep`: numbered steps for the
   owner to follow on the stack's build, and a last line "Broken if: ...". Then move this card to
   Human test. That move stops your session (the conversation is kept) and brings the lead a brief to

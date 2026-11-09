@@ -82,3 +82,40 @@ fn the_router_no_longer_integrates_single_cards() {
     assert!(r.contains("do not integrate cards onto an integration branch"), "router.md says not to");
     assert!(r.contains("its own test app"), "router.md says each card tests in its own test app");
 }
+
+// Card #162: the card-reviewer and the card-tester run together, on the installed build, and a
+// FAIL from either means running both again. The old order (review first, before the install)
+// must not come back.
+#[test]
+fn the_reviewer_and_the_tester_run_together_after_the_install() {
+    let ip = plain(IN_PROGRESS);
+    for old in ["review before you test", "review it first", "once the review has passed", "and then your card-tester"] {
+        assert!(!ip.contains(old), "in-progress.md still says \"{old}\"");
+    }
+    for new in ["### review and test it together", "two agent calls in one message", "run_in_background: true", "wait for both notifications", "on any fail, from either one", "started before the other's latest fail"] {
+        assert!(ip.contains(new), "in-progress.md doesn't say \"{new}\"");
+    }
+    // Install first, then the pair; the reproducer's flow stays before the pair.
+    assert!(ip.find("install it first").unwrap() < ip.find("start both at once").unwrap());
+    assert!(ip.find("### prove a reported bug first").unwrap() < ip.find("### review and test it together").unwrap());
+    // The stack child's section says they run together too.
+    assert!(ip.contains("run your card-reviewer and your card-tester together"), "in-progress.md's stack child section");
+    let k = plain(KANBAN_APP);
+    for old in ["review your diff now, before the install", "have the card-tester subagent test it"] {
+        assert!(!k.contains(old), "kanban-app.md still says \"{old}\"");
+    }
+    assert!(k.contains("don't run the card-reviewer yet"), "kanban-app.md 4a defers the review");
+    assert!(k.contains("6a. then run the card-reviewer and the card-tester together"), "kanban-app.md 6a runs both");
+    assert!(k.find("5. install it in your test app").unwrap() < k.find("6a. then run the card-reviewer").unwrap());
+}
+
+// Card #162: no agent text says the review comes first.
+#[test]
+fn no_agent_text_says_the_review_comes_first() {
+    for (name, text) in [("reviewer.rs", include_str!("../src/reviewer.rs")), ("tester.rs", include_str!("../src/tester.rs")), ("agents.rs", include_str!("../src/agents.rs"))] {
+        let t = plain(text);
+        for old in ["before the card-tester", "review before you test", "before the install"] {
+            assert!(!t.contains(old), "{name} still says \"{old}\"");
+        }
+    }
+}

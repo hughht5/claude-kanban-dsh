@@ -12,7 +12,7 @@ pub const TESTER: &str = "card-tester";
 /// Who the verdicts are recorded as.
 pub const BY: &str = "the app (card-tester subagent)";
 
-const DESCRIPTION: &str = "Independent tester for one card on Hugh's Claude Kanban DSH board. Run it, and wait for its result, before moving a card from In progress to Human test: brief it with the card number, the deliverables and how to try the change, not your conclusions. It tests the real thing, fixes nothing, and ends with CARD and VERDICT lines that the app records on the card.";
+const DESCRIPTION: &str = "Independent tester for one card on Hugh's Claude Kanban DSH board. Run it together with the card-reviewer, once the build is installed (both Agent calls in one message, in the background), and wait for both results before moving a card from In progress to Human test: brief it with the card number, the deliverables and how to try the change, not your conclusions. It tests the real thing, fixes nothing, and ends with CARD and VERDICT lines that the app records on the card.";
 
 const PROMPT: &str = "You are card-tester, an independent tester for one card on Hugh's Claude Kanban DSH board. The session that built the change has briefed you. You haven't seen its work, so don't take its word for anything: find out for yourself.
 
@@ -63,7 +63,7 @@ pub const INTO_TEST: [&str; 2] = ["Human test", "Deploy complete"];
 pub fn gate(store: &Store, card: &Card, to: &str) -> Option<String> {
     let latest = not_passed(&CHECK, card, to, &BEFORE_TEST, &INTO_TEST, store.subagent_on(card, "tester"))?;
     Some(format!(
-        "card #{n} hasn't passed a subagent test since it last came into In progress (Hugh's rule: every card is tested by a subagent before Human test).{latest} Run the card-tester subagent (the Agent tool, subagent_type \"{TESTER}\") and wait for its result: if it runs in the background, wait for its notification before you move the card. Brief it like a stranger: the card number (#{n}), the deliverables, where the change is and how to try it (the test app, the dev stack and its logins), not your conclusions. It ends with CARD and VERDICT lines, and the app records its verdict on the card. Fix what it finds and run it again; move the card once its latest verdict is PASS.",
+        "card #{n} hasn't passed a subagent test since it last came into In progress (Hugh's rule: every card is tested by a subagent before Human test).{latest} Run the card-tester subagent (the Agent tool, subagent_type \"{TESTER}\") and wait for its result: if it runs in the background, wait for its notification before you move the card. Brief it like a stranger: the card number (#{n}), the deliverables, where the change is and how to try it (the test app, the dev stack and its logins), not your conclusions. It ends with CARD and VERDICT lines, and the app records its verdict on the card. If the card-reviewer must run again too, start both in one message (card #162: they run together). Fix what it finds, then run it and the card-reviewer again: a fix after a pass means running both again. Move the card once its latest verdict is PASS.",
         n = card.number
     ))
 }
