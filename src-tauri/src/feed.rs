@@ -25,6 +25,8 @@ mod tests {
             (crate::critic::CHECK.by, "critic"),
             (crate::repro::BY, "reproducer"),
             (crate::merger::BY, "merger"),
+            (crate::lane::BY, "merger"),
+            (crate::lane::LOG_BY, "merger"),
             (crate::router::BY, "router"),
             (crate::monitor::BY, "monitor"),
         ] {

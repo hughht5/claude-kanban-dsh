@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 /// The card tools the Router is not offered.
-pub const NOT_FOR_ROUTER: [&str; 3] = ["kanban_set_passed", "kanban_ship_result", "kanban_router"];
+pub const NOT_FOR_ROUTER: [&str; 4] = ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_merge"];
 /// The session tools it is offered (of `control::CONTROL`).
 pub const SESSION_TOOLS: [&str; 3] = ["kanban_session_send", "kanban_session_status", "kanban_session_read"];
 

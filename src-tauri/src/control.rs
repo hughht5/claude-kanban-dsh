@@ -139,8 +139,9 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
                 let mut live = vec![];
                 if let Some(m) = states.as_object() {
                     for (id, st) in m {
-                        // The Router is not a card (card #119, final-test F8): it shows as "router".
-                        let n = if id == crate::routersession::KEY { json!("router") } else { json!(store.get(id).map(|c| c.number).unwrap_or(0)) };
+                        // The Router is not a card (card #119, final-test F8): it shows as "router",
+                        // and a merge lane (card #160) as its key, "lane:<repo>".
+                        let n = if crate::sessions::is_app_key(id) { json!(id) } else { json!(store.get(id).map(|c| c.number).unwrap_or(0)) };
                         live.push(json!({ "card": n, "state": st, "needs": needs.get(id).and_then(|v| v.get("reason")) }));
                     }
                 }

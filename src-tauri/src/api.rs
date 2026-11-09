@@ -161,18 +161,29 @@ fn mcp(app: &AppHandle, caller: Option<&str>, msg: &Value) -> Option<Value> {
             "protocolVersion": msg.pointer("/params/protocolVersion").cloned().unwrap_or(json!("2025-06-18")),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "kanban", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": match caller { Some(r) if crate::routersession::is_router_row(app, r) => ROUTER_INSTRUCTIONS, Some(_) => INSTRUCTIONS, None => EXTERNAL_INSTRUCTIONS },
+            "instructions": match caller {
+                Some(r) if crate::routersession::is_router_row(app, r) => ROUTER_INSTRUCTIONS,
+                Some(r) if crate::lane::key_of_row(app, r).is_some() => crate::lanetools::INSTRUCTIONS,
+                Some(_) => INSTRUCTIONS,
+                None => EXTERNAL_INSTRUCTIONS,
+            },
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": match caller { Some(r) if crate::routersession::is_router_row(app, r) => crate::routertools::tool_list(), _ => tool_list(caller.is_some()) } })),
+        "tools/list" => Ok(json!({ "tools": match caller {
+            Some(r) if crate::routersession::is_router_row(app, r) => crate::routertools::tool_list(),
+            // A merge lane (card #160): its four tools.
+            Some(r) if crate::lane::key_of_row(app, r).is_some() => crate::lanetools::tool_list(),
+            _ => tool_list(caller.is_some()),
+        } })),
         "tools/call" => {
             let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
             let args = msg.pointer("/params/arguments").cloned().unwrap_or(json!({}));
             // `kb`-only tools aren't offered over MCP, and aren't run if a client asks anyway.
-            let router = caller.is_some_and(|r| crate::routersession::is_router_row(app, r));
+            // The Router's and a merge lane's calls (cards #119 and #160) go to their own rules.
+            let router = caller.is_some_and(|r| crate::routersession::is_router_row(app, r) || crate::lane::key_of_row(app, r).is_some());
             let res = if router {
                 tools::call(app, caller, name, &args)
-            } else if tools::CLI_ONLY.contains(&name) || (caller.is_some() && crate::control::CONTROL.contains(&name)) {
+            } else if tools::CLI_ONLY.contains(&name) || (caller.is_none() && tools::CARD_SESSION_ONLY.contains(&name)) || (caller.is_some() && crate::control::CONTROL.contains(&name)) {
                 Err(format!("no tool called {name}"))
             } else if crate::control::CONTROL.contains(&name) {
                 crate::control::call(app, name, &args)
@@ -197,6 +208,10 @@ fn mcp(app: &AppHandle, caller: Option<&str>, msg: &Value) -> Option<Value> {
 fn tool_list(card_session: bool) -> Value {
     let mut list = tools::schemas();
     if !card_session {
+        // kanban_merge is a card session's own (card #160).
+        if let Some(a) = list.as_array_mut() {
+            a.retain(|t| !tools::CARD_SESSION_ONLY.contains(&t["name"].as_str().unwrap_or("")));
+        }
         if let (Some(a), Some(b)) = (list.as_array_mut(), crate::control::schemas().as_array()) {
             a.extend(b.iter().cloned());
         }
@@ -242,5 +257,9 @@ mod tests {
         let outside = names(&tool_list(false));
         assert!(outside.iter().any(|n| n == "kanban_search"));
         assert!(crate::control::CONTROL.contains(&"kanban_search"));
+        // Card #160: only a card session is offered kanban_merge.
+        assert!(card.iter().any(|n| n == "kanban_merge"));
+        assert!(!outside.iter().any(|n| n == "kanban_merge"));
+        assert!(!names(&crate::routertools::tool_list()).iter().any(|n| n == "kanban_merge"), "nor the Router");
     }
 }

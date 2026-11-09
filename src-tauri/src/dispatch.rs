@@ -178,6 +178,10 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
     if let Some(note) = subagents_note(store, card, to) {
         text = format!("{text}\n\n{note}");
     }
+    // A repo that ships through its merge lane (card #160).
+    if let Some(note) = crate::lane::lane_note(store, card, to) {
+        text = format!("{text}\n\n{note}");
+    }
     if let Some(note) = auto_note(card) {
         text = format!("{text}\n\n{note}");
     }
@@ -226,6 +230,10 @@ pub fn app_move_message(store: &Store, card: &Card, from: &str, lead: &str) -> S
         text = format!("{text}\n\n{}", fill(&p, card, from, ""));
     }
     if let Some(note) = subagents_note(store, card, to) {
+        text = format!("{text}\n\n{note}");
+    }
+    // A repo that ships through its merge lane (card #160).
+    if let Some(note) = crate::lane::lane_note(store, card, to) {
         text = format!("{text}\n\n{note}");
     }
     if let Some(note) = auto_note(card) {
@@ -387,6 +395,9 @@ pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<Strin
 
 {prompt}", card.column);
     if let Some(note) = subagents_note(store, card, &card.column) {
+        text = format!("{text}\n\n{note}");
+    }
+    if let Some(note) = crate::lane::lane_note(store, card, &card.column) {
         text = format!("{text}\n\n{note}");
     }
     if let Some(note) = auto_note(card) {
@@ -1280,6 +1291,8 @@ pub fn run(app: AppHandle) {
         if last_ship_check.elapsed() > Duration::from_secs(2) {
             last_ship_check = std::time::Instant::now();
             pump_ships(&app);
+            // The merge lanes (card #160): one cheap count when no merge waits.
+            crate::lane::tick(&app);
             pump_waits(&app);
             // Test-app turns (card #115); the first run is the start-up check.
             crate::testapp::pump(&app);
@@ -1305,7 +1318,8 @@ pub fn run(app: AppHandle) {
         // not a card, so the card steps below skip it.
         crate::routersession::tick(&app, free.iter().any(|k| k == crate::routersession::KEY));
         for card_id in free {
-            if card_id == crate::routersession::KEY {
+            // The Router and the merge lanes (card #160) aren't cards: their own ticks type to them.
+            if crate::sessions::is_app_key(&card_id) {
                 continue;
             }
             // Its session is being restarted onto its route (card #98): type nothing into it, or
@@ -1823,6 +1837,30 @@ mod tests {
 
     /// Card #146: a card in the worktree the app made for it is told where it builds, in its
     /// first message and in each move's message, once. Other cards hear nothing new.
+    /// Card #160: Ship it's message for a card whose repo ships through its merge lane says to
+    /// call kanban_merge instead of the card-merger; none for another repo or with the merger off.
+    #[test]
+    fn a_ship_of_a_listed_repo_is_told_to_use_its_merge_lane() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("board.db")).unwrap();
+        let co = dir.path().join("co");
+        std::fs::create_dir_all(co.join(".git")).unwrap();
+        let mut p = Patch::new();
+        p.insert("title".into(), json!("T"));
+        p.insert("repo".into(), json!("acme/web"));
+        p.insert("column".into(), json!("Ship it"));
+        let c = s.create(None, p, "Hugh").unwrap();
+        assert!(!move_message(&s, &c, "Human test", false).contains("kanban_merge"));
+        s.set_page_setting(kanban_store::MERGE_LANE_REPOS_KEY, &json!([{ "repo": "acme/web", "checkout": co.display().to_string() }]).to_string()).unwrap();
+        let m = move_message(&s, &c, "Human test", false);
+        assert!(m.contains("ships through its merge lane") && m.contains("kanban_merge"), "{m}");
+        assert!(app_move_message(&s, &c, "Human test", "x").contains("kanban_merge"));
+        let mut off = Patch::new();
+        off.insert(kanban_store::SUBAGENTS_KEY.into(), json!({ "merger": false }));
+        let c = s.update(&c.id, c.version, &off, "Hugh (board)").unwrap();
+        assert!(!move_message(&s, &c, "Human test", false).contains("kanban_merge"), "merger off: no lane");
+    }
+
     #[test]
     fn a_card_in_its_own_worktree_is_told_where_it_builds() {
         let dir = tempfile::tempdir().unwrap();

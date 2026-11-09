@@ -174,6 +174,10 @@ fn the_jobs_query_counts_and_lists_what_each_lane_owes() {
     assert_eq!(jobs, vec![b.number, c.number, a.number], "the running job first, then the queue, oldest first");
     assert_eq!(merge_state(&s.get(&b.id).unwrap()), Some("running"));
     assert!(s.lane_jobs("lane:nobody/none").unwrap().is_empty());
+    let all: Vec<(String, i64)> = s.lane_jobs_all().unwrap().iter().map(|c| (c.fields[MERGE_KEY]["lane"].as_str().unwrap().to_string(), c.number)).collect();
+    assert_eq!(all.len(), 4);
+    assert_eq!(all[0].0, "lane:acme/api", "grouped by lane");
+    assert_eq!(all[1..].iter().map(|(_, n)| *n).collect::<Vec<_>>(), vec![b.number, c.number, a.number]);
     // An archived card's job still counts, so the lane cancels it.
     let v = s.get(&a.id).unwrap().version;
     s.archive(&a.id, v, true, "Hugh").unwrap();

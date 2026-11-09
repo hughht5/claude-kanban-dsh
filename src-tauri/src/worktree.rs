@@ -306,6 +306,95 @@ fn make_within(plan: &Plan, limit: Duration) -> Result<Made, String> {
     Ok(Made { how, base, head })
 }
 
+// ---- The merge lane's own worktree (card #160) ----
+
+/// The name of a repo's merge-lane worktree on `channel`: `merge-lane` on the live board,
+/// `<channel>-merge-lane` on a test board, so two channels never share one.
+pub fn lane_name(channel: &str) -> String {
+    match channel.trim() {
+        "" | "live" => "merge-lane".into(),
+        c => format!("{c}-merge-lane"),
+    }
+}
+
+/// Where a repo's merge lane works: `<checkout>\.claude\worktrees\<lane_name>`, inside the
+/// checkout Claude Code already trusts.
+pub fn lane_path(checkout: &Path, channel: &str) -> PathBuf {
+    UNDER.iter().fold(checkout.to_path_buf(), |p, part| p.join(part)).join(lane_name(channel))
+}
+
+/// Is `path` a worktree of `checkout` (any HEAD, a branch or detached)? A locked one is an error.
+fn is_a_worktree(g: &Git, checkout: &Path, path: &Path) -> Result<bool, String> {
+    let list = g.run(checkout, &["worktree", "list", "--porcelain"])?;
+    let want = path.display().to_string();
+    for entry in list.split("\n\n") {
+        let mut lines = entry.lines().map(str::trim);
+        let Some(p) = lines.next().and_then(|l| l.strip_prefix("worktree ")) else { continue };
+        if !same_path(p, &want) {
+            continue;
+        }
+        if lines.any(|l| l == "locked" || l.starts_with("locked ")) {
+            return Err(format!("{want} is half made (git has it locked); remove it with git worktree remove --force \"{want}\""));
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Makes the merge lane's worktree at `path`, detached at `origin/main` (else `main`), or finds
+/// it made (it is kept between jobs, so its build folders stay warm). Never makes or moves a
+/// branch. A folder there that isn't a worktree of `checkout` is left alone and refused.
+pub fn make_lane(checkout: &Path, path: &Path) -> Result<Made, String> {
+    make_lane_within(checkout, path, MAKE_LIMIT)
+}
+
+fn make_lane_within(checkout: &Path, path: &Path, limit: Duration) -> Result<Made, String> {
+    let g = Git::new(limit);
+    if !checkout.join(".git").exists() {
+        return Err(format!("{} isn't a git checkout", checkout.display()));
+    }
+    let wt = path.display().to_string();
+    if path.exists() {
+        if is_a_worktree(&g, checkout, path)? {
+            let head = g.run(path, &["rev-parse", "--short", "HEAD"])?;
+            return Ok(Made { how: "found", base: None, head });
+        }
+        return Err(format!("{wt} is already there and isn't a worktree of {}, so the app left it alone", checkout.display()));
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("merge-lane").to_string();
+    keep_out_of_status(&g, checkout, &name)?;
+    g.run(checkout, &["worktree", "prune"])?;
+    let base = ["origin/main", "main"]
+        .into_iter()
+        .find(|b| g.has_ref(checkout, &format!("{b}^{{commit}}")))
+        .ok_or_else(|| format!("{} has neither origin/main nor main to start the merge lane from", checkout.display()))?;
+    g.run(checkout, &["worktree", "add", "--quiet", "--detach", &wt, base])?;
+    let head = g.run(path, &["rev-parse", "--short", "HEAD"])?;
+    Ok(Made { how: "made", base: Some(base.to_string()), head })
+}
+
+/// Runs one git command in `dir` within `MAKE_LIMIT`, with no window: its output, or its error.
+/// For the merge lane's checks, which run with no lock of the board held.
+pub fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    Git::new(MAKE_LIMIT).run(dir, args)
+}
+
+/// Whether `sha` names a commit in `dir`'s repo, and its full SHA if so.
+pub fn commit_of(dir: &Path, sha: &str) -> Option<String> {
+    if sha.is_empty() || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    git(dir, &["rev-parse", "--verify", "--quiet", &format!("{sha}^{{commit}}")]).ok().filter(|s| !s.is_empty())
+}
+
+/// Whether commit `head` is on top of commit `onto` (`git merge-base --is-ancestor onto head`),
+/// both checked to be commits first, so any other git failure reads as "no".
+pub fn on_top_of(dir: &Path, onto: &str, head: &str) -> Result<bool, String> {
+    let o = commit_of(dir, onto).ok_or_else(|| format!("{onto} isn't a commit in {}", dir.display()))?;
+    let h = commit_of(dir, head).ok_or_else(|| format!("{head} isn't a commit in {}", dir.display()))?;
+    Ok(git(dir, &["merge-base", "--is-ancestor", &o, &h]).is_ok())
+}
+
 /// The card's log line for a made (or found) worktree.
 pub fn made_log(plan: &Plan, m: &Made) -> String {
     match (&m.base, m.how) {
@@ -531,5 +620,45 @@ mod tests {
         let m = make_within(&p, SLOW).unwrap();
         assert_eq!(m.base.as_deref(), Some("main"));
         assert_eq!(sh(&p.path, &["rev-parse", "--abbrev-ref", "HEAD"]), "test2-card-3");
+    }
+
+    #[test]
+    fn the_lanes_worktree_is_per_channel_inside_the_checkout() {
+        assert_eq!(lane_name("live"), "merge-lane");
+        assert_eq!(lane_name(""), "merge-lane");
+        assert_eq!(lane_name("test3"), "test3-merge-lane");
+        let p = lane_path(Path::new(r"C:\w\repo"), "test");
+        assert_eq!(p, PathBuf::from(r"C:\w\repo").join(".claude").join("worktrees").join("test-merge-lane"));
+    }
+
+    /// Card #160: the lane's worktree is made detached at origin/main, found again, and makes no
+    /// branch; the checkout's own branch and work are untouched.
+    #[test]
+    fn the_lanes_worktree_is_detached_found_again_and_makes_no_branch() {
+        let Some((_t, co)) = scratch() else { return };
+        let before = state(&co);
+        let branches = || sh(&co, &["branch", "--list", "--format=%(refname:short)"]);
+        let b0 = branches();
+        let path = lane_path(&co, "live");
+        let m = make_lane_within(&co, &path, SLOW).unwrap();
+        assert_eq!((m.how, m.base.as_deref()), ("made", Some("origin/main")));
+        assert_eq!(sh(&path, &["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD", "detached");
+        assert_eq!(sh(&path, &["rev-parse", "HEAD"]), sh(&co, &["rev-parse", "origin/main"]));
+        assert_eq!(branches(), b0, "no branch made");
+        assert_eq!(state(&co), before, "the checkout is untouched");
+        let again = make_lane_within(&co, &path, SLOW).unwrap();
+        assert_eq!(again.how, "found");
+        // A folder that isn't a worktree is refused and left alone.
+        let other = lane_path(&co, "test");
+        std::fs::create_dir_all(&other).unwrap();
+        assert!(make_lane_within(&co, &other, SLOW).unwrap_err().contains("left it alone"));
+        // The ancestry check the app makes on a PASS.
+        let main = sh(&co, &["rev-parse", "origin/main"]);
+        let local = sh(&co, &["rev-parse", "main"]);
+        assert!(on_top_of(&co, &main, &local).unwrap(), "main's local commit is on top of origin/main");
+        assert!(!on_top_of(&co, &local, &main).unwrap());
+        assert!(on_top_of(&co, &main, "0000000").is_err(), "not a commit");
+        assert_eq!(commit_of(&co, &main[..7]).as_deref(), Some(main.as_str()));
+        assert!(commit_of(&co, "HEAD~1").is_none(), "only a SHA");
     }
 }

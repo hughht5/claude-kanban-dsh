@@ -49,6 +49,11 @@ pub fn setup(app: &App) {
             }
             return;
         }
+        // A merge lane (card #160) asks nothing (AskUserQuestion is denied it) and is no card:
+        // what Hugh needs to know goes on its job's card.
+        if crate::sessions::is_app_key(&card) {
+            return;
+        }
         let (number, title, column) = lookup(app, &card);
         if state == "permission" && prev.as_deref() != Some("permission") {
             // A question dialog says its question (card #119, re-test 2 F7); a real permission
@@ -64,6 +69,10 @@ pub fn setup(app: &App) {
         let card = s(p, "card");
         if card == crate::routersession::KEY {
             toast(app, &card, "Router", &s(p, "text"));
+            return;
+        }
+        if let Some(repo) = kanban_store::lane_repo(&card) {
+            toast(app, &card, &format!("Merge lane ({repo})"), &s(p, "text"));
             return;
         }
         let (number, title, _) = lookup(app, &card);

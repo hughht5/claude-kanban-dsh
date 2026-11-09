@@ -33,7 +33,7 @@ const APP: &str = "the app";
 /// Each `by` an agent writes as, and the agent. The app's own writers are the
 /// "the app (<name> subagent)" and "the app (monitor)" strings in `src-tauri` (a test there
 /// checks they still map).
-const BYS: [(&str, &str); 18] = [
+const BYS: [(&str, &str); 20] = [
     ("card-tester", "tester"),
     ("the tester", "tester"),
     ("the app (card-tester subagent)", "tester"),
@@ -46,6 +46,9 @@ const BYS: [(&str, &str); 18] = [
     ("the app (card-reproducer subagent)", "reproducer"),
     ("card-merger", "merger"),
     ("the app (card-merger subagent)", "merger"),
+    // A repo's merge lane (card #160): the app's record of its verdict, and its own log lines.
+    ("the app (merge lane)", "merger"),
+    ("the merge lane", "merger"),
     ("card-router", "router"),
     ("the router", "router"),
     ("router", "router"),

@@ -182,6 +182,18 @@ impl Store {
         Ok(cards)
     }
 
+    /// Every lane's jobs at once (cards, archived ones too), grouped by lane, each lane's running
+    /// job first, then its queue, oldest request first: one query for the dispatcher's pass.
+    pub fn lane_jobs_all(&self) -> Result<Vec<Card>> {
+        let mut st = self.conn.prepare(
+            "SELECT * FROM cards WHERE json_extract(fields, '$.merge.state') IN ('queued', 'running')
+             ORDER BY json_extract(fields, '$.merge.lane'), json_extract(fields, '$.merge.state') = 'running' DESC,
+             json_extract(fields, '$.merge.at'), number",
+        )?;
+        let cards = st.query_map([], row_to_card)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(cards)
+    }
+
     /// The last `n` finished merges (passed, failed or unclear) of `repo`'s cards, newest first,
     /// from the cards' `merge` records: the lane's history, given in every brief so it survives
     /// a compaction or a new conversation. `except` (a card id) is left out.

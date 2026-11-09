@@ -36,6 +36,17 @@ pub struct Plan {
     /// The Router session (card #119), not a card's: its rules go in as its system prompt, its
     /// subagents run on Sonnet medium, and its guard also sees Edit and Write.
     pub router: bool,
+    /// A repo's merge lane (card #160), not a card's: its rules go in as its system prompt, it
+    /// has no subagents and can't ask Hugh a question, and its guard (`guard::lane_refusal`) also
+    /// sees Edit and Write.
+    pub lane: bool,
+}
+
+/// Whether a live-map key is one of the app's own sessions, not a card's: the Router (card
+/// #119) or a repo's merge lane (`lane:<repo>`, card #160). They sit outside the cap and the
+/// start queue, are never paused for being idle, and their end is no card's crash.
+pub fn is_app_key(key: &str) -> bool {
+    key == crate::routersession::KEY || kanban_store::lane_repo(key).is_some()
 }
 
 /// Claude Code's "send now" keys (`chat:sendNow`, Ctrl+X Ctrl+S): send what is typed or
@@ -339,7 +350,7 @@ pub fn settings_json(p: &Plan) -> Value {
             // would take its whole shell away.
             if ev == "PreToolUse" {
                 let url = format!("http://127.0.0.1:{}/hook/{}/{}/guard", api.port, api.token, p.row_id);
-                let matcher = if p.router { crate::guard::ROUTER_TOOLS } else { crate::guard::SHELL_TOOLS };
+                let matcher = if p.router || p.lane { crate::guard::ROUTER_TOOLS } else { crate::guard::SHELL_TOOLS };
                 entries.push(serde_json::json!({ "matcher": matcher, "hooks": [{ "type": "http", "url": url, "timeout": 5 }] }));
             }
             hooks.insert(ev.into(), Value::Array(entries));
@@ -438,6 +449,12 @@ pub fn build_args(p: &Plan) -> Vec<String> {
             // its subagents run on Sonnet medium (decision 11).
             a.extend(["--agents".into(), crate::routersession::agents_json()]);
             a.extend(["--append-system-prompt".into(), crate::routersession::PROMPT.to_string()]);
+        } else if p.lane {
+            // A merge lane (card #160): its rules as its system prompt, so they survive every
+            // compaction; no subagents (it does the merge itself); no question to Hugh, who isn't
+            // watching it.
+            a.extend(["--append-system-prompt".into(), crate::lane::PROMPT.to_string()]);
+            a.extend(["--disallowedTools".into(), crate::transcript::ASK_TOOL.to_string()]);
         } else {
             a.extend(["--agents".into(), crate::agents::agents_json()]);
         }
@@ -1093,8 +1110,9 @@ impl Sessions {
                             let _ = s.session_event(&sid, "exited", None);
                         }
                     }
-                    // The Router's end is told by `routersession::tick`, not as a card's crash.
-                    if card_id != crate::routersession::KEY {
+                    // The Router's end is told by `routersession::tick`, and a lane's by
+                    // `lane::tick`, not as a card's crash.
+                    if !is_app_key(&card_id) {
                         let _ = app.emit("session-crashed", serde_json::json!({ "card": card_id, "number": number }));
                     }
                 }
@@ -1269,8 +1287,9 @@ impl Sessions {
     pub fn idle_for(&self, d: Duration) -> Vec<String> {
         let Ok(live) = self.live.lock() else { return vec![] };
         live.iter()
-            // Never the Router: it is idle most of the time on purpose (card #119).
-            .filter(|(k, _)| k.as_str() != crate::routersession::KEY)
+            // Never the Router or a merge lane: they are idle most of the time on purpose (cards
+            // #119 and #160; a lane stops itself after 15 idle minutes).
+            .filter(|(k, _)| !is_app_key(k))
             .filter(|(_, l)| l.alive.load(Ordering::SeqCst) && !l.stopping && l.ready && l.state == "idle" && l.sent_at.is_none() && l.typed.is_none() && l.untaken.is_none() && !l.btw && !l.on_screen() && l.state_since.elapsed() >= d)
             .map(|(k, _)| k.clone())
             .collect()
@@ -1365,8 +1384,8 @@ impl Sessions {
             .lock()
             .map(|mut live| {
                 drop_ended(&mut live);
-                // The Router sits outside the cap (card #119).
-                live.iter().filter(|(k, l)| k.as_str() != crate::routersession::KEY && l.alive.load(Ordering::SeqCst)).count()
+                // The Router and the merge lanes sit outside the cap (cards #119 and #160).
+                live.iter().filter(|(k, l)| !is_app_key(k) && l.alive.load(Ordering::SeqCst)).count()
             })
             .unwrap_or(0)
     }
@@ -1943,6 +1962,7 @@ mod tests {
             api: None,
             todo_tools: false,
             router: false,
+            lane: false,
         }
     }
 
@@ -2316,6 +2336,28 @@ mod tests {
         assert!(pre.iter().any(|e| e["matcher"] == crate::guard::ROUTER_TOOLS));
         p.router = false;
         assert!(!settings_json(&p)["hooks"]["PreToolUse"].as_array().unwrap().iter().any(|e| e["matcher"] == crate::guard::ROUTER_TOOLS));
+    }
+
+    /// Card #160: a merge lane's command line has its rules as the system prompt, no subagents,
+    /// no AskUserQuestion, and its guard sees the edits too.
+    #[test]
+    fn a_lanes_command_line_has_its_rules_no_agents_and_no_questions() {
+        let mut p = plan(Some("0b2c9a44-5d7e-4c1a-9f3e-2a6b8c0d1e2f"));
+        p.api = Some(crate::api::ApiInfo { port: 47821, token: "t".into(), kb_exe: None });
+        p.lane = true;
+        let args = build_args(&p);
+        let i = args.iter().position(|a| a == "--append-system-prompt").expect("the lane's rules go in as its system prompt");
+        assert_eq!(args[i + 1], crate::lane::PROMPT);
+        assert!(!args.iter().any(|a| a == "--agents"), "no subagents");
+        let j = args.iter().position(|a| a == "--disallowedTools").expect("a deny list");
+        assert_eq!(args[j + 1], "AskUserQuestion");
+        let len: usize = args.iter().map(|a| a.len() + 3 + a.chars().filter(|c| *c == '"' || *c == '\\').count()).sum();
+        assert!(len < 30_000, "the lane's command line is {len} characters");
+        let pre = settings_json(&p)["hooks"]["PreToolUse"].as_array().unwrap().clone();
+        assert!(pre.iter().any(|e| e["matcher"] == crate::guard::ROUTER_TOOLS));
+        // The app's own keys.
+        assert!(is_app_key("router") && is_app_key("lane:acme/web"));
+        assert!(!is_app_key("card-12") && !is_app_key("lane:"));
     }
 
     /// Card #117, router decision R2: on a Mac an account-2 card refuses, saying why.

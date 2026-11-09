@@ -119,6 +119,7 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
                 api,
                 todo_tools,
                 router: false,
+                lane: false,
             }
         }
         "resume" => {
@@ -158,6 +159,7 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
                 api,
                 todo_tools,
                 router: false,
+                lane: false,
             }
         }
         _ => return Err("mode must be new or resume".into()),

@@ -18,6 +18,9 @@ mod guard;
 #[cfg(test)]
 mod hang_tests;
 mod launch;
+// The merge lanes, one per listed repo (card #160).
+mod lane;
+mod lanetools;
 mod lockwatch;
 mod monitor;
 mod merger;
@@ -851,6 +854,7 @@ fn main() {
         .manage(ColumnSince::default())
         .manage(sessions)
         .manage(routersession::Router::new())
+        .manage(lane::Lanes::new())
         .manage(update::Updates::default())
         .manage(Arc::new(search::Search::new(board_path().parent().map(PathBuf::from).unwrap_or_default())))
         .setup(move |app| {
@@ -897,6 +901,8 @@ fn main() {
             notify::router_panel_opened,
             routersession::router_trust,
             routersession::router_trust_answer,
+            lane::lane_status,
+            lane::lane_stop,
             check_size::check_size_again,
             create_card,
             update_card,

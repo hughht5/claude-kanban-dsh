@@ -83,6 +83,8 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "state": { "type": "string", "enum": ["shipping", "shipped", "failed", "needs-hugh"] }, "detail": { "type": "string" } }, "required": ["state"] } },
         { "name": "kanban_notify", "description": "Tell Hugh something about a card (a Windows notification and a log line).",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
+        { "name": "kanban_merge", "description": "Only in Ship it, for a card whose repo ships through its merge lane (the Ship it message says so): ask the lane for your ship's merge, after you committed your work. The lane rebases your branch onto the latest origin/main in its own worktree and runs the checks; your branch doesn't move. End your turn after it: the app sends you the verdict and what to do next. Refused (saying why) outside Ship it, before the ship started, for a repo with no lane, with the merger off, with no branch or worktreePath, with uncommitted work, or while a merge waits or runs.",
+          "inputSchema": { "type": "object", "properties": { "branches": { "type": "array", "items": { "type": "string" }, "description": "Other branches of this ship, in order (a card Hugh dropped on this one)." }, "rules": { "type": "string", "description": "The repo's merge rules, as you would brief the card-merger." }, "checks": { "type": "string", "description": "The check commands to run, as you would brief the card-merger." } } } },
         { "name": "kanban_router", "description": "Talk to the Router, the long-running session that routes and checks the board's cards (card #119). Pass text to send it a message (data for it, about your card), and/or replies: n to read its last n replies. Refused while the Router isn't running; nothing but Hugh starts it.",
           "inputSchema": { "type": "object", "properties": { "text": { "type": "string" }, "replies": { "type": "integer", "description": "How many of its latest replies to read (1 to 20)." } } } },
     ])
@@ -95,6 +97,10 @@ fn not_updatable(fields: &serde_json::Map<String, Value>) -> Option<&String> {
 
 /// Tools only `kb` reaches (over /tool), never listed for or callable by a card session's MCP.
 pub const CLI_ONLY: &[&str] = &["kanban_request_ship"];
+
+/// Tools only a card's own session is offered (card #160): not the Router, a lane, `kb` or a
+/// session outside the app.
+pub const CARD_SESSION_ONLY: &[&str] = &["kanban_merge"];
 
 /// `kb ship <n> --asked-by-hugh`: refused without the flag, and from a card's own session.
 pub fn ship_request_allowed(own: Option<&str>, args: &Value) -> Result<(), String> {
@@ -182,6 +188,15 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
     if let Some(row) = caller.filter(|r| crate::routersession::is_router_row(app, r)) {
         return crate::routertools::call(app, row, name, args);
     }
+    // A merge lane's (card #160): its four tools only.
+    if let Some((row, key)) = caller.and_then(|r| crate::lane::key_of_row(app, r).map(|k| (r, k))) {
+        return crate::lanetools::call(app, row, &key, name, args);
+    }
+    // A card session's request for its merge lane (card #160). Git reads its worktree, so it
+    // takes the board's lock itself.
+    if name == "kanban_merge" {
+        return crate::lane::request(app, caller, args);
+    }
     // A message to the Router, or its replies, from any session or kb (card #119).
     if name == "kanban_router" {
         return router_tool(app, caller, args);
@@ -197,6 +212,11 @@ pub fn call(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value) -> 
 /// "the router", and held to the subagent gates and waits as a card session is.
 pub fn call_as_router(app: &AppHandle, _row: &str, name: &str, args: &Value) -> Result<Value, String> {
     call_inner(app, None, name, args, true)
+}
+
+/// A card tool for a merge lane, after `lanetools` checked it (reads only): no own card.
+pub fn call_as_lane(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> {
+    call_inner(app, None, name, args, false)
 }
 
 /// `kanban_router`: send the Router a message (`text`), or read its last replies (`replies`).
@@ -565,6 +585,19 @@ mod tests {
         let d = upd["description"].as_str().unwrap();
         assert!(d.contains("Allowed: title,") && d.contains(", doneWhen, doneWhenChecks"), "{d}");
         assert!(!kanban_store::looks_like_token(d));
+    }
+
+    /// Card #160: kanban_merge is a card session's tool, and asks for its own card's merge only.
+    #[test]
+    fn kanban_merge_is_listed_for_card_sessions() {
+        let t = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_merge").cloned().expect("listed");
+        let d = t["description"].as_str().unwrap();
+        for must in ["Ship it", "merge lane", "End your turn", "uncommitted"] {
+            assert!(d.contains(must), "{must}");
+        }
+        assert!(t["inputSchema"]["properties"].get("card").is_none(), "only its own card");
+        assert!(CARD_SESSION_ONLY.contains(&"kanban_merge"));
+        assert!(!UPDATABLE.contains(&kanban_store::MERGE_KEY), "the merge record is the app's");
     }
 
     #[test]

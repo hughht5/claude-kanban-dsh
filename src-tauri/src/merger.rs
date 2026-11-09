@@ -158,13 +158,13 @@ pub struct Report {
 }
 
 /// A commit SHA (7 to 64 hex digits), lower case.
-fn sha(s: &str) -> Option<String> {
+pub(crate) fn sha(s: &str) -> Option<String> {
     let s = s.trim().trim_matches(|c| c == '`' || c == '*' || c == '<' || c == '>');
     (s.len() >= 7 && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())).then(|| s.to_ascii_lowercase())
 }
 
 /// A SHA, or "none" for a branch origin doesn't have yet.
-fn sha_or_none(s: &str) -> Option<String> {
+pub(crate) fn sha_or_none(s: &str) -> Option<String> {
     let t = s.trim().trim_matches(|c| c == '`' || c == '*' || c == '"');
     if t.eq_ignore_ascii_case("none") {
         Some("none".into())
