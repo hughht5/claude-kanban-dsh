@@ -394,7 +394,8 @@ pub fn card_slot(card: &Card) -> Option<u32> {
     u32::try_from(s).ok().filter(|s| (1..=MAX_SLOTS).contains(s))
 }
 
-fn since(card: &Card) -> String {
+/// When the card was given its test app (`testApp.since`), or "".
+pub fn test_app_since(card: &Card) -> String {
     card.fields.get(TEST_APP_KEY).and_then(|v| v.get("since")).and_then(Value::as_str).unwrap_or("").to_string()
 }
 
@@ -529,7 +530,7 @@ impl Store {
             if slot_refused(&c).is_some() {
                 continue;
             }
-            let keep = out.get(&s).map_or(false, |o| since(o) <= since(&c));
+            let keep = out.get(&s).map_or(false, |o| test_app_since(o) <= test_app_since(&c));
             if !keep {
                 out.insert(s, c);
             }
@@ -558,16 +559,32 @@ impl Store {
     }
 
     /// The slots that can't be given now: held by a card here, with a turn or a line of its own
-    /// (an outside install), or `elsewhere` (another running app's board has it).
-    pub fn taken_slots(&self, elsewhere: &BTreeSet<u32>) -> Result<BTreeSet<u32>> {
+    /// (an outside install) other than `except`'s, or `elsewhere` (another running app's board
+    /// has it).
+    pub fn taken_slots(&self, elsewhere: &BTreeSet<u32>, except: Option<&str>) -> Result<BTreeSet<u32>> {
         let mut taken: BTreeSet<u32> = self.slot_owners()?.into_keys().collect();
         taken.extend(elsewhere.iter().copied());
         for s in 1..=MAX_SLOTS {
-            if !self.test_app_queue_for(s)?.is_empty() {
+            let q = self.test_app_queue_for(s)?;
+            let others = q.holder.iter().map(|h| &h.who).chain(q.line.iter().map(|w| &w.who)).any(|w| w.card_id.as_deref() != except || except.is_none());
+            if others {
                 taken.insert(s);
             }
         }
         Ok(taken)
+    }
+
+    /// The test app whose turn (or line for it) card `id` already has, from before it had a test
+    /// app of its own (#115's one queue): it keeps that one if it is free, so no old turn is left
+    /// behind on another.
+    fn turn_slot(&self, id: &str) -> Result<Option<u32>> {
+        for s in 1..=MAX_SLOTS {
+            let q = self.test_app_queue_for(s)?;
+            if q.holder.as_ref().map_or(false, |h| h.who.card_id.as_deref() == Some(id)) || q.line.iter().any(|w| w.who.card_id.as_deref() == Some(id)) {
+                return Ok(Some(s));
+            }
+        }
+        Ok(None)
     }
 
     /// Gives card `id` test app `slot`, with a log line.
@@ -625,9 +642,18 @@ impl Store {
             }
         }
         let mut line = self.slot_line()?;
+        // Cards ahead that can't use a test app now don't hold this one back.
+        let before = line.line.len();
+        line.line.retain(|w| w.card_id == id || self.get(&w.card_id).map_or(false, |c| slot_refused(&c).is_none()));
+        if line.line.len() != before {
+            self.save_slot_line(&line)?;
+        }
         let first = line.place(id).map_or(line.line.is_empty(), |p| p == 1);
         if first {
-            if let Some(s) = lowest_free(self.test_slots_ceiling()?, own, &self.taken_slots(elsewhere)?) {
+            let ceiling = self.test_slots_ceiling()?;
+            let taken = self.taken_slots(elsewhere, Some(id))?;
+            let kept = self.turn_slot(id)?.filter(|s| *s <= ceiling && *s != own && !taken.contains(s));
+            if let Some(s) = kept.or_else(|| lowest_free(ceiling, own, &taken)) {
                 if line.leave(id) {
                     self.save_slot_line(&line)?;
                 }
@@ -664,7 +690,7 @@ impl Store {
         });
         let ceiling = self.test_slots_ceiling()?;
         while let Some(w) = line.line.first().cloned() {
-            let Some(s) = lowest_free(ceiling, own, &self.taken_slots(elsewhere)?) else { break };
+            let Some(s) = lowest_free(ceiling, own, &self.taken_slots(elsewhere, Some(&w.card_id))?) else { break };
             line.line.remove(0);
             self.give_test_app(&w.card_id, s, now)?;
             out.given.push((w.card_id, w.card, s));

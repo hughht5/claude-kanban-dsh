@@ -1192,7 +1192,7 @@ once a card gave its turn back another card could install over its build while H
 file for its own test app only; a new owner wait holds it while its test app holds another card's
 build and this run has no turn on it ("Test 2 holds card #140's build"); it stops at once when
 the run's card has a different test app ("card #147's test app is Test 2: run this with
--Channel test2"). `-IgnoreTurn` (Hugh only) skips all three. Input and the notice read the run's
+-Channel test2"). A card number counts only on the run's own board (from `KANBAN_DATA_DIR`; none is live), since a test board's #140 is another card. Hugh's own run (owner `hugh`) warns and goes ahead over a card's build. `-IgnoreTurn` (Hugh only) skips all three. An outside install turn (`kb testapp take --install --slot N`) is refused on a test app a card has: free it first. Input and the notice read the run's
 own `input-<channel>.json`. `scripts\test-install-lock.ps1` has cases for each.
 
 **The tool's replies** name the test app, its install command (`platform::install_command`) and

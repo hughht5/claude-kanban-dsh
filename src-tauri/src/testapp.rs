@@ -545,7 +545,7 @@ impl Apps {
             .unwrap_or_default()
             .into_iter()
             .map(|(s, c)| {
-                let since = c.fields.get(q::TEST_APP_KEY).and_then(|v| v.get("since")).and_then(Value::as_str).unwrap_or("").to_string();
+                let since = q::test_app_since(&c);
                 (s, (c.number, c.id, since))
             })
             .collect();
@@ -649,8 +649,15 @@ pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, l
     let mut logs: Vec<(String, String)> = vec![];
     let mut messages: Vec<(String, String)> = vec![];
     let mut changed = false;
-    for (c, _, why) in store.stale_test_apps().unwrap_or_default() {
-        changed |= store.free_test_app(&c.id, &why, "the app").is_ok();
+    for (c, slot, why) in store.stale_test_apps().unwrap_or_default() {
+        if store.free_test_app(&c.id, &why, "the app").is_ok() {
+            changed = true;
+            // A card still testing hears it (one given the same test app later, a stack's card
+            // in Human test); a card that moved on or was archived has nothing to hear.
+            if let (Some(s), true) = (slot, q::TESTER_COLUMNS.contains(&c.column.as_str()) && !c.archived) {
+                messages.push((c.id.clone(), freed_message(s, &why)));
+            }
+        }
     }
     for slot in 1..=q::MAX_SLOTS {
         let mut queue = store.test_app_queue_for(slot).unwrap_or_default();
@@ -927,6 +934,10 @@ pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now
             let owner = args.get("owner").and_then(Value::as_str).map(str::trim).filter(|o| !o.is_empty()).ok_or("pass the install's owner (the KANBAN_LOCK_OWNER its install.ps1 runs with), for example --owner hugh")?;
             let label = args.get("label").and_then(Value::as_str).unwrap_or("");
             let slot = arg_slot(args)?;
+            // A card's test app holds its build for Hugh: no install goes over it from outside.
+            if let Some(c) = store.slot_owners().map_err(e)?.get(&slot) {
+                return Err(format!("refused: {} holds card #{}'s build (its own test app). Free it first (kb testapp free --slot {slot}, or Free on the board), or use another test app.", q::slot_label(slot), c.number));
+            }
             let ask = Ask::install(owner, label);
             let shown = ask.label.clone();
             let mut queue = store.test_app_queue_for(slot).map_err(e)?;
@@ -1323,8 +1334,9 @@ mod tests {
         // Outside: an install turn with an owner, on a test app; a tester take is refused.
         assert!(call(&mut store, None, "take", json!({})).is_err());
         assert!(call(&mut store, None, "take", json!({ "install": true })).is_err());
-        let r = call(&mut store, None, "take", json!({ "install": true, "owner": "router", "label": "wave 3" })).unwrap();
-        assert!(r.contains("Number 1 in line for Test"), "{r}");
+        // Test holds c's build: no outside install goes over it.
+        let r = call(&mut store, None, "take", json!({ "install": true, "owner": "router", "label": "wave 3" })).unwrap_err();
+        assert!(r.contains("Test holds card #"), "{r}");
         let r = call(&mut store, None, "take", json!({ "install": true, "owner": "router", "label": "wave 3", "slot": 3 })).unwrap();
         assert!(r.contains("Test 3 is yours") && r.contains("-Channel test3"), "{r}");
         assert!(call(&mut store, None, "take", json!({ "install": true, "owner": "router", "slot": 11 })).is_err());
@@ -1332,7 +1344,7 @@ mod tests {
         assert!(r.contains(&format!("#{}", c.number)), "{r}");
         // The forced card hears it, queued.
         assert!(store.waiting(&c.id, "message").unwrap().is_some());
-        assert_eq!(call(&mut store, None, "release", json!({ "owner": "router" })).unwrap(), "Took router's install on Test out of the line.");
+        assert_eq!(call(&mut store, None, "release", json!({ "owner": "router" })).unwrap(), "router has no install turn on Test and isn't in line.");
         assert_eq!(call(&mut store, None, "release", json!({ "owner": "router", "slot": 3 })).unwrap(), "Released router's install turn on Test 3.");
         // Free: names its test app; the card loses it and hears so.
         assert!(call(&mut store, None, "free", json!({})).is_err());
@@ -1446,6 +1458,36 @@ mod tests {
         assert!(f["slots"].get("test4").is_none());
         let empty = turn_file(&Apps::default(), 60, (42, None), t(1));
         assert!(empty["holder"].is_null() && empty["slots"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn no_outside_install_goes_over_a_card_s_test_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let a = mk_card(&mut store, "In progress");
+        act(&mut store, Some(&a.id), "take", &json!({}), t(0), 60, &Shared::default()).unwrap();
+        let e = act(&mut store, None, "take", &json!({ "install": true, "owner": "router", "slot": 1 }), t(0), 60, &Shared::default()).unwrap_err();
+        assert!(e.contains("Test holds card #") && e.contains("free --slot 1"), "{e}");
+        assert!(act(&mut store, None, "take", &json!({ "install": true, "owner": "router", "slot": 2 }), t(0), 60, &Shared::default()).is_ok());
+    }
+
+    #[test]
+    fn a_card_still_testing_hears_when_the_pump_takes_its_test_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let a = mk_card(&mut store, "In progress");
+        let b = mk_card(&mut store, "In progress");
+        store.give_test_app(&a.id, 2, t(0)).unwrap();
+        store.give_test_app(&b.id, 2, t(1)).unwrap();
+        run(&mut store, t(2), 60, &Shared::default(), &Live::default());
+        assert_eq!(kanban_store::card_slot(&store.get(&b.id).unwrap()), None);
+        let m = store.waiting(&b.id, "message").unwrap().unwrap().payload;
+        assert!(m.contains("Test 2, was taken from this card"), "{m}");
+        // A card that moved on hears nothing.
+        let c = store.get(&a.id).unwrap();
+        store.move_by_hugh(&a.id, c.version, "Ship it", kanban_store::Patch::new()).unwrap();
+        run(&mut store, t(3), 60, &Shared::default(), &Live::default());
+        assert!(store.waiting(&a.id, "message").unwrap().is_none());
     }
 
     #[test]

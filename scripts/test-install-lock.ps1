@@ -88,7 +88,7 @@ function Open-HeldLock([string]$Path, $Object) {
 }
 
 # Starts install.ps1 -Channel <test> -LockOnly as a child powershell (no new window).
-function Start-Run($Case, [string[]]$Extra = @(), [string]$Owner = 'tester', [string]$Channel = 'test') {
+function Start-Run($Case, [string[]]$Extra = @(), [string]$Owner = 'tester', [string]$Channel = 'test', [string]$DataDir = '') {
     $script:RunNo++
     $out = Join-Path $Case.Dir "run$($script:RunNo).out.txt"
     $err = Join-Path $Case.Dir "run$($script:RunNo).err.txt"
@@ -96,14 +96,18 @@ function Start-Run($Case, [string[]]$Extra = @(), [string]$Owner = 'tester', [st
         '-LockDir', "`"$($Case.Shared)`"", '-DshLockDir', "`"$($Case.Dsh)`"", '-PollSeconds', '1') + $Extra
     $savedOwner = $env:KANBAN_LOCK_OWNER
     $savedCard  = $env:KANBAN_CARD
+    $savedData  = $env:KANBAN_DATA_DIR
     try {
         $env:KANBAN_LOCK_OWNER = $Owner
         Remove-Item Env:KANBAN_CARD -ErrorAction SilentlyContinue
+        # The run's board (card #147): live unless the case names a test app's data folder.
+        if ($DataDir) { $env:KANBAN_DATA_DIR = $DataDir } else { Remove-Item Env:KANBAN_DATA_DIR -ErrorAction SilentlyContinue }
         $p = Start-Process -FilePath 'powershell.exe' -ArgumentList ($argv -join ' ') -NoNewWindow -PassThru `
             -RedirectStandardOutput $out -RedirectStandardError $err
     } finally {
         if ($null -eq $savedOwner) { Remove-Item Env:KANBAN_LOCK_OWNER -ErrorAction SilentlyContinue } else { $env:KANBAN_LOCK_OWNER = $savedOwner }
         if ($null -ne $savedCard) { $env:KANBAN_CARD = $savedCard }
+        if ($null -eq $savedData) { Remove-Item Env:KANBAN_DATA_DIR -ErrorAction SilentlyContinue } else { $env:KANBAN_DATA_DIR = $savedData }
     }
     $null = $p.Handle   # so ExitCode is kept after it exits (Windows PowerShell 5.1)
     [pscustomobject]@{ Proc = $p; Out = $out; Err = $err; Started = Get-Date }
@@ -615,6 +619,30 @@ try {
     $r = Wait-Run (Start-Run $c @('-AssumeAppRunning', '-NoticeSeconds', '3') -Channel 'test2')
     Check '20 notice: input-test2.json 30 min ago gives a -Channel test2 run its notice' (
         $r.Exit -eq 0 -and $r.Text -match 'Waiting: notice until \d\d:\d\d:\d\d' -and $r.Text -match 'LOCK OK') $r
+
+    # --- 21. Card #147: a card number is a card on the run's own board only ----------------
+    # The test board is a copy of the live one: its #140 is another card than live's #140.
+    $c = New-Case
+    Write-Fixture $c 'turn-test.json' (New-SlotTurn 'test' $PID $MyStart $null ([ordered]@{ test3 = (New-Slot 3 140) }))
+    $r = Wait-Run (Start-Run $c -Owner '140' -Channel 'test2')
+    Check "21 the test board's #140 has Test 3: live #140's -Channel test2 run is not stopped" (Test-Clear $r) $r
+    $run = Start-Run $c -Owner '140' -Channel 'test3'
+    $still = Wait-Waiting $run "Waiting: Test 3 holds card #140's build (the test board)"
+    Write-Fixture $c 'turn-test.json' (New-SlotTurn 'test' $PID $MyStart $null ([ordered]@{}))
+    $r = Wait-Run $run
+    Check "21 and live #140's -Channel test3 run waits for the test board's #140" ($still -and $r.Exit -eq 0) $r
+    $c = New-Case
+    Write-Fixture $c 'turn-test.json' (New-SlotTurn 'test' $PID $MyStart $null ([ordered]@{ test2 = (New-Slot 2 140) }))
+    $r = Wait-Run (Start-Run $c -Owner '140' -Channel 'test3' -DataDir (Join-Path $c.Dir '.claude-kanban-dsh-test'))
+    Check "21 a test-board session's own card #140 has Test 2: its -Channel test3 run stops, naming -Channel test2" (
+        $r.Exit -ne 0 -and $r.Text -match '-Channel test2') $r
+
+    # --- 22. Card #147: Hugh's own run goes ahead over a card's build, with a warning ----
+    $c = New-Case
+    Write-Fixture $c 'turn-live.json' (New-SlotTurn 'live' $PID $MyStart $null ([ordered]@{ test = (New-Slot 1 140) }))
+    $r = Wait-Run (Start-Run $c -Owner 'hugh' -Channel 'test')
+    Check "22 Hugh's own -Channel test run warns that Test holds card #140's build and goes ahead" (
+        (Test-Clear $r) -and $r.Text -match "WARNING: Test holds card #140's build") $r
 } finally {
     Remove-Item -LiteralPath $Base -Recurse -Force -ErrorAction SilentlyContinue
 }

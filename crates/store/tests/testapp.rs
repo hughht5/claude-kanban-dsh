@@ -282,3 +282,33 @@ fn sessions_can_t_write_test_app_through_a_patch_check() {
     assert_eq!(slot(&s, &a), None);
     assert_eq!(s.stale_test_apps().unwrap()[0].2, "it named no test app");
 }
+
+#[test]
+fn a_card_with_an_old_turn_on_test_keeps_test_and_no_turn_is_left_behind() {
+    let (_d, mut s) = board();
+    let (a, an) = card(&mut s, "a", "In progress");
+    // Before card #147: a holds the one turn, on Test, and has no test app.
+    let mut q = TestAppQueue::default();
+    q.take(Ask::tester(&a, an), t(0), false);
+    s.save_test_app_queue_for(1, &q).unwrap();
+    assert_eq!(s.claim_test_app(&a, t(1), 0, &NONE()).unwrap(), SlotClaim::Given(1), "its own turn doesn't make Test taken");
+    // Another card's turn on Test does.
+    let (b, _) = card(&mut s, "b", "In progress");
+    let mut q2 = TestAppQueue::default();
+    q2.take(Ask::tester(&b, 99), t(0), false);
+    s.save_test_app_queue_for(3, &q2).unwrap();
+    assert_eq!(s.claim_test_app(&b, t(2), 0, &NONE()).unwrap(), SlotClaim::Given(3), "b keeps its own old turn's test app");
+}
+
+#[test]
+fn a_card_that_can_t_use_a_test_app_ahead_in_line_doesn_t_hold_a_free_one_back() {
+    let (_d, mut s) = board();
+    let (x, xn) = card(&mut s, "x", "In progress");
+    let mut line = s.slot_line().unwrap();
+    line.join(&x, xn, t(0));
+    s.save_slot_line(&line).unwrap();
+    mv(&mut s, &x, "Done");
+    let (y, _) = card(&mut s, "y", "In progress");
+    assert_eq!(s.claim_test_app(&y, t(1), 0, &NONE()).unwrap(), SlotClaim::Given(1));
+    assert!(s.slot_line().unwrap().line.is_empty());
+}

@@ -135,6 +135,15 @@ $ErrorActionPreference = 'Stop'
 if (-not $LockDir)    { $LockDir    = Join-Path $env:USERPROFILE '.claude-kanban-dsh-shared\testapp' }
 if (-not $DshLockDir) { $DshLockDir = Join-Path $env:USERPROFILE '.dsh-test-app.lock' }
 $LockOwner = if ($env:KANBAN_LOCK_OWNER) { $env:KANBAN_LOCK_OWNER } elseif ($env:KANBAN_CARD) { $env:KANBAN_CARD } else { 'hugh' }
+# The board this run's card is on (card #147): a test app's card sessions get KANBAN_DATA_DIR
+# (.claude-kanban-dsh-test, -test2, ...); the live app's get none. A card number means a card on
+# this board only: the test board is a copy, so its #140 is another card than live's #140.
+$RunBoard = 'live'
+if ($env:KANBAN_DATA_DIR) {
+    $leaf = (Split-Path -Leaf ($env:KANBAN_DATA_DIR.TrimEnd([char]92, [char]47))).ToLowerInvariant()
+    if ($leaf -match '^\.claude-kanban-dsh-(test(\d+)?)$') { $RunBoard = $Matches[1] }
+}
+$script:HughOwnerWarned = $false
 $LockLabel = if ($For) { $For } elseif ($env:KANBAN_CARD) { "#$env:KANBAN_CARD" } else { $LockOwner }
 $script:LockStream  = $null   # install.lock, open with delete-on-close while this run holds it
 $script:LockInfo    = $null   # what install.lock says
@@ -338,9 +347,19 @@ function Get-TurnWait {
         }
         $card = ''
         if ($slot -and $null -ne $slot.card) { $card = [string]$slot.card }
-        $cardWait = $card -ne '' -and $card -ne $LockOwner -and -not $mine
+        # The slot's card is this run's own only on this run's board.
+        $isMe = $ch -eq $RunBoard -and $card -eq $LockOwner
+        $cardWait = $card -ne '' -and -not $isMe -and -not $mine
         if (-not $other -and -not $cardWait) { continue }
         if (-not (Test-LockAppAlive $turn.appPid $turn.appStart)) { continue }
+        if (-not $other -and $LockOwner -eq 'hugh') {
+            # Hugh's own run goes ahead over a card's build, with a warning (he can Free it first).
+            if (-not $script:HughOwnerWarned) {
+                Write-Warning "$here holds card #$card's build (the $ch board): installing over it, as this is Hugh's own run."
+                $script:HughOwnerWarned = $true
+            }
+            continue
+        }
         if ($other) { return "the $ch app's turn on ${here}: $($h.label) ($($h.kind))" }
         if (-not $ownerWait) { $ownerWait = "$here holds card #$card's build (the $ch board)" }
     }
@@ -353,7 +372,8 @@ function Get-TurnWait {
 function Get-WrongSlot {
     if ($IgnoreTurn -or $LockOwner -notmatch '^\d+$') { return $null }
     foreach ($f in @(Get-TurnFiles)) {
-        if ($f.Read.State -ne 'ok') { continue }
+        # Only this run's own board names its card (another board's #N is another card).
+        if ($f.Channel -ne $RunBoard -or $f.Read.State -ne 'ok') { continue }
         $turn = $f.Read.Value
         if (-not $turn -or -not (Test-TurnHasSlots $turn) -or -not $turn.slots) { continue }
         foreach ($p in $turn.slots.PSObject.Properties) {
