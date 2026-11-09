@@ -715,3 +715,9 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 | `ui\archive-ask.js`, `ui\archive-ask.css`, their tags in `ui\index.html`, the Done-pile filter in `ui\board.js` render | Same revert. Without it, cards with an ask show in their own columns again |
 | The Router prompt's job 6 and rule 1's sentence (`prompts\router.md`; the private copy in the private repo) | Same revert here; in your private repo, `git revert --no-edit` its card #131 commit |
 | A card archived from the Done pile | Open it in the Archive and press **Restore** |
+
+## Router panel: log and chat side by side (card #128, branch `dsh-128`)
+
+UI only; nothing on the board or in the data folder changes. The saved width (`router.width` in the WebView's localStorage) is only read.
+
+Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <the card #128 commit>`. A width saved while this was live still works in the old layout.

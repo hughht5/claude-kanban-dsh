@@ -45,7 +45,8 @@ body.resizing .rpane-term{pointer-events:none}
 .rpane-acts [hidden]{display:none}
 
 /* The digest and the live log. */
-.rpane-top{display:flex;flex-direction:column;min-height:0;border-bottom:1px solid var(--line)}
+.rpane-left{display:flex;flex-direction:column;min-height:0;min-width:0;border-bottom:1px solid var(--line)}
+.rpane-feedwrap{display:flex;flex-direction:column;min-height:0}
 .rpane-digest{margin:10px 12px 0;border:1px solid var(--accent);border-left-width:3px;border-radius:8px;background:var(--accent-soft);padding:8px 10px;
   font-size:12.5px;line-height:1.45;max-height:30vh;max-height:25cqh;overflow-y:auto}
 .rpane-digest .rd-head{display:flex;align-items:center;gap:8px}
@@ -98,3 +99,26 @@ button.rcard:hover{text-decoration:underline}
 .rtrust{margin:8px 10px;padding:10px 12px;border:1px solid var(--ask,var(--accent));border-radius:8px;background:var(--panel)}
 .rtrust p{margin:6px 0 10px}
 .rtrust-acts{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Log and chat side by side (card #128). Everything below is scoped to the Router (.rpane.router) or its
+   inner grid, so the Agents drawer, which shares .rpane, is untouched. .rpane is the size container,
+   so the grid goes on a child: a container query cannot style its own container. */
+.rpane.router{grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(0,1fr)}
+.rpane-grid{display:grid;min-height:0;min-width:0;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr)}
+.rpane.router .rpane-feed{border-bottom:0}
+.rpane.router .rpane-feed[hidden]{display:none}
+.rpane-right{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0}
+/* 618px: a saved width of 620 is a 618px container (1px border, border-box). */
+@container (min-width:618px){
+  .rpane-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .rpane-grid>.rpane-head{grid-column:1/-1}
+  .rpane-left{border-bottom:0;border-right:1px solid var(--line)}
+  #r-digest{max-height:35cqh;overflow-y:auto;flex:none}
+  .rpane.router .rpane-digest{max-height:none;overflow:visible}
+  .rpane-feedwrap{flex:1 1 auto}
+  .rpane.router .rpane-feed{max-height:none;flex:1 1 auto}
+  /* Folded: the left column is a 44px strip holding only the fold button. */
+  .rpane-grid.folded{grid-template-columns:44px minmax(0,1fr)}
+  .rpane-grid.folded #r-digest,.rpane-grid.folded .rpane-feedhead h3{display:none}
+  .rpane-grid.folded .rpane-feedhead{padding:8px 4px;justify-content:center}
+}
