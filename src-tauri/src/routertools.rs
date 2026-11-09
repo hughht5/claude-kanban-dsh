@@ -306,6 +306,7 @@ fn start_card(app: &AppHandle, args: &Value, may_start: bool) -> Result<Value, S
         // The folder it really runs in: the start may have made the card's own worktree (card #146).
         crate::Begun::Started(row) => format!("Started card #{}'s session ({mode}) in {}.", c.number, row.cwd),
         crate::Begun::Queued(pos) => format!("Card #{}'s start waits under Hugh's cap: number {pos} in line.", c.number),
+        crate::Begun::Sizing => format!("Card #{} is being sized first (the app's one quick call, card #159); its session starts after.", c.number),
     };
     let _ = store.add_log(&c.id, &format!("The Router started its session ({mode})"), ROUTER_BY);
     if let Some(m) = args.get("message").and_then(Value::as_str).filter(|m| !m.trim().is_empty()) {

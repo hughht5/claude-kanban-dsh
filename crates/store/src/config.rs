@@ -44,6 +44,12 @@ pub const REPRO_RULE_KEY: &str = "sessions.repro_before_human_test";
 /// 2026: "106 - on please") or "off". One of the `RULE_KEYS`.
 pub const TODO_TOOLS_KEY: &str = "sessions.todo_tools";
 
+/// Whether the app sizes a card (the card-router's route) with one quick call of its own just
+/// before the card's session starts in Planning or In progress, so the session starts on the
+/// route's model and effort and is never restarted onto them (card #159): "on" (the default) or
+/// "off" (the card's session routes it with its card-router subagent, as before).
+pub const SIZE_FIRST_KEY: &str = "sessions.size_before_start";
+
 /// Hugh's on/off rules for the app's subagents and sessions: "on" (the default) or "off". One
 /// line each.
 pub const RULE_KEYS: &[&str] = &[
@@ -56,6 +62,8 @@ pub const RULE_KEYS: &[&str] = &[
     // Card #151: the card-router's and card-merger's defaults for a new card.
     crate::ROUTER_RULE_KEY,
     crate::MERGER_RULE_KEY,
+    // Card #159: size a card before its session starts.
+    SIZE_FIRST_KEY,
 ];
 
 /// The settings key for the private folder: a folder outside this repo with the owner's own
@@ -80,6 +88,8 @@ pub const PAGE_SETTINGS: &[&str] = &[
     // Card #151: the card-router's and card-merger's defaults for a new card.
     crate::ROUTER_RULE_KEY,
     crate::MERGER_RULE_KEY,
+    // Card #159: size a card before its session starts.
+    SIZE_FIRST_KEY,
     // The Router (card #119): its model, effort and whether it may start cards.
     crate::router::ROUTER_MODEL_KEY,
     crate::router::ROUTER_EFFORT_KEY,
@@ -439,6 +449,12 @@ impl Store {
     /// Do card sessions start with the to-do tools on (card #106)? On unless Hugh turned it off.
     pub fn todo_tools_on(&self) -> bool {
         self.rule_on(TODO_TOOLS_KEY)
+    }
+
+    /// Does the app size a card before its session starts (card #159)? On unless Hugh turned it
+    /// off.
+    pub fn size_first(&self) -> bool {
+        self.rule_on(SIZE_FIRST_KEY)
     }
 
     /// One of Hugh's on/off rules (`RULE_KEYS`): on unless he turned it off.

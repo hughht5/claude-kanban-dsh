@@ -24,6 +24,7 @@ mod merger;
 mod needs;
 mod notify;
 mod place;
+mod presize;
 mod repro;
 mod reviewer;
 mod router;
@@ -866,6 +867,9 @@ fn main() {
             // The Router resumes when Hugh had it on, idle or not (card #119).
             let handle = app.handle().clone();
             std::thread::spawn(move || routersession::resume_at_start(&handle));
+            // A card the app was sizing when it quit is sized again and started (card #159).
+            let handle = app.handle().clone();
+            std::thread::spawn(move || presize::resume_at_start(&handle));
             nightly_backups(app.handle().clone());
             search::start(app.handle().clone());
             update::watch(app.handle().clone());

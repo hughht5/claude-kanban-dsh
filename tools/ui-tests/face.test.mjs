@@ -224,3 +224,17 @@ test("a stack card keeps its own layout", () => {
   b.ctx.Face.arrange(el, { id: "s", column: "Human test", title: "x" });
   assert.equal(el.innerHTML, before);
 });
+
+test("a card being sized before its session starts shows Sizing… in the route chip's place (card #159)", () => {
+  const b = boot();
+  const cards = fixture();
+  cards.push({ id: "c159", number: 159, title: "Sized first", column: "Planning", updatedAt: iso(1), sizing: { at: iso(0), mode: "new", why: "move" } });
+  cards.push({ id: "c160", number: 160, title: "Sized, in Backlog", column: "Backlog", updatedAt: iso(1), sizing: { at: iso(0), mode: "new", why: "move" } });
+  b.show(cards, { needs: NEEDS });
+  const chip = b.card("c159").querySelector("[data-route]");
+  assert.equal(chip.textContent, "Sizing…");
+  assert.match(chip.title, /before its session starts/);
+  assert.equal(b.card("c160").querySelector("[data-route]"), null, "only in Planning and In progress");
+  // Once routed, the route's chip as before.
+  assert.equal(b.card("c128").querySelector("[data-route]").textContent, "Router: small · Sonnet low");
+});

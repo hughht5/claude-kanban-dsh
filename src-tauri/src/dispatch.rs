@@ -1059,7 +1059,7 @@ pub fn resume_after_restart(app: &AppHandle, rows: &[kanban_store::SessionRow]) 
         }
         match crate::begin_session(app, &mut store, &card, "resume", "restart") {
             Ok(crate::Begun::Started(new)) => restarted(&mut store, &card, Some(&row.claude_session_id), &new),
-            Ok(crate::Begun::Queued(_)) => {}
+            Ok(crate::Begun::Queued(_)) | Ok(crate::Begun::Sizing) => {}
             Err(e) => {
                 let _ = store.add_log(&card.id, &format!("Couldn't resume after the app restarted: {e}"), "the app");
             }

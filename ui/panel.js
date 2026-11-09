@@ -162,6 +162,7 @@ function waitingWhy(info){
   if(info.running&&info.screen)return "message waiting: a screen is open in the terminal; it goes in once that closes (Esc there)";
   if(info.running&&info.state!=="starting")return "message waiting: typed in a moment";
   if(info.queued!=null)return "message waiting: the session is queued to start, over the session cap";
+  if(info.sizing)return "message waiting: the app is sizing the card; its session starts once it is routed";
   if(!info.running&&info.conversation&&info.conversation.source==="desktop")return "message waiting: resume the session to send it";
   return "message waiting: typed once the session is ready";
 }
@@ -334,6 +335,8 @@ function compose(info){
     :desktop?`Write a message… it is sent once you resume the session (${hint})`
     :`Send a message… it ${c?"resumes":"starts"} the session and is typed once it's ready (${hint})`;
   if(info.running||info.queued!=null){row.innerHTML="";row.dataset.key="";return}
+  // Card #159: the app is sizing the card first; the session starts once it is routed.
+  if(info.sizing){if(row.dataset.key!=="sizing"){row.dataset.key="sizing";row.innerHTML=`<span>The app is sizing this card before its session starts (about a minute). Its session starts once it is routed.</span>`}return}
   const where=c?(c.source==="desktop"?"This card's conversation ran in the Claude desktop app.":"This card's session isn't running."):"This card has no session yet.";
   const key=`${!!c}|${desktop}|${where}`;if(row.dataset.key===key)return;row.dataset.key=key;
   row.innerHTML=`${esc(where)}

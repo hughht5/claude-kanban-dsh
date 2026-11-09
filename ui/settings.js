@@ -210,6 +210,7 @@ async function sessions(m){
   <p class="meta">Each new card starts with these on or off. Change them for one card on Add card or in its details: only you can, not its session or the Router. A subagent that is off holds nothing, and the card's session is told to skip it. Cards made before this setting follow these switches as they are now.</p>`;
   m.appendChild(sh);
   for(const r of window.NEW_CARD_SUBAGENTS||[])await ruleBox(sh,r); // subagents.js
+  await ruleBox(m,SIZE_FIRST_RULE); // card #159
   await ruleBox(m,SMALL_GO_ON_RULE); // card #98
   await ruleBox(m,TODO_TOOLS_RULE); // card #106
   await smallReposBox(m);
@@ -281,6 +282,9 @@ async function smallReposBox(m){
 // Card #106: Claude Code's to-do tools for card sessions, so each card shows its step progress.
 const TODO_TOOLS_RULE={key:"sessions.todo_tools",label:"Card sessions keep a to-do list",
   help:"Gives card sessions Claude Code's to-do tools (TaskCreate, TaskUpdate), which it no longer offers newer models by itself, so each card shows its progress: \"Step 4 of 7: Writing the tests\" with a bar. It applies to sessions started after the change. Default on."};
+
+const SIZE_FIRST_RULE={key:"sessions.size_before_start",label:"Size cards before their session starts",
+  help:"Just before a card's session starts in Planning or In progress (a move, the Router's start, or your Start a new session), the app sizes the card itself with one quick read-only call that runs the card-router's rules, and records the route. The session then starts on the route's model and effort, so it is never restarted onto them. The card shows Sizing… meanwhile, about a minute. If the call fails, the session starts anyway and routes the card itself. Only for a card with its card-router on, no route yet, and not a stack's child. Off: the card's session routes it with its card-router at the start of Planning, and the app then restarts the session onto the route's model and effort, as before. Default on."};
 
 const SMALL_GO_ON_RULE={key:"sessions.small_go_on",label:"Let a card routed small start building once its plan critique passes",
    help:"When the card-router sizes a card small and its card-critic passes the plan in its one critique, the app moves it from Planning to In progress by itself at the end of the session's turn, and says so in its log. Not after a FAIL, or when the critic asked you something: then it waits for you. Not a stack's cards, and not a card with either of them off. Off: small cards wait for you, like the rest. Default on."};

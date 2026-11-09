@@ -79,12 +79,15 @@ const checkRows=c=>CHECKS.map(ch=>{const t=checkOf(c,ch.key),at=t?Date.parse(t.a
 // and the panel's Route row, with Route again while the card is in Planning.
 const ROUTE_CHIP={small:"Small",normal:"Normal",split:"Split"};
 const routeOf=c=>c&&c.route&&typeof c.route==="object"&&Object.hasOwn(ROUTE_CHIP,c.route.size)?c.route:null;
-const routeChip=c=>{const r=routeOf(c);if(!r||!["Planning","In progress"].includes(colOf(c)))return"";const why=r.reason&&!SECRET.test(String(r.reason))?`: ${r.reason}`:"";
+// Card #159: while the app sizes the card before its session starts, its `sizing` mark shows as "Sizing…" in the chip's place.
+const sizingOf=c=>c&&c.sizing&&typeof c.sizing==="object"&&!routeOf(c)?c.sizing:null;
+const routeChip=c=>{const r=routeOf(c);if(!r&&sizingOf(c)&&["Planning","In progress"].includes(colOf(c)))return`<span class="tag chip route route-sizing" data-route="sizing" title="The app is sizing this card before its session starts (one quick call with the card-router's rules). Its session starts once it is routed.">Sizing…</span>`;
+  if(!r||!["Planning","In progress"].includes(colOf(c)))return"";const why=r.reason&&!SECRET.test(String(r.reason))?`: ${r.reason}`:"";
   return`<span class="tag chip route route-${esc(r.size)}" data-route="${esc(r.size)}" title="${esc(`Routed ${r.size} by the card-router subagent${why}`)}">${esc(ROUTE_CHIP[r.size])}</span>`};
 const routeRow=c=>{const r=routeOf(c),at=r?Date.parse(r.at||""):0;
   const again=colOf(c)==="Planning"&&!c.stackOf?`<button class="ibtn" id="route-again" type="button" title="Clear the route and ask the card's session to run the card-router again">Route again</button>`:"";
   const kids=r&&Array.isArray(r.children)?r.children.filter(x=>typeof x==="string"):[];
-  const v=r?`${esc(ROUTE_CHIP[r.size])}${r.model||r.effort?` · ${esc([r.model,r.effort].filter(Boolean).join(" "))}`:""}${r.check?` · check ~${esc(r.check)}`:""}${at?` · <span title="${esc(r.at)}">${esc(ago(at))}</span>`:""}${r.reason?`<br>${safe(r.reason)}`:""}${kids.map(x=>`<br>- ${safe(x)}`).join("")}${r.wentOnAt?`<br><span class="meta">Went on to In progress by itself</span>`:""}`:"—";
+  const v=!r&&sizingOf(c)?`<span class="meta">Sizing it before its session starts…</span>`:r?`${esc(ROUTE_CHIP[r.size])}${r.before?` · <span class="meta" title="The app sized it with one quick call before its session started (card #159)">sized before its session started</span>`:""}${r.model||r.effort?` · ${esc([r.model,r.effort].filter(Boolean).join(" "))}`:""}${r.check?` · check ~${esc(r.check)}`:""}${at?` · <span title="${esc(r.at)}">${esc(ago(at))}</span>`:""}${r.reason?`<br>${safe(r.reason)}`:""}${kids.map(x=>`<br>- ${safe(x)}`).join("")}${r.wentOnAt?`<br><span class="meta">Went on to In progress by itself</span>`:""}`:"—";
   const ro=typeof subagentOffText==="function"?subagentOffText(c,"router"):"",off=ro?` <span class="meta sub-off">· card-router ${esc(ro)}</span>`:"";
   return`<dt>Route</dt><dd>${v}${off}${again?` ${again}`:""}</dd>`};
 // The stuck-session monitor (card #99): its `stuck` field puts "May be stuck" on the card, with

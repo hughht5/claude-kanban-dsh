@@ -37,8 +37,9 @@ usage). There is no other board.
 Do this only if your session has the card-router subagent (the Agent tool lists `card-router`).
 If it doesn't, say so on the card in one log line and go on to *Plan it*.
 
-1. Read your card. Skip this section if the card already has a `route`, or if it is a child in a
-   stack (it has `stackOf`): a child is planned by its lead.
+1. Read your card. Skip this section if it is a child in a stack (it has `stackOf`): a child is
+   planned by its lead. If the card already has a `route` (the app may have sized it before your
+   session started, card #159, and then says so), skip steps 1 and 2 and go on from step 3.
 2. Run the card-router subagent (`subagent_type` `card-router`). Brief it with the card number and
    the checkout. Wait for its result: if it runs in the background, wait for its notification.
 3. The app records its route on the card (`route`: size, model, effort, check, reason). Read it.

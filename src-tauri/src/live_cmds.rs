@@ -6,6 +6,8 @@ pub(crate) enum Begun {
     Started(SessionRow),
     /// Waiting under the cap, at this place in line (from 1).
     Queued(usize),
+    /// Waiting for the app to size the card first (card #159); it starts once that is done.
+    Sizing,
 }
 
 /// Every start goes through here: it starts at once when fewer sessions than the cap
@@ -13,6 +15,21 @@ pub(crate) enum Begun {
 /// the queue and starts oldest-first when a place comes free. `why` is "hugh", "move" or
 /// "restart".
 pub(crate) fn begin_session(app: &AppHandle, store: &mut Store, card: &Card, mode: &str, why: &str) -> Result<Begun, String> {
+    if mode != "new" && mode != "resume" {
+        return Err("mode must be new or resume".into());
+    }
+    if app.state::<Arc<sessions::Sessions>>().is_live(&card.id).is_some() {
+        return Err("this card already has a running session".into());
+    }
+    // Card #159: sized first, while Hugh's setting is on; the start waits for it.
+    if presize::hold(app, store, card, mode, why) {
+        return Ok(Begun::Sizing);
+    }
+    begin_session_now(app, store, card, mode, why)
+}
+
+/// `begin_session` without the sizing step: the start the sizing held, once it is done.
+pub(crate) fn begin_session_now(app: &AppHandle, store: &mut Store, card: &Card, mode: &str, why: &str) -> Result<Begun, String> {
     if mode != "new" && mode != "resume" {
         return Err("mode must be new or resume".into());
     }

@@ -45,10 +45,11 @@ pub const GO_ON_REASON: &str = "routed small and its plan critique passed";
 
 const DESCRIPTION: &str = "Sizes one card on Hugh's Claude Kanban DSH board at the start of Planning, on low effort. Run it first in Planning, once per card, and never for a stack's child: brief it with the card number and the checkout. It reads the card, skims the code, changes nothing, and ends with CARD, ROUTE, MODEL, EFFORT, CHECK and REASON lines that the app records on the card.";
 
-const PROMPT: &str = "You are card-router. You size one card on Hugh's Claude Kanban DSH board before its plan is written. Work fast. This is a quick look, not a plan.
-
-1. Read the card. Use kanban_get_card with the card number from the brief.
-2. Look quickly at the code that the card names, in the checkout that the brief names. Read only what you need to size the card.
+/// The card-router's sizing rules (steps 2 to 6 and the closing lines), shared by the subagent's
+/// prompt and the app's own call before a session starts (card #159), so the two never drift.
+macro_rules! sizing_rules {
+    () => {
+        "2. Look quickly at the code that the card names, in the checkout that the brief names. Read only what you need to size the card.
 3. Choose the route:
    - small: one clear change in a few files. No data rule, migration, sign-in or live change. A short plan is enough.
    - normal: a usual card. It needs a full plan.
@@ -64,7 +65,17 @@ MODEL: <claude-opus-5-5|claude-sonnet-5-5|claude-haiku-5-5>
 EFFORT: <low|medium|high|xhigh|max>
 CHECK: <5 min|15 min|30 min+>
 REASON: <one line>
-For a split only, add one line after REASON for each child card. Start each line with \"- \", then a short title, a colon, and its scope in one sentence. The app reads these lines to record the route on the card.";
+For a split only, add one line after REASON for each child card. Start each line with \"- \", then a short title, a colon, and its scope in one sentence. The app reads these lines to record the route on the card."
+    };
+}
+
+/// The rules alone, for `presize`'s brief.
+pub const RULES: &str = sizing_rules!();
+
+const PROMPT: &str = concat!("You are card-router. You size one card on Hugh's Claude Kanban DSH board before its plan is written. Work fast. This is a quick look, not a plan.
+
+1. Read the card. Use kanban_get_card with the card number from the brief.
+", sizing_rules!());
 
 pub const AGENT: Agent = Agent {
     name: ROUTER,
@@ -223,6 +234,13 @@ pub fn on_stop(app: &AppHandle, row_id: &str, body: &Value) {
 
 /// `on_stop`'s work, on the store: what was recorded, if anything.
 pub fn record(store: &mut Store, own: &Card, text: &str, agent_id: &str) -> Option<Card> {
+    record_with(store, own, text, agent_id, false)
+}
+
+/// `record`, for a route from the app's own call before the card's session started (card
+/// #159) when `before`: the route is marked `before: true`, and the same write clears the card's
+/// `sizing` mark.
+pub fn record_with(store: &mut Store, own: &Card, text: &str, agent_id: &str, before: bool) -> Option<Card> {
     let r = parse_route(text);
     let card = match target_card(store, own, r.card) {
         Ok(c) => c,
@@ -244,7 +262,12 @@ pub fn record(store: &mut Store, own: &Card, text: &str, agent_id: &str) -> Opti
             return None;
         }
     };
+    let mut rec = rec;
     let mut patch = Patch::new();
+    if before {
+        rec["before"] = json!(true);
+        patch.insert(crate::presize::SIZING_KEY.into(), Value::Null);
+    }
     patch.insert(ROUTE_KEY.into(), rec);
     if card.fields.get(CLEARED_KEY).is_some_and(|v| !v.is_null()) {
         patch.insert(CLEARED_KEY.into(), Value::Null);

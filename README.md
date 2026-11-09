@@ -78,7 +78,7 @@ Each column's instructions are plain Markdown files you can read and change.
 
 | Agent | What it does | When |
 |---|---|---|
-| **Router** | Sizes each card: small, normal or split into several. Picks the model and effort. Runs at low effort, so it's fast and cheap. | A card enters Planning |
+| **Router** | Sizes each card: small, normal or split into several. Picks the model and effort. Runs at low effort, so it's fast and cheap. With Settings > Sessions > "Size cards before their session starts" (on by default), the app sizes the card with one quick call just before its session starts, so the session starts on the right model and effort and is never restarted onto them; the card shows "Sizing…" meanwhile. | A card enters Planning |
 | **Critic** | Fails the plan only for a real problem: a dropped deliverable, a wrong assumption the build wouldn't catch, a broken rule. Smaller points become build notes. | Before building |
 | **Tester** | Uses the real app, follows the card's checks and saves before-and-after screenshots. | After building |
 | **Reviewer** | Reads the diff for mistakes, risky changes and work nobody asked for. | After building |

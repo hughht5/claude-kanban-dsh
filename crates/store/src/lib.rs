@@ -47,7 +47,7 @@ pub use columns::{ColumnCfg, Pending};
 pub use config::{default_profiles, page_default, profile_for, Profile, CRITIC_RULE_KEY, EFFORTS, MAX_RUNNING_DEFAULT, MAX_RUNNING_KEY, IDLE_PAUSE_DEFAULT, IDLE_PAUSE_KEY, PAGE_SETTINGS, PROFILES_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, RULE_KEYS, SMALL_GO_ON_KEY, STUCK_CHECK_DEFAULT, STUCK_CHECK_KEY, TEST_RULE_KEY, check_small_repos, SettingChange, SmallRepo, SMALL_REPOS_KEY};
 pub use evidence::{add_run, has_tested_evidence, EVIDENCE_KEY};
 pub use feed::{agent_of_by, agent_of_field, FeedItem, FeedPage, FeedQuery, FEED_DEFAULT_LIMIT, FEED_MAX_LIMIT, VERDICT_FIELDS, VERDICT_TEXT_MAX};
-pub use config::TODO_TOOLS_KEY;
+pub use config::{SIZE_FIRST_KEY, TODO_TOOLS_KEY};
 pub use config::{check_own_worktree_repos, OwnWorktreeRepo, OWN_WORKTREE_REPOS_KEY};
 pub use done_when::{
     clean_done_when, clean_done_when_checks, looks_like_sign_in, DONE_WHEN_CHECKS_KEY, DONE_WHEN_CHECK_LEN,

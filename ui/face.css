@@ -8,6 +8,7 @@
 .card > .tags[hidden]{display:none}
 .card .chip.route{color:var(--ag-router)}
 .card .chip.route-split{color:var(--info)}
+.card .chip.route-sizing{font-style:italic} /* card #159: being sized before its session starts */
 .card .chip[data-check="critique"].test-failed{color:var(--bad)}
 .card .chip[data-check-size]{border-style:dashed}
 .card .chip.check-size-quick{color:var(--muted)}

@@ -437,6 +437,31 @@ rounds on test-script details. Built in `~\claude-kanban-dsh-144` on `dsh-144`.
   (`the_in_progress_message_ends_with_the_critics_build_notes`), `crates/store/tests/critique.rs`
   (`a_small_cards_one_critique_survives_a_plan_edit`).
 
+## Sizing a card before its session starts (9 Nov 2026, card #159)
+
+- **`presize.rs`**, behind the setting `sessions.size_before_start` (`Store::size_first`, a
+  `RULE_KEYS` rule, on by default). `begin_session` (live_cmds.rs) first asks `presize::hold`:
+  when `blocker` finds nothing (the setting on; a start that `counts`: why "move" or "router",
+  or "hugh" with mode "new"; Planning or In progress; no route; not a stack's child; the card's
+  card-router on; no live session) it marks the card `sizing {at, mode, why}`, logs it, and a
+  thread runs one `claude -p` (`args`: `--output-format json`, `--effort low`, `--tools
+  Read,Grep,Glob`, `--strict-mcp-config`, hooks off, nothing saved, 20 turns, 3 min timeout; the
+  brief on stdin; the child in the sessions' Job Object via `Sessions::adopt`). The brief is
+  `router::RULES` (the subagent prompt's steps 2 to 6 and closing lines, one `sizing_rules!`
+  literal, so the subagent's prompt is unchanged) with the card written in. `record` uses
+  `router::record_with(.., before: true)`: the route gets `before: true` and the same write
+  clears `sizing`. Then `begin_session_now` starts it the normal way (or in the cap's queue),
+  and a Planning session gets `presize::note` (skip the card-router, go on from step 3).
+- Meanwhile `begin_session` returns `Begun::Sizing` for every start of that card
+  (`in_flight`): callers treat it like a queued start, so its messages wait. `session_info`
+  has `sizing`; the face shows "Sizing…" in the route chip's place (`board.js` `sizingOf`).
+- A failed call (no claude.exe, a timeout, an error result, no ROUTE line) logs
+  `failed_line`, clears the mark and starts the session with no route: the planning prompt's
+  card-router routes it, with the old restart. `resume_at_start` sizes again a card left marked
+  by an app restart.
+- Not changed: Route again, and `restart_if_due`'s switch back to the column's values when a
+  card leaves In progress.
+
 ## The card-router subagent (6 Nov 2026, card #98, stack A)
 
 Built on the branch `dsh-98` in the worktree `~\kanban-app-98`, from `dsh-agents`

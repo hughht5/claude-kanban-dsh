@@ -65,6 +65,8 @@ fn session_info(board: State<Board>, live: State<Arc<sessions::Sessions>>, card_
         // The place in line of a start waiting under the cap, and the cap.
         "queued": queued,
         "cap": cap,
+        // The app is sizing the card before its session starts (card #159).
+        "sizing": presize::in_flight(&card_id) || presize::sizing_of(&card).is_some(),
     }))
 }
 
@@ -248,6 +250,7 @@ fn session_start(app: AppHandle, board: State<Board>, card_id: String, mode: Str
     Ok(match begun {
         Begun::Started(row) => json!(row),
         Begun::Queued(pos) => json!({ "queued": pos }),
+        Begun::Sizing => json!({ "sizing": true }),
     })
 }
 

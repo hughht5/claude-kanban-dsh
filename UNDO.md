@@ -801,3 +801,11 @@ Docs, prompts and one test; no app code, no data. PowerShell 5.1 commands.
 |---|---|
 | Migration 15: the append-only `app_messages` table (`crates\store\src\schema15.sql`), `Store::queue_hugh`, `note_app_message`, `app_messages`, `split_app_parts` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #153 commit>`. The board keeps the table at version 15; an older build opens it as it is and never reads it. The backup taken before the migration is in the data folder's `backups` (`*-pre-migration.db`) |
 | The chat's centred "Automatic" messages (`ui\panel.js` `userHtml`, `ui\router.js`, `ui\panel.css`, `ui\router.css`) | Same revert |
+
+## Size cards before their session starts (9 Nov 2026, card #159)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\presize.rs`, `begin_session`'s sizing step and `Begun::Sizing`, `router::record_with` and `router::RULES`, `Sessions::adopt`, the setting `sessions.size_before_start`, the "Sizing…" chip, the panel's start row and the Settings switch | Turn it off without a build: Settings > Sessions > untick "Size cards before their session starts". Or `git -C ~\claude-kanban-dsh revert --no-edit <the card #159 commits>`, then stage the live update as usual. A card left with a `sizing` field is harmless to an older build, which never reads it |
+| The bundled `prompts\planning.md` step 1 (a card that already has a route goes on from step 3) | The same revert |
+| The owner's private `prompts\planning.md`, the same line | Revert the card #159 commit in the private repo |

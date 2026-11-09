@@ -1005,6 +1005,12 @@ impl Sessions {
         showing && l.writer.write_all(key).and_then(|_| l.writer.flush()).is_ok()
     }
 
+    /// Puts a helper process (the app's sizing call, card #159) in the Job Object, so it ends
+    /// with the app like every card session.
+    pub fn adopt(&self, pid: u32) -> Result<(), String> {
+        self.job.assign(pid)
+    }
+
     pub fn is_live(&self, card_id: &str) -> Option<SessionRow> {
         let live = self.live.lock().ok()?;
         live.get(card_id).filter(|l| l.alive.load(Ordering::SeqCst)).map(|l| l.row.clone())
