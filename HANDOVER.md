@@ -2066,7 +2066,7 @@ or any session with `kanban_router`. The decisions below are the router's after 
   failed TESTS line makes it a FAIL. The ship job merges origin/main into an integration branch
   once instead of a rebase.
 - **Panel.** `ui/router.js`, `ui/router.css`: the header button (state dot), a panel docked
-  right (380 px, resizable), the digest, the feed (card #120's `mountAgentsFeed` when present,
+  right (default min(720 px, 55% of the window), resizable; log and chat side by side from a 620 px width, stacked below it, card #128; a saved 380 counts as unset, double-click on the edge clears the saved width), the digest, the feed (card #120's `mountAgentsFeed` when present,
   else a plain list from `router_feed`), Chat and Terminal tabs, the "Router asks" pill
   (`registerPill` when #120 is merged). Commands: `router_status`, `router_start`, `router_stop`,
   `router_send`, `router_feed`, `router_opened`; event `router-changed`. The digest is the app's
