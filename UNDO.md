@@ -794,3 +794,10 @@ Docs, prompts and one test; no app code, no data. PowerShell 5.1 commands.
 | The rule text in `AGENTS.md`, `HANDOVER.md`, `PLAN.md`, `docs/GUIDE.md` and the bundled `prompts/kanban-app.md`, `planning.md`, `in-progress.md` and `router.md` (the Router's job 5 included, which is its system prompt once built) | `git -C ~\claude-kanban-dsh revert --no-edit <the card's commits, marked (card #148)>`, then stage the live update as usual |
 | The test `src-tauri\tests\prompt_rules.rs` | The same revert |
 | The owner's private copies of the same prompts | Revert the card's commit in the private repo (its own `UNDO.md` has the line) |
+
+## The app's own messages in the chat (9 Nov 2026, card #153)
+
+| Change | Undo |
+|---|---|
+| Migration 15: the append-only `app_messages` table (`crates\store\src\schema15.sql`), `Store::queue_hugh`, `note_app_message`, `app_messages`, `split_app_parts` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #153 commit>`. The board keeps the table at version 15; an older build opens it as it is and never reads it. The backup taken before the migration is in the data folder's `backups` (`*-pre-migration.db`) |
+| The chat's centred "Automatic" messages (`ui\panel.js` `userHtml`, `ui\router.js`, `ui\panel.css`, `ui\router.css`) | Same revert |

@@ -401,6 +401,14 @@ function stamp(at){
   const full=d.toLocaleString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"});
   return`<span class="ts" title="${esc(full)}">${esc(day+hm)}</span>`;
 }
+// A user message: Hugh's words on the right; text the app sent on its own (a column prompt, a
+// notice, a test-app turn, the Router's events) in the centre in its own colour (card #153).
+// `parts` comes from transcript_read when the message holds any of the app's text.
+function userHtml(g){
+  const one=(t,auto)=>{const im=attachedImages(t);const shots=im.length?`<div class="shots">${im.map(p=>shotImg(p,g.at)).join("")}</div>`:"";
+    return auto?`<div class="m auto" title="Sent by the app, not by you">${stamp(g.at)}<div class="atag">Automatic</div>${esc(t)}${shots}</div>`:`<div class="m user">${stamp(g.at)}${esc(t)}${shots}</div>`};
+  return g.parts&&g.parts.length?g.parts.map(p=>one(p.text,p.auto)).join(""):one(g.text||"",false);
+}
 function renderChat(first){
   const box=panel.el.querySelector("#p-msgs");
   const near=box.scrollHeight-box.scrollTop-box.clientHeight<120;
@@ -434,7 +442,7 @@ function renderChat(first){
     else if(g.kind==="btw")html.push(btwHtml(g.b));
     else if(g.kind==="cmdout")html.push(`<div class="m cmdout">${stamp(g.at)}${esc(g.text)}</div>`);
     else if(g.kind==="assistant")html.push(`<div class="m assistant">${stamp(g.at)}${md(g.text,g.at)}</div>`);
-    else{const im=attachedImages(g.text);html.push(`<div class="m user">${stamp(g.at)}${esc(g.text)}${im.length?`<div class="shots">${im.map(p=>shotImg(p,g.at)).join("")}</div>`:""}</div>`)}
+    else html.push(userHtml(g));
   }
   // Sent but not yet picked up: faded, until Claude reads it at its next step (or Send now).
   waiting.forEach((q,i)=>html.push(`<div class="m user pending" title="Sent: Claude reads it at its next step"><div class="ptag">Sent · waiting for Claude to pick it up</div>${esc(q.text)}${i===waiting.length-1?`<div class="pacts"><button class="btn ghost" type="button" id="p-sendnow" title="Interrupt the turn and send it now, as Ctrl+X Ctrl+S in the terminal">Send now</button><span>or Ctrl+X Ctrl+S</span></div>`:""}</div>`));

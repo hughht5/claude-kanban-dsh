@@ -45,7 +45,7 @@ You stay in charge of the one decision that matters: what ships.
 
 ## What you get
 
-- **Every card is a live session.** Each card owns a real Claude Code session in an embedded terminal, with a chat view beside it. Open a card to talk to it, watch it work or take over the terminal.
+- **Every card is a live session.** Each card owns a real Claude Code session in an embedded terminal, with a chat view beside it. Open a card to talk to it, watch it work or take over the terminal. In the chat your words sit on the right, Claude's on the left, and what the app sends by itself (a column prompt, a test-app turn, the Router's events) in the centre in its own colour.
 - **Truly parallel.** Every card builds in its own git worktree and branch, so a dozen cards can work at once without stepping on each other.
 - **Plans that survive a critic.** A critic agent checks every plan before a line of code is written. It fails a plan only for a real problem (a dropped deliverable, a plan that would come out wrong, anything unsafe); smaller points go to the build as notes. A small card gets one critique.
 - **Tested and reviewed before you see it.** A tester uses the real app and saves before-and-after screenshots. A reviewer reads the diff for bugs, risk and scope creep. Nothing reaches you until both pass.

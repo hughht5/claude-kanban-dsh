@@ -1561,6 +1561,23 @@ per card. The gates follow the card's own choice.
   auto-ship (#104) still needs both the reviewer's and tester's passes, so a card with one of them
   off waits for Hugh there.
 
+## The app's own messages in the chat (9 Nov 2026, card #153)
+
+The chat (card panel and Router panel) draws text the app sent on its own in the centre, amber,
+tagged "Automatic"; Hugh's words stay on the right and Claude's on the left. Migration 15 adds
+the append-only `app_messages` table (`card_id` is the card's id, or `router`). `Store::queue`
+records every `message` it queues as the app's; Hugh's words go through `Store::queue_hugh`
+(`send_to_session(.., hugh: true)`: his chat message, Send now, Fail note, Found a problem, stack
+answer) and are never recorded. A message put back in the queue (`sessions.rs`, untaken) uses
+`queue_hugh` too, as it was recorded when first queued. Sends that skip the queue record with
+`Store::note_app_message`: the monitor's typed nudge, the Router's first message, its events
+batch and a card's message to it (`send_by` with a `by` not starting "Hugh").
+`transcript_read` (main view only) splits each user entry with `kanban_store::split_app_parts`:
+the queue joins waiting messages with a blank line, so a piece between blank lines that equals a
+recorded text is the app's and the rest is Hugh's, in order (`Entry.parts`). `userHtml` in
+`panel.js` draws them; `router.js` uses it too. Messages sent before this build have no record
+and still show on the right. Hugh's words wrapped in the app's text (a Fail note) count as his.
+
 ## Router panel: images (7 Nov 2026, card #127)
 
 UI only. The Router panel's message box takes pasted images and dropped files like a card chat's:

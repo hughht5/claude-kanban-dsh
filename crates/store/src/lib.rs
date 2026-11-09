@@ -2,6 +2,7 @@
 //! writes and append-only logs. Nothing here ever removes a row.
 
 // The Router's asks to archive a card, and Hugh's answer (card #131).
+mod app_messages;
 mod archive_ask;
 mod cards;
 mod channel;
@@ -34,6 +35,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub use app_messages::{split_app_parts, MsgPart};
 pub use archive_ask::{archive_refused, lifts_decline, ArchiveResult, ARCHIVE_ASK_KEY, ARCHIVE_DECLINED_KEY, ASK_TEXT_MAX};
 pub use move_in::{import_if_asked, Imported, IMPORT_DONE, IMPORT_REQUEST};
 pub use config::PRIVATE_DIR_KEY;
@@ -84,7 +86,7 @@ pub const COLUMNS: [&str; 8] = [
     "Done",
 ];
 
-const MIGRATIONS: [&str; 14] = [
+const MIGRATIONS: [&str; 15] = [
     include_str!("schema.sql"),
     include_str!("schema2.sql"),
     include_str!("schema3.sql"),
@@ -101,6 +103,8 @@ const MIGRATIONS: [&str; 14] = [
     include_str!("schema13.sql"),
     // Card #119: the Router's own sessions and log.
     include_str!("schema14.sql"),
+    // Card #153: the text of the messages the app sends on its own.
+    include_str!("schema15.sql"),
 ];
 
 /// The schema version this build brings a board up to: the number of migrations. A board at a

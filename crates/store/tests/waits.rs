@@ -487,8 +487,9 @@ fn the_empty_poll_is_one_query_on_the_index() {
 fn migration_12_adds_the_index_with_a_backup_and_changes_no_card() {
     let (dir, mut s) = board();
     assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
-    // 12 is #109's index; 13 (card #114, {prompts}) and 14 (card #119, the Router) come after it.
-    assert_eq!(SCHEMA_VERSION, 14);
+    // 12 is #109's index; 13 (card #114, {prompts}), 14 (card #119, the Router) and 15 (card
+    // #153, the app's own messages) come after it.
+    assert_eq!(SCHEMA_VERSION, 15);
     let a = mk(&mut s, "Backlog");
     let c = mk(&mut s, "Backlog");
     waits(&mut s, &c, &[a.number]).unwrap();

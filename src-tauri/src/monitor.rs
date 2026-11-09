@@ -675,6 +675,7 @@ fn act(app: &AppHandle, live: &Arc<Sessions>, memory: &mut Memory, card: &Card, 
                 let board = app.state::<Board>();
                 let Ok(mut store) = board.0.lock() else { continue };
                 if typed {
+                    let _ = store.note_app_message(&card.id, &text);
                     memory.nudged.entry(card.id.clone()).or_default().insert(about);
                     log(&mut store, &card.id, "Typed a nudge into the session: it was making the same call with the same result over and over");
                 } else {

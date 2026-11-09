@@ -368,8 +368,9 @@ fn session_screen(live: State<Arc<sessions::Sessions>>, card_id: String) -> Opti
 /// message). Over the cap it waits in the queue, and the message waits with it. A
 /// conversation that ran in the desktop app isn't started: the message waits for Hugh's
 /// resume. Returns whether a session was started (or queued to start). The caller emits
-/// "session-changed".
-fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str) -> Result<bool, String> {
+/// "session-changed". `hugh` is true for Hugh's own words (his message, Fail note or answer):
+/// anything else is recorded as the app's, which the chat draws apart (card #153).
+fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str, hugh: bool) -> Result<bool, String> {
     if text.trim().is_empty() {
         return Err("there's nothing to send".into());
     }
@@ -381,7 +382,7 @@ fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str
         // it may be the app's own text (a column prompt, a notice), which waits for `free`.
         let alone = store.waiting(card_id, "message").ok().flatten().is_none();
         // Queued first, so it is on record and joins (after) anything already waiting.
-        store.queue(card_id, "message", text).map_err(|e| e.to_string())?;
+        queue_msg(store, card_id, text, hugh)?;
         // A held move goes first, as the dispatcher does it: the message waits behind it.
         if store.waiting(card_id, "move").ok().flatten().is_some() {
             return Ok(false);
@@ -406,8 +407,13 @@ fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str
             started = true;
         }
     }
-    store.queue(card_id, "message", text).map_err(|e| e.to_string())?;
+    queue_msg(store, card_id, text, hugh)?;
     Ok(started)
+}
+
+fn queue_msg(store: &mut Store, card_id: &str, text: &str, hugh: bool) -> Result<i64, String> {
+    let r = if hugh { store.queue_hugh(card_id, "message", text) } else { store.queue(card_id, "message", text) };
+    r.map_err(|e| e.to_string())
 }
 
 /// Hugh's Route again (card #98): clears the card's route and asks its session to run the
@@ -437,7 +443,7 @@ fn route_again(app: AppHandle, board: State<Board>, card_id: String) -> CmdResul
         patch.insert(router::CLEARED_KEY.into(), json!({ "model": r.get("model"), "effort": r.get("effort") }));
     }
     let card = store.update(&card.id, card.version, &patch, router::HUGH).map_err(|e| refused(&store, e))?;
-    let started = match send_to_session(&app, &mut store, &card_id, &router::again_message(&card)) {
+    let started = match send_to_session(&app, &mut store, &card_id, &router::again_message(&card), false) {
         Ok(s) => s,
         Err(e) => {
             // Put the route back: nothing will run the router.
@@ -507,7 +513,7 @@ fn human_test_fail(app: AppHandle, board: State<Board>, card_id: String, note: S
         }
     };
     let text = if needed { format!("{text}\n\n{}", repro::ask_note(card.number)) } else { text };
-    let sent = send_to_session(&app, &mut store, &card_id, &text);
+    let sent = send_to_session(&app, &mut store, &card_id, &text, true);
     if let Err(e) = &sent {
         let _ = store.add_log(&card_id, &format!("Couldn't send Hugh's Fail note to the session: {e}"), "the app");
     }
@@ -553,7 +559,7 @@ fn session_send(app: AppHandle, board: State<Board>, card_id: String, text: Stri
     } else {
         (text, false)
     };
-    let sent = send_to_session(&app, &mut store, &card_id, &text);
+    let sent = send_to_session(&app, &mut store, &card_id, &text, true);
     if let (true, Err(e)) = (moved, &sent) {
         let _ = store.add_log(&card_id, &format!("Couldn't send Hugh's message to the session: {e}"), "the app");
         changed(&app);
@@ -608,7 +614,7 @@ fn session_send_now(app: AppHandle, board: State<Board>, card_id: String, text: 
         return Ok(());
     }
     if quiet_queue && live.states().get(&card_id).map(String::as_str) == Some("working") {
-        let id = store.queue(&card_id, "message", &text).map_err(CmdError::other)?;
+        let id = store.queue_hugh(&card_id, "message", &text).map_err(CmdError::other)?;
         if live.send_now(&card_id, &text).unwrap_or(false) {
             let _ = store.done(id, "sent now");
             drop(store);
@@ -620,7 +626,7 @@ fn session_send_now(app: AppHandle, board: State<Board>, card_id: String, text: 
         let _ = app.emit("session-changed", card_id);
         return Ok(());
     }
-    let sent = send_to_session(&app, &mut store, &card_id, &text);
+    let sent = send_to_session(&app, &mut store, &card_id, &text, true);
     if let (true, Err(e)) = (moved, &sent) {
         let _ = store.add_log(&card_id, &format!("Couldn't send Hugh's message to the session: {e}"), "the app");
     }
@@ -648,7 +654,15 @@ fn transcript_read(board: State<Board>, card_id: String, offset: u64, agent: Opt
     let empty = || transcript::Chunk { entries: vec![], offset: 0, path: None, thought: None };
     let Some(path) = card_transcript(&board, &card_id)? else { return Ok(empty()) };
     match agent.filter(|a| !a.is_empty()) {
-        None => transcript::read(&path, offset).map_err(CmdError::other),
+        None => {
+            let mut chunk = transcript::read(&path, offset).map_err(CmdError::other)?;
+            // The app's own messages are drawn apart from Hugh's (card #153).
+            if chunk.entries.iter().any(|e| e.kind == "user") {
+                let apps = board.0.lock().map_err(CmdError::other)?.app_messages(&card_id).unwrap_or_default();
+                transcript::mark_app_parts(&mut chunk.entries, &apps);
+            }
+            Ok(chunk)
+        }
         Some(a) => match transcript::subagent_path(&path, &a) {
             Some(p) => transcript::read_in(&p, offset, true).map_err(CmdError::other),
             None => Err(CmdError::other("that subagent's transcript isn't on this machine")),

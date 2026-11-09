@@ -8,7 +8,7 @@
 // board: the digest of what happened while it was closed, the live log, then the Router's Chat
 // and Terminal. The board narrows to make room, and a card panel opens to its left.
 // Uses board.js's $, esc, invoke, errText, cards, cardNum, render, boardHooks and panel.js's
-// md, stamp, groups, showShots, shotImg, attachedImages, openShot, askAnswers, askAuto,
+// md, stamp, groups, showShots, shotImg, attachedImages, userHtml, openShot, askAnswers, askAuto,
 // askReady, b64bytes and openPanel.
 (()=>{
 const RID="router";
@@ -353,7 +353,7 @@ function renderChat(first){
     else if(g.kind==="task")html.push(`<div class="m task">${stamp(g.at)}<span>${esc(g.text)}</span></div>`);
     else if(g.kind==="cmdout")html.push(`<div class="m cmdout">${stamp(g.at)}${esc(g.text)}</div>`);
     else if(g.kind==="assistant")html.push(`<div class="m assistant">${stamp(g.at)}${md(g.text,g.at)}</div>`);
-    else{const im=attachedImages(g.text||"");html.push(`<div class="m user">${stamp(g.at)}${esc(g.text)}${im.length?`<div class="shots">${im.map(p=>shotImg(p,g.at)).join("")}</div>`:""}</div>`)}
+    else html.push(userHtml(g));
   }
   const fo=document.activeElement,typing=fo&&fo.classList&&fo.classList.contains("qtext")&&box.contains(fo)?{k:fo.closest("[data-ask]").dataset.ask,q:fo.dataset.q,s:fo.selectionStart,e:fo.selectionEnd}:null;
   box.innerHTML=html.join("");

@@ -50,6 +50,10 @@
 /* A message's time (stamp() in panel.js): small and muted, on its own line above the text. */
 .m .ts{display:block;font-size:10.5px;line-height:1.3;color:var(--muted);margin-bottom:2px;white-space:nowrap;font-weight:400}
 .m.user .ts{text-align:right}
+/* Text the app sent on its own (card #153): centred, in its own colour, apart from Hugh's. */
+.m.auto{align-self:center;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);border-radius:10px;padding:8px 12px;white-space:pre-wrap;max-width:min(92%,78ch)}
+.m.auto .ts{text-align:center}
+.m.auto .atag{font-size:10.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--warn);text-align:center;margin-bottom:4px}
 details.tools summary .ts{float:right;margin-left:10px;font-size:10.5px;color:var(--muted)}
 /* Sent but not yet picked up by Claude: faded and soft-edged, with a dashed outline. */
 .m.user.pending{background:transparent;border:1px dashed var(--accent);color:var(--muted);box-shadow:0 0 12px 2px var(--accent-soft) inset;filter:blur(.3px);opacity:.85}

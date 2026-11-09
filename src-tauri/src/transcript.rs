@@ -31,6 +31,21 @@ pub struct Entry {
     /// panel to draw (through `image_read`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
+    /// For a user message that holds text the app sent on its own: its parts in order, the
+    /// app's and Hugh's (card #153; set by `mark_app_parts`). None for Hugh's words alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<kanban_store::MsgPart>>,
+}
+
+/// Splits each user message in `entries` into the app's own parts and Hugh's, by the texts the
+/// app recorded sending (`Store::app_messages`), so the chat draws them apart (card #153).
+pub fn mark_app_parts(entries: &mut [Entry], apps: &[String]) {
+    if apps.is_empty() {
+        return;
+    }
+    for e in entries.iter_mut().filter(|e| e.kind == "user") {
+        e.parts = kanban_store::split_app_parts(&e.text, apps);
+    }
 }
 
 /// The media type of an image the chat can draw, by the path's extension. The one list of them
@@ -813,6 +828,7 @@ pub fn parse_line_in(line: &str, sub: bool) -> Vec<Entry> {
                             output: None,
                             ask: if name == ASK_TOOL { b.get("input").and_then(ask_questions) } else { None },
                             images: read_image(name, b.get("input")).into_iter().collect(),
+                            parts: None,
                         });
                     }
                     _ => {}

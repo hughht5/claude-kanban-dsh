@@ -86,6 +86,7 @@ button.rcard:hover{text-decoration:underline}
 .rpane-chat[hidden],.rpane-term[hidden]{display:none}
 .rpane-chat .msgs{padding:12px 12px}
 .rpane-chat .m{max-width:100%}
+.rpane-chat .m.auto{max-width:92%}
 .rpane-chat details.tools{max-width:100%}
 .rpane-chat .compose{padding:8px 10px}
 .rpane-chat .compose textarea:disabled{opacity:.7;cursor:not-allowed}

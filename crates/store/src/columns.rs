@@ -52,8 +52,26 @@ impl Store {
     /// Queues `payload` for a card. A card holds at most one of each kind: a waiting
     /// `message` has the new text added after it, so everything goes in one message, and a
     /// waiting `move` (a held move) is replaced by the newer one.
+    ///
+    /// A `message` queued here is the app's own text (a column prompt, a notice): it is also
+    /// recorded in `app_messages`, so the chat draws it apart from Hugh's words (card #153).
+    /// Hugh's own words go through `queue_hugh`.
     pub fn queue(&mut self, card_id: &str, kind: &str, payload: &str) -> Result<i64> {
+        self.queue_from(card_id, kind, payload, true)
+    }
+
+    /// `queue` for Hugh's own words (his message from the chat, his Fail note, his answer):
+    /// not recorded as the app's. Also for a message put back in the queue, which was recorded
+    /// (or not) when it was first queued.
+    pub fn queue_hugh(&mut self, card_id: &str, kind: &str, payload: &str) -> Result<i64> {
+        self.queue_from(card_id, kind, payload, false)
+    }
+
+    fn queue_from(&mut self, card_id: &str, kind: &str, payload: &str, app: bool) -> Result<i64> {
         let tx = self.conn.transaction()?;
+        if app && kind == "message" {
+            crate::app_messages::record(&tx, card_id, payload)?;
+        }
         let earlier: Option<String> = if kind == "message" {
             tx.query_row(
                 "SELECT payload FROM pending WHERE card_id = ?1 AND kind = ?2 AND done_at IS NULL ORDER BY id DESC LIMIT 1",

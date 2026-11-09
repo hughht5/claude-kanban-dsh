@@ -235,10 +235,13 @@ pub fn start(app: &AppHandle, by: &str) -> Result<Status, String> {
     let how = if resume_id.is_some() { "Resumed its conversation" } else { "Started a new conversation" };
     let _ = store.add_router_log("session", None, &format!("{how} ({} {}), asked by {by}", p.model, p.effort), "the app");
     let cursor = store.last_revision_seq().unwrap_or(0);
+    let first = first_message(resume_id.is_some());
+    // The chat draws the app's own messages apart from Hugh's (card #153).
+    let _ = store.note_app_message(KEY, &first);
     drop(store);
     if let Some(r) = app.try_state::<Router>() {
         if let Ok(mut s) = r.0.lock() {
-            begin(&mut s, cursor, first_message(resume_id.is_some()), Instant::now());
+            begin(&mut s, cursor, first, Instant::now());
         }
     }
     let _ = app.emit("router-changed", ());
@@ -342,6 +345,9 @@ pub fn send_by(app: &AppHandle, text: &str, from: Option<&str>, card: Option<i64
         // The feed already labels Hugh's lines "Hugh" (re-test note): his words only, once.
         let shown = if by.starts_with("Hugh") { hugh_words(&line) } else { line.as_str() };
         let _ = st.add_router_log("event", card, &crate::transcript::cut_words(shown, 300), by);
+        if !by.starts_with("Hugh") {
+            let _ = st.note_app_message(KEY, &line);
+        }
     }
     let _ = app.emit("router-changed", ());
     Ok(())
@@ -579,6 +585,7 @@ pub fn tick(app: &AppHandle, free: bool) {
         return;
     }
     // A message first (Hugh's words don't wait for the debounce), else the events when due.
+    let mut events = false;
     let text = {
         let Ok(mut s) = r.0.lock() else { return };
         if let Some(m) = s.messages.pop_front() {
@@ -586,6 +593,7 @@ pub fn tick(app: &AppHandle, free: bool) {
             Some(m)
         } else if events_due(s.first_at, s.last_at, Instant::now()) {
             let msg = events_message(&s.events);
+            events = true;
             s.events.clear();
             s.first_at = None;
             s.last_at = None;
@@ -595,6 +603,12 @@ pub fn tick(app: &AppHandle, free: bool) {
         }
     };
     let Some(text) = text else { return };
+    // The chat draws the app's own messages apart from Hugh's (card #153).
+    if events {
+        if let Ok(mut st) = app.state::<Board>().0.lock() {
+            let _ = st.note_app_message(KEY, &text);
+        }
+    }
     match live.send_message(KEY, &text) {
         Ok(()) => {
             if let Ok(mut s) = r.0.lock() {

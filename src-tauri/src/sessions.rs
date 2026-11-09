@@ -1853,7 +1853,8 @@ impl Sessions {
             if let Ok(mut store) = board.0.lock() {
                 for (card_id, _, _, text) in &turns {
                     if let Some(text) = text {
-                        let _ = store.queue(card_id, "message", text);
+                        // Put back: recorded as the app's (or not) when it was first queued.
+                        let _ = store.queue_hugh(card_id, "message", text);
                     }
                 }
             }
