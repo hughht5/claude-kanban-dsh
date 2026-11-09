@@ -153,8 +153,8 @@ struct Git {
 }
 
 impl Git {
-    fn new() -> Self {
-        Git { until: Instant::now() + MAKE_LIMIT }
+    fn new(limit: Duration) -> Self {
+        Git { until: Instant::now() + limit }
     }
 
     /// Runs git in `dir`, with no window, in the time left. Its output, or its error text.
@@ -266,7 +266,12 @@ fn keep_out_of_status(g: &Git, checkout: &Path, branch: &str) -> Result<(), Stri
 /// git's own records of them), so a card branch whose folder went gets a worktree again. A card
 /// that still names the missing folder in its worktreePath isn't planned again: clear the field first.
 pub fn make(plan: &Plan) -> Result<Made, String> {
-    let g = Git::new();
+    make_within(plan, MAKE_LIMIT)
+}
+
+/// `make` with its own time budget (the tests give a slow, busy machine longer).
+fn make_within(plan: &Plan, limit: Duration) -> Result<Made, String> {
+    let g = Git::new(limit);
     let co = &plan.checkout;
     if !co.join(".git").exists() {
         return Err(format!("{} isn't a git checkout", co.display()));
@@ -314,6 +319,9 @@ pub fn made_log(plan: &Plan, m: &Made) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The tests' git budget: they run beside many others.
+    const SLOW: Duration = Duration::from_secs(300);
 
     fn card(number: i64, fields: Value) -> Card {
         Card { id: format!("card-{number}"), number, column: "Planning".into(), order: None, order_col: None, archived: false, fields: fields.as_object().cloned().unwrap(), version: 1 }
@@ -429,7 +437,7 @@ mod tests {
         let mut heads = vec![];
         for n in [7, 8] {
             let p = plan_for(&card(n, json!({ "repo": "a/b" })), &l, "live").unwrap();
-            let m = make(&p).unwrap();
+            let m = make_within(&p, SLOW).unwrap();
             assert_eq!((m.how, m.base.as_deref()), ("made", Some("origin/main")));
             assert_eq!(sh(&p.path, &["rev-parse", "--abbrev-ref", "HEAD"]), format!("card-{n}"));
             // From origin/main: the checkout's unpushed local commit isn't on the card's branch.
@@ -451,14 +459,14 @@ mod tests {
         let Some((_t, co)) = scratch() else { return };
         let l = vec![OwnWorktreeRepo { repo: "a/b".into(), checkout: co.display().to_string() }];
         let p = plan_for(&card(7, json!({ "repo": "a/b" })), &l, "live").unwrap();
-        make(&p).unwrap();
+        make_within(&p, SLOW).unwrap();
         commit(&p.path, "work.txt", "card work (card #7)");
-        let again = make(&p).unwrap();
+        let again = make_within(&p, SLOW).unwrap();
         assert_eq!((again.how, again.base), ("found", None));
         assert_eq!(again.head, sh(&p.path, &["rev-parse", "--short", "HEAD"]));
         // The folder went (removed by hand) but the branch stayed: a new worktree on that branch.
         sh(&co, &["worktree", "remove", p.path.to_str().unwrap()]);
-        let back = make(&p).unwrap();
+        let back = make_within(&p, SLOW).unwrap();
         assert_eq!((back.how, back.base), ("made on its existing branch", None));
         assert!(p.path.join("work.txt").exists(), "the card's own commit is there");
     }
@@ -471,7 +479,7 @@ mod tests {
         std::fs::create_dir_all(&p.path).unwrap();
         std::fs::write(p.path.join("keep.txt"), "mine").unwrap();
         let before = state(&co);
-        let e = make(&p).unwrap_err();
+        let e = make_within(&p, SLOW).unwrap_err();
         assert!(e.contains("isn't this card's worktree") && e.contains("left it alone"), "{e}");
         assert_eq!(std::fs::read_to_string(p.path.join("keep.txt")).unwrap(), "mine");
         assert!(!sh(&co, &["branch", "--list", "card-7"]).contains("card-7"), "no branch made");
@@ -479,7 +487,7 @@ mod tests {
         // A folder that isn't a checkout at all.
         let mut bad = p.clone();
         bad.checkout = co.parent().unwrap().join("nowhere");
-        assert!(make(&bad).unwrap_err().contains("isn't a git checkout"));
+        assert!(make_within(&bad, SLOW).unwrap_err().contains("isn't a git checkout"));
     }
 
     /// Review fixes: a folder deleted by hand comes back (prune), the branch tracks nothing, and
@@ -489,15 +497,15 @@ mod tests {
         let Some((_t, co)) = scratch() else { return };
         let l = vec![OwnWorktreeRepo { repo: "a/b".into(), checkout: co.display().to_string() }];
         let p = plan_for(&card(7, json!({ "repo": "a/b" })), &l, "live").unwrap();
-        make(&p).unwrap();
+        make_within(&p, SLOW).unwrap();
         // No upstream: a plain push can't reach main.
         assert!(Command::new("git").current_dir(&p.path).args(["rev-parse", "--abbrev-ref", "@{u}"]).output().unwrap().status.code() != Some(0));
         std::fs::remove_dir_all(&p.path).unwrap();
-        let back = make(&p).unwrap();
+        let back = make_within(&p, SLOW).unwrap();
         assert_eq!(back.how, "made on its existing branch");
         assert!(p.path.join("base.txt").exists());
         sh(&co, &["worktree", "lock", p.path.to_str().unwrap()]);
-        let e = make(&p).unwrap_err();
+        let e = make_within(&p, SLOW).unwrap_err();
         assert!(e.contains("half made") && e.contains("worktree remove --force"), "{e}");
     }
 
@@ -520,7 +528,7 @@ mod tests {
         let seed = t.path().join("seed");
         let l = vec![OwnWorktreeRepo { repo: "a/b".into(), checkout: seed.display().to_string() }];
         let p = plan_for(&card(3, json!({ "repo": "a/b" })), &l, "test2").unwrap();
-        let m = make(&p).unwrap();
+        let m = make_within(&p, SLOW).unwrap();
         assert_eq!(m.base.as_deref(), Some("main"));
         assert_eq!(sh(&p.path, &["rev-parse", "--abbrev-ref", "HEAD"]), "test2-card-3");
     }
