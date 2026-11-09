@@ -104,6 +104,20 @@ fn not_updatable_by(fields: &serde_json::Map<String, Value>, held: bool) -> Opti
     fields.keys().find(|k| !UPDATABLE.contains(&k.as_str()) && (held || !kanban_store::FLOW_FIELDS.contains(&k.as_str())))
 }
 
+/// The author of a write by Hugh's own `kb` or his sessions outside the app: a call with no
+/// card session (no `X-Kanban-Session`, the MCP's "external" route). Counts as Hugh's own
+/// (card #162: his move into Human test never skips it).
+pub const OUTSIDE_BY: &str = "a session outside the app";
+/// The author of a write by a caller that named a session the app doesn't know (an ended or
+/// stale row): not Hugh, and not held as a card's session is (card #162).
+pub const UNKNOWN_BY: &str = "a session the app doesn't know";
+
+/// Is this caller Hugh himself (card #162)? Only a call with no session identity at all; a card
+/// session, the Router, a lane, or a session row the app can't place is not.
+pub fn is_hugh(caller: Option<&str>, as_router: bool) -> bool {
+    caller.is_none() && !as_router
+}
+
 /// Tools only `kb` reaches (over /tool), never listed for or callable by a card session's MCP.
 pub const CLI_ONLY: &[&str] = &["kanban_request_ship"];
 
@@ -266,10 +280,12 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
     let board = app.state::<Board>();
     let mut store = board.0.lock().map_err(|e| e.to_string())?;
     let own = caller_card(app, &store, caller);
+    let hugh = is_hugh(caller, as_router);
     let by = match own.as_ref().and_then(|id| store.get(id).ok()) {
         Some(c) => format!("card #{}'s session", c.number),
         None if as_router => kanban_store::ROUTER_BY.to_string(),
-        None => "a session outside the app".to_string(),
+        None if hugh => OUTSIDE_BY.to_string(),
+        None => UNKNOWN_BY.to_string(),
     };
     // Held to Hugh's rules as a card session is: its own session, or the Router.
     let held = own.is_some() || as_router;
@@ -303,7 +319,9 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
         "kanban_update_card" => {
             let c = target(&store, own.as_deref(), args)?;
             let fields = args.get("fields").and_then(Value::as_object).ok_or("pass the fields to change as `fields`")?;
-            if let Some(bad) = not_updatable_by(fields, held) {
+            // Card #162: the flow is Hugh's alone, so only a caller with no session at all (kb or
+            // his own sessions outside the app) sets it; a session the app doesn't know can't.
+            if let Some(bad) = not_updatable_by(fields, !hugh) {
                 let only_hugh = if kanban_store::FLOW_FIELDS.contains(&bad.as_str()) { " The card's flow (skipPlanning, skipHumanTest, subagents) is Hugh's alone: ask him." } else { "" };
                 return Err(format!("\"{bad}\" can't be set this way (allowed: {}).{only_hugh}", UPDATABLE.join(", ")));
             }
@@ -605,6 +623,20 @@ mod tests {
         assert_eq!(not_updatable_by(&f(json!({ "summary": "s" })), true), None);
         let upd = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_update_card").cloned().unwrap();
         assert!(upd["description"].as_str().unwrap().contains("The card's flow is Hugh's alone"));
+    }
+
+    /// Card #162: only a caller with no session identity is Hugh. A caller that named a session
+    /// row the app can't place to a card (an ended or stale one) is not, so it can't set the flow.
+    #[test]
+    fn an_unknown_session_is_not_hugh() {
+        assert!(is_hugh(None, false), "kb or Hugh's own session outside the app");
+        assert!(!is_hugh(Some("row-the-app-doesnt-know"), false), "a session header that doesn't resolve");
+        assert!(!is_hugh(None, true), "the Router");
+        let f = json!({ "skipHumanTest": true });
+        let bad = not_updatable_by(f.as_object().unwrap(), !is_hugh(Some("stale"), false));
+        assert_eq!(bad.map(String::as_str), Some("skipHumanTest"));
+        assert_eq!(not_updatable_by(f.as_object().unwrap(), !is_hugh(None, false)), None);
+        assert_ne!(OUTSIDE_BY, UNKNOWN_BY);
     }
 
     #[test]

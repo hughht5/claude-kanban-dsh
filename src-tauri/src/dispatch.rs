@@ -454,9 +454,11 @@ pub fn opening(store: &Store, card: &Card) -> String {
 /// The message for a session's own held move of `card` (already moved), when the column it
 /// went into runs its prompt at once, or it is In progress on a card that goes on by itself
 /// (card #76: its session moved it there from Planning). None for any other column.
+/// Card #162: a move into Planning that skipped it counts too (Hugh's skip took the card to
+/// In progress); a card that only skips Human test does not: that is no approval to build.
 pub fn held_move_message(store: &Store, card: &Card, from: &str) -> Option<String> {
     let cfg = store.column(&card.column).ok().flatten()?;
-    let auto = card.column == "In progress" && (auto_note(card).is_some() || flow_note(store, card, from).is_some()) && cfg.mode != "none";
+    let auto = card.column == "In progress" && (auto_note(card).is_some() || planning_skipped_from(card, from).is_some()) && cfg.mode != "none";
     if cfg.mode != "immediate" && !auto {
         return None;
     }
@@ -539,18 +541,26 @@ pub fn auto_progress(app: &AppHandle, store: &mut Store, card_id: &str) {
 
 /// Why `card`, in Human test with no `autoTo`, goes on into Ship it because it skips Human test
 /// (card #162), if it does: its own skipHumanTest, else the default. Not when Hugh moved it into
-/// Human test himself (his drag never skips), when its autoTo was cleared since it arrived (Take
-/// it to: Human test stopped it there for him), or when no move put it there (an import).
+/// Human test himself (his drag never skips, nor does his move from `kb` or his own session
+/// outside the app), when its autoTo was cleared since it arrived (Take it to: Human test stopped
+/// it there for him), or when no move put it there (an import).
 pub fn skip_human_test_why(store: &Store, card: &Card) -> Option<String> {
     let (on, whose) = store.skip_of(card, kanban_store::SKIP_HUMAN_TEST_KEY);
     if !on || card.column != "Human test" || card.auto_to().is_some() {
         return None;
     }
     let a = store.arrival(&card.id, "Human test").ok().flatten()?;
-    if a.by == "Hugh (board)" || a.auto_cleared {
+    if hughs_own(&a.by) || a.auto_cleared {
         return None;
     }
     Some(format!("he set it to skip Human test ({}), which is his approval to ship it with no human test", whose.whose()))
+}
+
+/// Was a revision by `by` Hugh's own (card #162)? His board, panel or Settings ("Hugh (...)"),
+/// and his `kb` or his own sessions outside the app (`tools::OUTSIDE_BY`). Not a card's session,
+/// the Router, the stack rules, the app for him, or a session the app doesn't know.
+pub fn hughs_own(by: &str) -> bool {
+    by.starts_with("Hugh (") || by == crate::tools::OUTSIDE_BY
 }
 
 /// A card made into Planning or In progress by Hugh (the Add card form's "Take it to", or his
@@ -929,8 +939,29 @@ pub fn after_default_change(app: &AppHandle, key: &str) {
     for id in leads {
         after_lead_verdict(app, &mut store, &id, "Hugh (Settings)", &cause);
     }
+    // Card #162: turning Skip Human test on by default moves on the cards that follow it and wait
+    // in Human test where a session put them, as his change on one card does (after_edit).
+    if skip_ht {
+        for id in default_skip_waiting(&store, &cards) {
+            auto_progress(app, &mut store, &id);
+        }
+    }
     drop(store);
     let _ = app.emit("cards-changed", ());
+}
+
+/// The cards that go on into Ship it now the Skip Human test default is on (card #162): those
+/// that follow the default and wait in Human test where a session or the stack rules put them
+/// (`skip_human_test_why`). None while the default is off.
+pub fn default_skip_waiting(store: &Store, cards: &[Card]) -> Vec<String> {
+    if !store.skip_default(kanban_store::SKIP_HUMAN_TEST_RULE_KEY) {
+        return Vec::new();
+    }
+    cards
+        .iter()
+        .filter(|c| !c.archived && c.skip_choice(kanban_store::SKIP_HUMAN_TEST_KEY).is_none() && skip_human_test_why(store, c).is_some())
+        .map(|c| c.id.clone())
+        .collect()
 }
 
 /// Why a session may not move `card` to `to`, if it may not: a stack's lead goes to Human test
@@ -2033,6 +2064,20 @@ mod tests {
         let h = s.create(None, p(json!({ "title": "H", "column": "In progress" })), "Hugh (board)").unwrap();
         let h = s.move_by_hugh(&h.id, h.version, "Human test", Patch::new()).unwrap().card;
         assert!(skip_human_test_why(&s, &h).is_none());
+        // Nor does his move from kb or his own session outside the app (an unheld caller).
+        let k = s.create(None, p(json!({ "title": "K", "column": "In progress" })), "Hugh (board)").unwrap();
+        let k = to_test(&mut s, &k, crate::tools::OUTSIDE_BY);
+        assert!(skip_human_test_why(&s, &k).is_none(), "Hugh's kb move");
+        for by in ["Hugh (panel)", "Hugh (settings)", "Hugh (board)", crate::tools::OUTSIDE_BY] {
+            assert!(hughs_own(by), "{by}");
+        }
+        for by in ["card #3's session", "card #3's session (held until its turn ended)", kanban_store::ROUTER_BY, kanban_store::AUTO_BY, crate::tools::UNKNOWN_BY, "the app"] {
+            assert!(!hughs_own(by), "{by}");
+        }
+        // A session the app doesn't know is no Hugh: it skips.
+        let u = s.create(None, p(json!({ "title": "U", "column": "In progress" })), "Hugh (board)").unwrap();
+        let u = to_test(&mut s, &u, crate::tools::UNKNOWN_BY);
+        assert!(skip_human_test_why(&s, &u).is_some());
         // Take it to: Human test wins: it stops there, also once its autoTo is cleared.
         let a = s.create(None, p(json!({ "title": "A", "column": "In progress", "autoTo": "Human test" })), "Hugh (board)").unwrap();
         let a = to_test(&mut s, &a, "card #3's session");
@@ -2143,6 +2188,52 @@ mod tests {
         assert!(held_move_message(&s, &card(json!({ "title": "T" }), "Human test"), "In progress").is_none());
         let h = header(&card(json!({ "title": "T" }), "Planning"));
         assert_eq!(h, "You are the session for card #7, \"T\" (no repo). Read and update your card with the kanban_* tools (or `kb` in Bash). Never move a card into Ship it, never merge, never push to main.");
+    }
+
+    /// Card #162: turning the Skip Human test default on moves on the cards that follow it and
+    /// that a session put in Human test, as a change on one card does; not Hugh's own, not a card
+    /// with its own choice, not one with Take it to.
+    #[test]
+    fn the_skip_default_moves_on_the_cards_that_follow_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        let mut put = |s: &mut Store, f: Value, by: &str| {
+            let c = s.create(None, p(f), "Hugh (board)").unwrap();
+            s.update(&c.id, c.version, &p(json!({ "column": "Human test" })), by).unwrap()
+        };
+        let follows = put(&mut s, json!({ "title": "F", "column": "In progress" }), "card #1's session");
+        let _own_off = put(&mut s, json!({ "title": "O", "column": "In progress", "skipHumanTest": false }), "card #2's session");
+        let _hughs = put(&mut s, json!({ "title": "H", "column": "In progress" }), "Hugh (board)");
+        let _auto = put(&mut s, json!({ "title": "A", "column": "In progress", "autoTo": "Human test" }), "card #3's session");
+        let cards = s.list(false).unwrap();
+        assert!(default_skip_waiting(&s, &cards).is_empty(), "default off");
+        s.set_page_setting(kanban_store::SKIP_HUMAN_TEST_RULE_KEY, "on").unwrap();
+        assert_eq!(default_skip_waiting(&s, &cards), vec![follows.id.clone()]);
+    }
+
+    /// Card #162: skip Human test alone is no approval to build. A Planning session's own move
+    /// into In progress (deferred) gets no prompt for it; a Planning it skipped does.
+    #[test]
+    fn skip_human_test_alone_does_not_start_the_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        assert_eq!(s.column("In progress").unwrap().unwrap().mode, "deferred");
+        let h = card(json!({ "title": "H", "skipHumanTest": true }), "In progress");
+        assert!(flow_note(&s, &h, "Planning").is_some(), "it is told of the skip, later");
+        assert!(held_move_message(&s, &h, "Planning").is_none(), "skip Human test isn't approval to build");
+        s.set_page_setting(kanban_store::SKIP_HUMAN_TEST_RULE_KEY, "on").unwrap();
+        let d = card(json!({ "title": "D" }), "In progress");
+        assert!(held_move_message(&s, &d, "Planning").is_none(), "nor is the default");
+        // Take it to still is, and so is a Planning that was skipped.
+        let a = card(json!({ "title": "A", "autoTo": "Human test" }), "In progress");
+        assert!(held_move_message(&s, &a, "Planning").unwrap().starts_with("Your move of this card to In progress is done."));
+        let c = s.create(None, p(json!({ "title": "S", "skipPlanning": true })), "Hugh (board)").unwrap();
+        let c = s.move_by_hugh(&c.id, c.version, "Planning", Patch::new()).unwrap().card;
+        assert_eq!(c.column, "In progress");
+        let m = held_move_message(&s, &c, "Backlog").unwrap();
+        assert!(m.contains(SKIPPED_PLANNING), "{m}");
     }
 
     // Card #98: the app's own move of a card routed small gives the In progress prompt, and says
