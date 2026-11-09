@@ -359,6 +359,26 @@ pub fn file_url_path(path: &str) -> &str {
     }
 }
 
+// --- Settings folders (card #125) ----------------------------------------------------------
+
+/// A resolved path (canonicalize's `\\?\C:\...`) as an ordinary one (`C:\...`), for the calls that
+/// refuse the `\\?\` form. A `\\?\UNC\...` network path is left as it is, so those calls refuse it.
+pub fn plain_path(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with(r"UNC\") => rest.to_string(),
+        _ => s.into_owned(),
+    }
+}
+
+/// Whether `p` is in the system's own settings folders under `home`, which a card's proof never
+/// reads: AppData, except AppData\Local\Temp (the temp folder, where testers save shots). Both
+/// paths are already resolved (canonicalize), so they compare as they are.
+pub fn in_settings_folder(home: &Path, p: &Path) -> bool {
+    let app_data = home.join("AppData");
+    p.starts_with(&app_data) && !p.starts_with(app_data.join("Local").join("Temp"))
+}
+
 // --- The shared test-app lock files (from testapp.rs) ---------------------------------------
 
 /// `share_all(&mut options)`: a file opened with every kind of sharing (a holder may have it

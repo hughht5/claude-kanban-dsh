@@ -28,6 +28,7 @@ mod needs;
 mod notify;
 mod place;
 mod presize;
+mod proof;
 mod repro;
 mod reviewer;
 mod router;
@@ -968,6 +969,9 @@ fn main() {
             // The agents' feed (card #120).
             feed::agents_feed,
             changes::changes_open,
+            proof::proof_list,
+            proof::proof_read,
+            proof::proof_open,
             update::update_status,
             update::update_later,
             update::update_restart,

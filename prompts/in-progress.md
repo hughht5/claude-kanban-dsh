@@ -202,7 +202,8 @@ them to turn the rule off or restart the session.
 
 Say in the hand-over that the subagent review and test passed, and what they looked at. If the card
 had a bug report, lead the hand-over with the reproducer's proof: the before and after steps, both
-screenshots (as Markdown images), and the test's name.
+screenshots (in `proof` when `kanban_update_card` lists it, else as Markdown images), and the
+test's name.
 
 ## Routing
 
@@ -275,6 +276,10 @@ Write into `nextStep`:
    finished file for the owner (a report, a CSV, a PDF), list it there first, by its full Windows
    path (not a WSL one: copy a WSL file to the Windows drive first):
    `[{"path": "C:\\full\\path\\report.md", "label": "Report"}]`. Skip this on an older app.
+   If `kanban_update_card` lists `proof` among its allowed fields, put the screenshots and reports
+   that prove the change in `proof`, by full Windows path, as `[{"path": "...", "label": "..."}]`,
+   and keep paths out of `nextStep`: the Human test panel shows each one as a picture or a
+   readable report (card #125). On an older app, as before.
 
 5. End your message with the hand-over. A few lines on what you built and verified, then numbered
    steps specific to this card's change: for a login card which login button to start from, what

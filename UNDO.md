@@ -915,3 +915,12 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: Hugh's move into Human test from `kb` or his own session outside the app never skips it, as his drag doesn't (`dispatch::hughs_own`) | The same revert |
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
+
+## Card #125: proof in Human test (9 Nov 2026, branch `dsh-125`)
+
+| Change | Undo |
+|---|---|
+| The `proof` card field (`crates\store\src\cards.rs`, `lib.rs`, `tools.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #125 commits>`. Cards keep any `proof` field; an older build ignores it |
+| `src-tauri\src\proof.rs`, its commands in `main.rs`, `in_settings_folder` in `src-tauri\src\platform\windows.rs` and `macos.rs` | Same revert |
+| `ui\proof.js`, `ui\proof.css`, their tags in `ui\index.html`, the hooks in `ui\review.js`, file-name captions in `ui\panel.js` | Same revert. The steps then show paths again |
+| The `proof` lines in `prompts\kanban-app.md` and `prompts\in-progress.md` (and the private copies) | Same revert here; in the private repo, `git revert --no-edit` its card #125 commit |

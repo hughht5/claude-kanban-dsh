@@ -1,0 +1,38 @@
+/* A card's proof in Human test (card #125, ui/proof.js): its reports as folds, its other files as
+   rows, its pictures as figures, and the file-name chips in the hand-over steps. Only board.css's
+   tokens, so light and dark both work. */
+.pf{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13px}
+.pf>h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.pf-grid:empty{display:none}
+.pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(150px,calc((100% - 8px) / 2)),1fr));gap:8px;min-width:0}
+.pf-grid .pf-fig{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0}
+.pf-grid figcaption{font-size:12px;color:var(--fg);overflow-wrap:anywhere}
+.pf-grid img.shot{display:block;width:100%;height:auto;max-height:280px;object-fit:contain;object-position:left top;border:1px solid var(--line);border-radius:6px;background:var(--bg);cursor:zoom-in}
+img.pf-img:not([src]){min-height:60px}
+.pf-row,.pf-doc{border:1px solid var(--line);border-radius:6px;background:var(--panel);min-width:0}
+.pf-row{display:flex;align-items:center;gap:8px;padding:6px 10px;flex-wrap:wrap}
+.pf-row.pf-miss,.pf-row.pf-ref{color:var(--muted);border-style:dashed;font-size:12.5px}
+.pf-row.pf-ref{color:var(--warn)}
+.pf-n{font-weight:500;overflow-wrap:anywhere;min-width:0}
+.pf-btns{margin-left:auto;display:inline-flex;gap:6px;flex:0 0 auto}
+.pf-doc>summary{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;list-style-position:inside}
+.pf-doc>summary::-webkit-details-marker{color:var(--muted)}
+.pf-doc>summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:5px}
+.pf-body{border-top:1px solid var(--line);padding:8px 12px;max-height:50vh;overflow:auto;font-size:13px;line-height:1.5}
+.pf-body .pf-md>:first-child{margin-top:0}
+.pf-body .pf-md h1{font-size:16px}.pf-body .pf-md h2{font-size:14.5px}.pf-body .pf-md h3,.pf-body .pf-md h4{font-size:13.5px}
+.pf-body pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px var(--mono);background:var(--bg);padding:6px 8px;border-radius:4px}
+.pf-body code{font:12px var(--mono)}
+.pf-body table{border-collapse:collapse;font-size:12.5px}
+.pf-body th,.pf-body td{border:1px solid var(--line);padding:3px 6px;text-align:left}
+.pf-body a:not([href]){color:inherit;text-decoration:underline dotted;cursor:default}
+.pf-note,.pf-wait,.pf-gone{margin:0 0 6px;font-size:12px;color:var(--muted)}
+.pf-gone{color:var(--warn)}
+.pf-txt{margin:0}
+/* The hand-over steps: a file name in place of each path. */
+.pf-chip{display:inline;font:inherit;font-weight:500;color:var(--accent);background:var(--accent-soft);border:1px solid transparent;border-radius:4px;padding:0 5px;cursor:pointer;overflow-wrap:anywhere}
+.pf-chip:hover{border-color:var(--accent)}
+.pf-chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.pf-short{font-family:var(--mono);font-size:.92em;border-bottom:1px dotted var(--muted);cursor:help}
+/* In the review view the section sits under the shots, above the verdicts (review-mode.css). */
+.panel.rv #p-det>.htbox>.pf{order:1}

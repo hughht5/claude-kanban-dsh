@@ -195,32 +195,46 @@ pub fn output_path_problem(p: &str) -> Option<&'static str> {
 /// Windows file path, label optional (trimmed, at most 80 characters; empty means none).
 /// `null` or `[]` clears it (`None`). Anything else is refused.
 pub fn clean_changes_outputs(v: &Value) -> Result<Option<Value>> {
-    let shape = || Error::Invalid("changesOutputs is a list of {\"path\": \"C:\\\\x\\\\report.md\", \"label\": \"optional\"} (or null to clear it)".into());
+    clean_path_list(v, OUTPUTS_KEY)
+}
+
+/// The screenshots and reports that prove a card's change (card #125): `proof`, a list of
+/// `{path, label}` by the same rules as `changesOutputs`. The app shows them in Human test.
+pub const PROOF_KEY: &str = "proof";
+
+/// Cleans a card's `proof`, by `changesOutputs`' rules.
+pub fn clean_proof(v: &Value) -> Result<Option<Value>> {
+    clean_path_list(v, PROOF_KEY)
+}
+
+/// A list of at most 20 `{path, label}` under `key` (`changesOutputs` or `proof`).
+fn clean_path_list(v: &Value, key: &str) -> Result<Option<Value>> {
+    let shape = || Error::Invalid(format!("{key} is a list of {{\"path\": \"C:\\\\x\\\\report.md\", \"label\": \"optional\"}} (or null to clear it)"));
     let items = match v {
         Value::Null => return Ok(None),
         Value::Array(a) => a,
         _ => return Err(shape()),
     };
     if items.len() > MAX_OUTPUTS {
-        return Err(Error::Invalid(format!("changesOutputs takes at most {MAX_OUTPUTS} files")));
+        return Err(Error::Invalid(format!("{key} takes at most {MAX_OUTPUTS} files")));
     }
     let mut out = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let o = item.as_object().ok_or_else(shape)?;
         if let Some(k) = o.keys().find(|k| *k != "path" && *k != "label") {
-            return Err(Error::Invalid(format!("changesOutputs[{i}] has \"{k}\"; an entry has only path and label")));
+            return Err(Error::Invalid(format!("{key}[{i}] has \"{k}\"; an entry has only path and label")));
         }
         let path = o.get("path").and_then(Value::as_str).ok_or_else(shape)?.trim();
         if let Some(why) = output_path_problem(path) {
-            return Err(Error::Invalid(format!("changesOutputs[{i}].path \"{path}\" {why}")));
+            return Err(Error::Invalid(format!("{key}[{i}].path \"{path}\" {why}")));
         }
         let label = match o.get("label") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) => Some(s.trim()).filter(|s| !s.is_empty()),
-            Some(_) => return Err(Error::Invalid(format!("changesOutputs[{i}].label is a string"))),
+            Some(_) => return Err(Error::Invalid(format!("{key}[{i}].label is a string"))),
         };
         if label.map_or(false, |l| l.chars().count() > MAX_OUTPUT_LABEL_LEN) {
-            return Err(Error::Invalid(format!("changesOutputs[{i}].label is longer than {MAX_OUTPUT_LABEL_LEN} characters")));
+            return Err(Error::Invalid(format!("{key}[{i}].label is longer than {MAX_OUTPUT_LABEL_LEN} characters")));
         }
         let mut e = Map::new();
         e.insert("path".into(), json!(path));
@@ -492,8 +506,12 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
                     changed.push(k.clone());
                 }
             }
-            OUTPUTS_KEY | SAVED_KEY => {
-                let new = if k == OUTPUTS_KEY { clean_changes_outputs(v)? } else { clean_changes_saved(v)? };
+            OUTPUTS_KEY | SAVED_KEY | PROOF_KEY => {
+                let new = match k.as_str() {
+                    OUTPUTS_KEY => clean_changes_outputs(v)?,
+                    PROOF_KEY => clean_proof(v)?,
+                    _ => clean_changes_saved(v)?,
+                };
                 if card.fields.get(k) != new.as_ref() {
                     match new {
                         Some(x) => card.fields.insert(k.clone(), x),
@@ -857,6 +875,11 @@ impl Store {
         if let Some(v) = fields.remove(OUTPUTS_KEY) {
             if let Some(o) = clean_changes_outputs(&v)? {
                 fields.insert(OUTPUTS_KEY.into(), o);
+            }
+        }
+        if let Some(v) = fields.remove(PROOF_KEY) {
+            if let Some(p) = clean_proof(&v)? {
+                fields.insert(PROOF_KEY.into(), p);
             }
         }
         if let Some(v) = fields.remove(SAVED_KEY) {

@@ -2245,3 +2245,26 @@ page reports `HeadlessChrome`). It applies to sessions started after the update;
 - **How it is kept.** Each column has a weight, the smallest being 1, in `localStorage` `wb.colWeights` (`{"<column>": weight}`, the Archive and the Done pile included). `ui\colwidths.js` sets it as `--w`; `.col` is `flex: var(--w) 0 calc(var(--w) * 160px)` with `min-width: 160px` (`COL_MIN`, in both files). A column is weight x 160px when the board overflows, and weight x board / sum of weights when there is room, so the shares hold when the window changes. The weights are shares, not pixels: widths set in a wide window scale down in a narrow one.
 - **The minimum is 160px** (it was 240px, so at a 1440px window the board scrolled and nothing could scale). Eight columns need 1350px.
 - **Tests.** `tools\ui-tests\colwidths.test.mjs` (drag rule, weights read and saved, `--w` on every column, dead zone, redraw mid-drag, double press); the fake DOM gained `style.setProperty`, pointer-event fields, a settable width, window listeners and a working `localStorage`. `node tools\cdp.mjs viewport <w> <h> <js>...` holds one connection with an emulated page size (the real window's minimum is 720px).
+
+## Proof in Human test (9 Nov 2026, card #125, branch `dsh-125`)
+
+- **Store:** `proof` (`PROOF_KEY`, `clean_proof` in `crates/store/src/cards.rs`) shares
+  `clean_path_list` with `changesOutputs`; allowed in `tools.rs` UPDATABLE. Tests:
+  `crates/store/tests/proof_field.rs`.
+- **App:** `src-tauri/src/proof.rs`. `find_in_text` (prose lines only: fenced and indented code
+  blocks, code spans, and Markdown link and image targets are skipped; a bare sibling name takes
+  the nearest full path's folder on its line and must exist), `proof_items` (the `proof` field,
+  then the hand-over's; states ok, missing, refused, dup), `check_read` (resolved paths; home or
+  temp; no dot folder bar `.claude\worktrees`; `platform::in_settings_folder`), `decode_doc` (BOM,
+  whole-character cut, NUL check after decoding, cut at whitespace, then `search::mask`), and the
+  commands `proof_list`, `proof_read`, `proof_open` (each reads the card under the lock, then the
+  disk). A dup is an image whose path or bytes match a strip shot (latest evidence run, the
+  reproducer's before and after).
+- **UI:** `ui/proof.js` (+ `proof.css`), loaded after review.js. review.js calls
+  `proofStripFigs`, `proofSectionHtml`, `proofSteps` (via `htStepsHtml`) and `proofFill` from
+  `htBox`. Kept per card while the panel shows it: the items (asked again when the card's version
+  changes), picture data URLs and drawn reports. Proof pictures never go through `image_read`
+  (no `data-local`). `docHtml` sanitises with an allow-list and strips non-http hrefs. panel.js:
+  `shotName`, so tooltips, failures and the viewer's caption show file names.
+- **Tests:** proof.rs's own (11), `tools/ui-tests/proof.test.mjs` (chips, code, links, the kept
+  state). `docHtml` needs a real DOM, so it is checked in the test app over CDP.

@@ -496,6 +496,29 @@ Cards outside Backlog and Planning show what their work changed, read from git b
 - **Limits:** WSL and network checkouts aren't read. Each git call stops after 10 s. Lists stop at
   300 files and 20 commits (the totals count everything); saved figures keep 100 files.
 
+## Proof in Human test
+
+A card's proof is the screenshots and reports that show its change works (card #125). The Human
+test panel shows them as pictures and readable reports, never as file paths.
+
+- **Where a session puts it:** `proof`, a list of `{"path": "C:\full\path", "label": "..."}` (the
+  same rules as `changesOutputs`: up to 20, full local paths, a label up to 80 characters, `null`
+  clears it), through `kanban_update_card` or `kb update <n> --proof '[...]'`. Old cards need
+  nothing: pictures, md and txt reports and PDFs named in the hand-over steps count too. A bare
+  file name after a full path on the same line takes that path's folder.
+- **What shows:** in the review view, proof pictures join the shot strip after the agents' shots,
+  and a Proof section under it holds the reports (each a fold) and other files. The Chat view's
+  Human test box has the same section, pictures too. In the steps, each path is its file name: a
+  chip that shows the picture or opens the report. Other paths (source files, folders) show their
+  last part, the full path in the tooltip. The full-size viewer's caption is the file name.
+- **What the app reads:** only files the card names, inside your home or temp folder, never in a
+  dot folder (the app's data, `.claude`, `.ssh` and the like; a repo's `.claude\worktrees` card
+  worktrees are fine) or AppData outside its Temp. A refused file says why ("Can't show r.md: in
+  the app's data folder"); a gone one says "Not there any more".
+- **Reports:** md or txt, read up to 1 MB (UTF-8 or UTF-16), tokens and keys shown as `[hidden]`.
+  A report shows only plain Markdown (no forms, styles or pictures); only http and https links
+  work. Open and Show in folder are on each, for you to click.
+
 ## One ship at a time per repo
 
 Move several cards into Ship it and they ship one at a time per repo: the first goes to its session
