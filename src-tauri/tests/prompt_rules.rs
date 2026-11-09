@@ -121,3 +121,16 @@ fn no_agent_text_says_the_review_comes_first() {
         }
     }
 }
+
+/// Hugh (card #172): this repo's cards test with no computer use and no browser; cdp.mjs into
+/// the card's own test app stays.
+#[test]
+fn this_repos_cards_test_without_computer_use_or_a_browser() {
+    for (name, text) in [("kanban-app.md", KANBAN_APP), ("AGENTS.md", AGENTS)] {
+        let t = plain(text);
+        assert!(t.contains("no computer use and no browser"), "{name} states the rule");
+        for want in ["claude in chrome", "built-in browser", "chrome-devtools", "tools/cdp.mjs", "card #172"] {
+            assert!(t.contains(want), "{name} says \"{want}\"");
+        }
+    }
+}

@@ -22,6 +22,7 @@ mod launch;
 mod lane;
 mod lanetools;
 mod lockwatch;
+mod nobrowser;
 mod monitor;
 mod merger;
 mod needs;

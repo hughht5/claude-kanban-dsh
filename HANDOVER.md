@@ -28,6 +28,36 @@ For a fresh session carrying on this build. Updated 3 Nov 2026, after Phase 4 an
 - **Requests the API received** are logged in the data folder's `api.log`, with the token hidden. Its port and token are in `api.json`.
 - **Use subagents** for heavy pieces (Hugh, 3 Nov). Keep the main session for deciding, integrating, committing and reporting to the manager session after each phase, in five lines or fewer.
 
+## No computer use and no browser for this app's cards (9 Nov 2026, card #172)
+
+Hugh: "for testing i want no computer use or browser use". His answers: `tools/cdp.mjs` into
+the card's own test app is fine, and so are its shots (the card's evidence). Not allowed:
+computer use (desktop screenshots, clicks) and any browser (Claude in Chrome, the built-in
+browser, chrome-devtools). Scope, from the Router: this repo's cards only; other repos stay as they
+is until Hugh says.
+
+- `src-tauri/src/nobrowser.rs`: `REPOS` (`hughht5/claude-kanban-dsh`, `hughht5/kanban-app`),
+  `SERVERS` (`computer-use`, `remote-devices`, `claude-in-chrome`, `Claude_Browser`,
+  `Claude_Preview`, `chrome-devtools`) and `deny_rules()` (`mcp__<server>`, whole servers).
+- `session_cmds::start_session` sets `Plan.no_browser` from the card's repo. Then
+  `sessions::settings_json` adds `permissions.deny` with those rules to the session's own
+  settings, and `sessions::mcp_json` adds no headless chrome-devtools (card #77's override).
+  The Router and the merge lanes are not cards and are unchanged.
+- Why the settings and not each agent's `disallowedTools`: a live trial (Claude Code 2.1.246,
+  a stand-in `chrome-devtools` stdio server) showed that a `--settings` deny of
+  `mcp__chrome-devtools` takes the server's tools from the session and from a general-purpose
+  subagent it starts, under `bypassPermissions`; the same run without the deny called the tool.
+  So one rule covers the session, the app's subagents and any other subagent.
+- The card-tester and card-reproducer prompts (`tester.rs`, `repro.rs`) say it too, and the
+  tester's evidence step now names `hughht5/claude-kanban-dsh` as well as the old name.
+  `prompts/kanban-app.md` (In progress step 6, public and private copies) and AGENTS.md (Hard
+  rules) state the rule. Tests: `nobrowser.rs`, `sessions.rs`
+  (`a_no_browser_card_denies_computer_use_and_every_browser`,
+  `a_no_browser_card_gets_no_headless_chrome`), `tests/prompt_rules.rs`.
+- It applies to sessions started (or resumed) after the update: a running session keeps its
+  settings until it restarts.
+- To widen it to another repo, add the repo to `REPOS`.
+
 ## Queued messages go in mid-turn (9 Nov 2026, card #154)
 
 Hugh: "queued messagse take forever - they should come in sooner". A message that went into a
@@ -2139,6 +2169,8 @@ Card sessions' browser checks (card #77, 5 Nov 2026): each session's `mcp.json` 
 `chrome-devtools` server with the same command plus `--headless --isolated` (`sessions.rs` `headless_devtools`), so
 the Chrome it drives has no window. A `--mcp-config` server beats a configured one of the same name (checked: the
 page reports `HeadlessChrome`). It applies to sessions started after the update; a running session keeps its Chrome.
+Since card #172 this app's own cards get no chrome-devtools at all (it is denied to them); other repos' cards
+keep the headless override.
 
 ## Time in each column (6 Nov 2026, card #111)
 

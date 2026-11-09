@@ -92,6 +92,8 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
     let api = app.state::<Api>().0.clone();
     let (model, effort, permission_mode) = session_settings(store, card);
     let todo_tools = store.todo_tools_on();
+    // This app's own cards test without computer use or a browser (card #172).
+    let no_browser = crate::nobrowser::applies(card.fields.get("repo").and_then(Value::as_str));
     let base = board_path().parent().map(|p| p.join("sessions")).unwrap_or_default();
     let row_id = uuid::Uuid::new_v4().to_string();
     let mut why = String::new();
@@ -120,6 +122,7 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
                 todo_tools,
                 router: false,
                 lane: false,
+                no_browser,
             }
         }
         "resume" => {
@@ -160,6 +163,7 @@ pub(crate) fn start_session(app: &AppHandle, store: &mut Store, card: &Card, mod
                 todo_tools,
                 router: false,
                 lane: false,
+                no_browser,
             }
         }
         _ => return Err("mode must be new or resume".into()),

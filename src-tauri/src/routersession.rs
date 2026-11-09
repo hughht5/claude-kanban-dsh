@@ -157,6 +157,7 @@ pub fn plan(store: &Store, api: Option<crate::api::ApiInfo>, base: &std::path::P
         todo_tools: false,
         router: true,
         lane: false,
+        no_browser: false,
     }
 }
 

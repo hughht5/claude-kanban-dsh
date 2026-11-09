@@ -170,6 +170,11 @@ is your home folder.
    your message as `![what it shows](C:/path/to/shot.png)`, so the owner sees it in the card's
    chat. On a Mac only: there is no tools/cdp.mjs and no screenshot. Check the change through `kb`
    and the app's API, and tell the owner what to look at.
+   **No computer use and no browser** (card #172), for you and every subagent: no desktop
+   screenshots or clicks (computer use), and no Claude in Chrome, built-in browser or
+   chrome-devtools. Test with the tests, `kb` and the `kanban_*` tools, the app's API, and
+   `tools/cdp.mjs` on your own test app's CDP port; its shots are the card's evidence. The app
+   denies those tools to this repo's card sessions and their subagents anyway.
 6a. Then run the `card-reviewer` and the `card-tester` together (in-progress.md, *Review and test
    it together*): two Agent calls in one message, both in the background, and wait for both
    notifications. Brief the reviewer with the card number, your worktree and your branch. Brief

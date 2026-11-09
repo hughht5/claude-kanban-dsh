@@ -925,3 +925,13 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <the card #1
 ## Agents drawer beside the Router panel (9 Nov 2026, card #167)
 
 UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 commit>`, then stage the live update. Files: `ui\router.css`, `ui\rpane.css`, `ui\router.js`, `ui\agents-feed.js`.
+
+## Card #172: no computer use and no browser for this app's cards (9 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\nobrowser.rs`; `Plan.no_browser` set in `session_cmds.rs`; `settings_json` adds `permissions.deny` and `mcp_json` drops the headless chrome-devtools for this repo's cards (`sessions.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #172 commit>`, then stage the update. Sessions already running keep their settings until they restart |
+| The card-tester and card-reproducer prompts (`tester.rs`, `repro.rs`): no computer use and no browser for this repo's cards; the tester's evidence step names `hughht5/claude-kanban-dsh` too | The same revert |
+| `prompts\kanban-app.md` In progress step 6, `AGENTS.md` Hard rules, README, HANDOVER, PLAN, `src-tauri\tests\prompt_rules.rs` | The same revert |
+| The private folder's `promptskanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
+| To keep the rule but let one more repo in or out | Edit `REPOS` in `nobrowser.rs` |

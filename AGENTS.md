@@ -156,6 +156,11 @@ app, and they ship one at a time.
 
 - **Never take Hugh's focus.** Every launch from a session uses `--background`. He often has a
   full-screen game in front. Never open links in his browser yourself.
+- **No computer use and no browser to test this repo's cards** (Hugh, card #172): no desktop
+  screenshots or clicks, no Claude in Chrome, built-in browser or chrome-devtools, for a card
+  session and every subagent. Test with the tests, `kb`, the API and `tools/cdp.mjs` on the
+  card's own test app (its shots are fine). The app denies those tools to this repo's card
+  sessions (`nobrowser.rs`).
 - **Data is append-only.** No `DELETE FROM` anywhere (a test checks it); logs, revisions, sessions
   and session events take inserts only, and triggers refuse deletes. Archive, don't delete.
 - **Never edit `board.db` directly** (live or test), never touch `%USERPROFILE%\.claude-kanban-dsh` by

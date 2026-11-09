@@ -585,6 +585,18 @@ its own test app, ship one by one or together if stacked):
   its checkout, so editing its `main` would change every live session before the code ships. The
   private branch ships with the stack.
 
+## Card #172: no computer use and no browser for this app's cards (9 Nov 2026)
+
+- **What is out** (Hugh): computer use (desktop screenshots, clicks) and any browser (Claude in
+  Chrome, the built-in browser, chrome-devtools). **What stays**: `tools/cdp.mjs` into the
+  card's own test app, and its shots as the card's evidence.
+- **Scope**: this repo's cards only (the Router, for Hugh): other repos keep their browser checks
+  until he says. One list, `nobrowser::REPOS`, widens it.
+- **How**: deny rules for the whole servers in the card session's own settings, which hold its
+  subagents too (live trial), rather than each agent's `disallowedTools` (which would miss
+  the session itself and non-app subagents). The prompts say it as well, so a session doesn't
+  plan a browser check it can't run.
+
 ## Card #162: the reviewer and the tester run together (9 Nov 2026)
 
 - **Both run at once, after the install, and a pass counts only if it started after the other's

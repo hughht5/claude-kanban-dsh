@@ -89,6 +89,8 @@ Each column's instructions are plain Markdown files you can read and change.
 
 Every agent is a Claude Code subagent running on your own plan, and the app records each one's verdict on the card. None of them can move a card into Ship it.
 
+**No computer use and no browser for this app's own cards** (card #172). A card session for this repo (`hughht5/claude-kanban-dsh`, or its old name `hughht5/kanban-app`), and every subagent it runs, has computer use, Claude in Chrome, the built-in browser, the preview pane and chrome-devtools denied in its own settings. It tests with the tests, `kb`, the app's API and `tools/cdp.mjs` on the card's own test app, whose shots are the evidence. Other repos keep their browser (`src-tauri/src/nobrowser.rs`, `REPOS`).
+
 Each card has its own choice of which of the five card agents run on it (all but the Monitor and the merge lane). Settings > Sessions sets the defaults; a card follows them as they change unless you set an agent On or Off for it, on Add card or in the card's Card flow box (card #162). Only you change them: a card's session and the Router can't. An agent that is off holds nothing, and the card's session is told to skip its step.
 
 **Card flow.** Each card can also skip Planning (a move into Planning from Backlog or Blocked goes straight to In progress) or skip Human test (once its session moves it into Human test, the app ships it for you, as Take it to: Deploy complete does). Each of these and each agent is three-way on a card: Default follows Settings > Sessions as it changes, On or Off is that card's own. A chip on the card shows each choice of its own that differs from the default, such as "No plan" or "Critic off". Your own drag into Human test never skips it.
