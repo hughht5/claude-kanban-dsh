@@ -49,9 +49,10 @@
       let t=L,cls="tap-own",title=a?`This card's build goes in ${where}.`:`This card's session has a turn on ${where}.`;
       if(h&&mine(h)){const tester=h.kind!=="install";t+=tester?" · testing":" · installing";cls="tap-hold"+(h.overdue?" tap-over":"");
         if(a)title+=tester?" Its session has the turn now.":" Its session has an install turn now.";
+        if(h.waking)title+=" Its session was stopped: the app is starting it.";
         if(h.overdue)title+=" The turn is overdue."}
-      else if(i>=0){const p=placeOf(ln[i],i),paused=ln[i].live===false;t+=` · ${p} in line`;cls=paused?"tap-paused":"tap-wait";
-        title=(a?title+` Its session is ${p} in line for a turn`:`This card's session is ${p} in line for a turn on ${where}`)+(paused?", but paused: the turn waits for it.":".")}
+      else if(i>=0){const p=placeOf(ln[i],i),waking=!!ln[i].waking,paused=!waking&&ln[i].live===false;t+=waking?" · starting":` · ${p} in line`;cls=paused?"tap-paused":"tap-wait";
+        title=(a?title+` Its session is ${p} in line for a turn`:`This card's session is ${p} in line for a turn on ${where}`)+(waking?": its turn has come, and the app is starting its stopped session.":paused?", but paused: the turn waits for it.":".")}
       return{t,c:cls,title};
     }
     const k=numOf(c.stackOf);
@@ -127,10 +128,10 @@
     const since=c&&hhmm(c.since);
     parts.push(`<span>${c?`<b>${esc(nameOf(c))}</b>${since?` · since ${esc(since)}`:""}`:"no card"}</span>`);
     if(h){const m=heldFor(h),ends=hhmm(h.expiresAt);
-      parts.push(`<span>Turn: <b>${esc(nameOf(h))}</b> · ${esc(KIND[h.kind]||h.kind||"")}${m!=null?` · held for ${esc(m)} min`:""}${ends?` · ends at ${esc(ends)}`:""}${h.overdue?` · <span class="tapw">overdue</span>`:""}</span>`)}
+      parts.push(`<span>Turn: <b>${esc(nameOf(h))}</b> · ${esc(KIND[h.kind]||h.kind||"")}${h.waking?` · <span class="tapw">starting its session</span>`:""}${m!=null?` · held for ${esc(m)} min`:""}${ends?` · ends at ${esc(ends)}`:""}${h.overdue?` · <span class="tapw">overdue</span>`:""}</span>`)}
     const ln=lineOf(x);
     if(ln.length)parts.push(`<span class="tapk">Waiting for a turn</span><ol class="tapline">${ln.map((y,i)=>
-      `<li><span class="tapplace">${esc(placeOf(y,i))}</span><span>${esc(nameOf(y))} · ${esc(KIND[y.kind]||y.kind||"")}${y.live===false?` · <span class="tapw">waits for its session</span>`:""}</span></li>`).join("")}</ol>`);
+      `<li><span class="tapplace">${esc(placeOf(y,i))}</span><span>${esc(nameOf(y))} · ${esc(KIND[y.kind]||y.kind||"")}${y.waking?` · <span class="tapw">starting its session</span>`:y.live===false?` · <span class="tapw">waits for its session</span>`:""}</span></li>`).join("")}</ol>`);
     const i=x.install;
     if(i){const w=reasonOf(i.waitingFor),r=hhmm(i.restartAt);
       parts.push(`<span>Install: <b>${esc(nameOf(i))}</b> · ${esc(PHASE[i.phase]||i.phase||"")}${w?` · waiting for ${esc(w)}`:""}${r?` · restarts at ${esc(r)}`:""}</span>`)}

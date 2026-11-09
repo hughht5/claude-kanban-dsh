@@ -186,6 +186,10 @@ app, and they ship one at a time.
   Ship it approved that ship. It is app-owned, not a card (`lane_sessions`), stops after 15 idle minutes, and never
   pushes, runs `kb`, installs, moves a branch or edits outside its worktree (`guard::lane_refusal`).
   Never start or stop a lane yourself; Hugh's Stop is in Settings › Sessions.
+  A third (card #168): when a card's test-app turn comes (it holds the turn, or is first in line)
+  and its session has stopped, the app resumes it (or starts it in its worktree), only for a card
+  in In progress or Human test, never a conversation that is only in the desktop app, under the
+  cap. Hugh asked for it (9 Nov 2026).
 - **The Router (card #119)** is an app-owned session, not a card (`router_sessions`,
   `router_log`). Only Hugh's Start turns it on; the app resumes it after a restart while it is on.
   It starts card sessions only while Hugh's "Router may start cards" is on, and never ships,

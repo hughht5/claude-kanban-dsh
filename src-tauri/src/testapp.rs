@@ -37,7 +37,8 @@ pub const HOLD_MAX_MINUTES: i64 = 120;
 pub const ALLOW_MINUTES: i64 = 5;
 /// install.ps1 waits this long after Hugh's last input in the test app.
 pub const INPUT_QUIET_MINUTES: i64 = 10;
-/// The old DSH lock folder counts as stale after this long.
+/// The old DSH lock folder, made by an older writer (no pid line), counts as stale after this
+/// long and then blocks nobody (card #149). install.ps1 uses the same number.
 pub const DSH_STALE_MINUTES: i64 = 60;
 /// A turn in use is renewed at most this often.
 pub const RENEW_EVERY_SECS: i64 = 60;
@@ -218,6 +219,22 @@ pub struct Dsh {
     /// Its owner file names a process (line 2, "pid <pid> <start>", written by the new
     /// install.ps1) that no longer runs: a killed run's folder, which blocks nobody.
     pub dead: bool,
+    /// Its owner file names a process that still runs: an install holds it, whatever its age.
+    pub alive: bool,
+}
+
+impl Dsh {
+    /// It counts as nobody's (card #149): its run has ended, or an older writer (no pid line)
+    /// made it DSH_STALE_MINUTES or more ago. A folder whose run still runs is never stale.
+    pub fn stale(&self) -> bool {
+        self.dead || (!self.alive && self.age_minutes >= DSH_STALE_MINUTES)
+    }
+
+    /// It keeps the test app from everyone but its owner: a fresh folder, or one an install
+    /// still holds.
+    pub fn blocks(&self, owner: &str) -> bool {
+        !self.stale() && self.owner != owner
+    }
 }
 
 pub fn read_dsh(dir: &Path, now: DateTime<Utc>) -> Option<Dsh> {
@@ -226,13 +243,14 @@ pub fn read_dsh(dir: &Path, now: DateTime<Utc>) -> Option<Dsh> {
     let text = read_shared(&dir.join("owner")).unwrap_or_default();
     let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
     let owner = lines.next().unwrap_or("").to_string();
-    let dead = lines.next().and_then(|l| {
+    // Some(running) when line 2 names a process; None for an older writer's folder.
+    let runs = lines.next().and_then(|l| {
         let mut w = l.split_whitespace();
         (w.next() == Some("pid")).then_some(())?;
         let pid = w.next()?.parse::<u32>().ok()?;
-        Some(!alive_since(pid, w.next().and_then(parse)))
+        Some(alive_since(pid, w.next().and_then(parse)))
     });
-    Some(Dsh { owner, age_minutes: (now - made).num_minutes().max(0), dead: dead.unwrap_or(false) })
+    Some(Dsh { owner, age_minutes: (now - made).num_minutes().max(0), dead: runs == Some(false), alive: runs == Some(true) })
 }
 
 /// Hugh's Release of the old DSH lock folder: renamed aside, never deleted.
@@ -378,7 +396,7 @@ impl Seen {
     pub fn blocks(&self, owner: &str) -> bool {
         let lock = self.lock_present && self.lock.as_ref().map_or(true, |l| l.owner != owner);
         let other = self.other.as_deref().map_or(false, |o| o != owner);
-        let dsh = self.dsh.as_ref().map_or(false, |d| !d.dead && d.owner != owner);
+        let dsh = self.dsh.as_ref().map_or(false, |d| d.blocks(owner));
         lock || other || dsh
     }
 }
@@ -389,6 +407,9 @@ impl Seen {
 pub struct Live {
     pub live: HashSet<String>,
     pub busy: HashSet<String>,
+    /// Holders with a queued message still waiting for their session (card #168): a turn given
+    /// while the session was stopped, its "your turn" not heard yet. Filled in by `run`.
+    pub unheard: HashSet<String>,
 }
 
 fn live_of(app: &AppHandle) -> Live {
@@ -396,7 +417,7 @@ fn live_of(app: &AppHandle) -> Live {
     let states = s.states();
     let mut busy: HashSet<String> = states.iter().filter(|(_, st)| matches!(st.as_str(), "working" | "permission")).map(|(k, _)| k.clone()).collect();
     busy.extend(s.testing_cards());
-    Live { live: states.into_keys().collect(), busy }
+    Live { live: states.into_keys().collect(), busy, unheard: HashSet::new() }
 }
 
 /// What one pump decided, for the logs and messages it sends after.
@@ -406,6 +427,11 @@ pub struct Step {
     pub logs: Vec<(String, String)>,
     /// (card id, message for its session, queued only).
     pub messages: Vec<(String, String)>,
+    /// The card whose turn it is but whose session is stopped (card #168): the pump starts it.
+    pub wake: Option<String>,
+    /// A card given the turn while stopped whose session didn't start in time (card #168): `run`
+    /// frees its test app too, so the next card waiting for one gets it.
+    pub free: Option<String>,
     pub changed: bool,
 }
 
@@ -453,6 +479,18 @@ pub fn step(
             ended(&mut out, &t, &why, &card);
         }
     }
+    // A holder woken for its turn whose session didn't come up within the grace: the line
+    // moves on (card #168).
+    if let Some(t) = queue.wake_ran_out(now, |id| live.live.contains(id)) {
+        let why = Ended::NoSession(format!("didn't start within {} min", q::WAKE_GRACE_MINUTES));
+        ended(&mut out, &t, &why, &card);
+        out.free = t.who.card_id.clone();
+    }
+    // Its turn came while its session was stopped: the pump starts it (card #168). Before
+    // `next`, so the card behind it doesn't take the turn while its session starts. A holder
+    // that heard its turn and then stopped (paused when idle) isn't woken: it has nothing new.
+    let quiet = queue.holder.as_ref().and_then(|h| h.who.card_id.as_deref()).is_some_and(|id| !live.live.contains(id) && !live.unheard.contains(id));
+    out.wake = if quiet { None } else { queue.to_wake(now, |id| live.live.contains(id), |owner| seen.blocks(owner)) };
     if let Some(t) = queue.next(now, |id| live.live.contains(id), |owner| seen.blocks(owner)) {
         if let (Some(id), Some(n)) = (t.who.card_id.clone(), t.who.card) {
             out.logs.push((id.clone(), "Got its turn on the test app".into()));
@@ -488,6 +526,9 @@ pub fn slot_status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &
         v["expiresAt"] = json!(queue.expires_at(limit).map(stamp));
         v["heldMinutes"] = json!(held.max(0));
         v["overdue"] = json!(queue.overdue(now));
+        let up = h.who.card_id.as_deref().map_or(true, |id| live.live.contains(id));
+        v["live"] = json!(up);
+        v["waking"] = json!(!up && h.woke_at.is_some());
         v
     });
     let line: Vec<Value> = queue
@@ -497,7 +538,10 @@ pub fn slot_status(queue: &TestAppQueue, now: DateTime<Utc>, limit: i64, seen: &
         .map(|(i, w)| {
             let mut v = who_json(&w.who);
             v["place"] = json!(i + 1);
-            v["live"] = json!(w.who.card_id.as_deref().map_or(true, |id| live.live.contains(id)));
+            let up = w.who.card_id.as_deref().map_or(true, |id| live.live.contains(id));
+            v["live"] = json!(up);
+            // The app is starting its session for its turn (card #168).
+            v["waking"] = json!(!up && w.waking(now));
             v["askedAt"] = json!(w.asked_at);
             v
         })
@@ -597,7 +641,7 @@ pub fn status(apps: &Apps, now: DateTime<Utc>, limit: i64, shared: &Shared, live
         "pending": pending,
         "hold": shared.hold.until.map(|u| json!({ "until": stamp(u) })),
         "allowUntil": shared.hold.allow_until.map(stamp),
-        "mkdir": shared.dsh.as_ref().map(|d| json!({ "owner": d.owner, "ageMinutes": d.age_minutes, "stale": d.dead || d.age_minutes >= DSH_STALE_MINUTES, "dead": d.dead })),
+        "mkdir": shared.dsh.as_ref().map(|d| json!({ "owner": d.owner, "ageMinutes": d.age_minutes, "stale": d.stale(), "dead": d.dead, "alive": d.alive })),
     })
 }
 
@@ -644,9 +688,21 @@ fn card_state(store: &Store) -> impl Fn(&str) -> q::CardState + '_ {
 
 /// One pass of the rules over the store: frees the test apps cards can't keep, steps each test
 /// app's turns, and gives free test apps to the cards waiting for one. Logs and queued
-/// messages are written here. Returns whether a card changed or was logged on.
-pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, live: &Live) -> bool {
+/// messages are written here. Returns whether a card changed or was logged on, and the cards
+/// (with their test app) whose stopped session the pump starts for their turn (card #168).
+pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, live: &Live) -> (bool, Vec<(String, u32)>) {
+    let mut wakes: Vec<(String, u32)> = vec![];
     let mut logs: Vec<(String, String)> = vec![];
+    // Which holders still have a message waiting for their session (card #168).
+    let mut live = live.clone();
+    for slot in 1..=q::MAX_SLOTS {
+        if let Some(id) = store.test_app_queue_for(slot).ok().and_then(|q| q.holder).and_then(|h| h.who.card_id) {
+            if store.waiting(&id, "message").ok().flatten().is_some() {
+                live.unheard.insert(id);
+            }
+        }
+    }
+    let live = &live;
     let mut messages: Vec<(String, String)> = vec![];
     let mut changed = false;
     for (c, slot, why) in store.stale_test_apps().unwrap_or_default() {
@@ -667,6 +723,12 @@ pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, l
         }
         logs.extend(st.logs);
         messages.extend(st.messages);
+        wakes.extend(st.wake.map(|id| (id, slot)));
+        if let Some(id) = st.free {
+            if let Some(m) = free_unstarted(store, &id) {
+                messages.push((id, m));
+            }
+        }
     }
     if let Ok(ls) = store.step_slot_line(now, kanban_store::slot(), &shared.elsewhere()) {
         for (id, why) in ls.left {
@@ -675,7 +737,8 @@ pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, l
         for (id, n, slot) in ls.given {
             changed = true;
             let mut queue = store.test_app_queue_for(slot).unwrap_or_default();
-            let t = queue.take(Ask::tester(&id, n), now, shared.for_slot(slot).blocks(&n.to_string()));
+            let seen = shared.for_slot(slot);
+            let t = queue.take_now(Ask::tester(&id, n), now, |c| live.live.contains(c), |o| seen.blocks(o));
             let _ = store.save_test_app_queue_for(slot, &queue);
             messages.push((id, take_reply(&t, &format!("#{n}"), limit, Some(n), slot)));
         }
@@ -687,7 +750,82 @@ pub fn run(store: &mut Store, now: DateTime<Utc>, limit: i64, shared: &Shared, l
     for (id, text) in &messages {
         let _ = store.queue(id, "message", text);
     }
-    changed || !logs.is_empty()
+    (changed || !logs.is_empty() || !wakes.is_empty(), wakes)
+}
+
+/// Card #168: starts the session of a card whose test-app turn came while it was stopped, as
+/// the Router's start does (its conversation resumed, else a new one in its worktree), under
+/// the running-sessions cap. A conversation only in the desktop app is never started by the
+/// app. If it can't start, a held turn ends and a place in line is passed over, logged.
+fn wake(app: &AppHandle, id: &str, slot: u32, now: DateTime<Utc>) {
+    let board = app.state::<Board>();
+    let Ok(mut store) = board.0.lock() else { return };
+    let Ok(c) = store.get(id) else { return };
+    let on = q::slot_label(slot);
+    // Its session may have started since the pump looked (Hugh's Start, the start queue).
+    if app.state::<Arc<Sessions>>().is_live(id).is_some() {
+        return;
+    }
+    let line = match wake_start(app, &mut store, &c, slot) {
+        Ok(done) => format!("Its turn on {on} came while its session was stopped: {done}"),
+        Err(e) => {
+            let mut queue = store.test_app_queue_for(slot).unwrap_or_default();
+            let ended = queue.wake_failed(id, now);
+            let _ = store.save_test_app_queue_for(slot, &queue);
+            if ended.is_some() {
+                // Heard when its session next runs, as every other end of a turn is.
+                let why = Ended::NoSession(format!("couldn't be started ({e})"));
+                let _ = store.queue(id, "message", &ended_message(&why.text()));
+                if let Some(m) = free_unstarted(&mut store, id) {
+                    let _ = store.queue(id, "message", &m);
+                }
+            }
+            let next = if ended.is_some() { "its turn ended and its test app is free again, for the next card waiting for one" } else { "it keeps its place, and the next in line gets the turn" };
+            format!("Its turn on {on} came while its session was stopped, and the app couldn't start it ({e}): {next}")
+        }
+    };
+    let _ = store.add_log(id, &line, "the app");
+    drop(store);
+    let _ = app.emit("cards-changed", ());
+}
+
+/// A card whose session couldn't be started for its turn can't use its test app: it is freed
+/// (logged by the store), so the next card waiting for a test app gets it (card #168). Returns
+/// the message for the card's session, heard when it next runs.
+fn free_unstarted(store: &mut Store, id: &str) -> Option<String> {
+    let why = "its session was stopped and couldn't be started for its turn";
+    store.free_test_app(id, why, "the app").ok().flatten().map(|s| freed_message(s, why))
+}
+
+/// What a new session started for its turn hears first (card #168): it has no conversation to
+/// carry on, so it is told why it runs and where to start.
+pub fn woke_new_message(number: i64, column: &str, slot: u32) -> String {
+    format!(
+        "The app started this session for card #{number} because its turn on {} came while it had no session running. \
+The card is in {column}: read it (kanban_get_card), its log and nextStep, and carry on its column's work from there.",
+        q::slot_label(slot)
+    )
+}
+
+fn wake_start(app: &AppHandle, store: &mut Store, c: &kanban_store::Card, slot: u32) -> Result<String, String> {
+    if c.archived || !q::TESTER_COLUMNS.contains(&c.column.as_str()) {
+        return Err(format!("the card is in {}", c.column));
+    }
+    let app_convo = store.latest_session(&c.id).ok().flatten();
+    if app_convo.is_none() && c.fields.get("claudeSessionId").is_some() {
+        return Err("its conversation is in the Claude desktop app, which the app never starts by itself; open the card and choose Resume in the app".into());
+    }
+    let mode = if app_convo.is_some() { "resume" } else { "new" };
+    let begun = crate::begin_session(app, store, c, mode, "testapp")?;
+    if mode == "new" {
+        let _ = store.queue(&c.id, "message", &woke_new_message(c.number, &c.column, slot));
+    }
+    Ok(match begun {
+        crate::Begun::Started(_) if mode == "resume" => "the app resumed its session; it gets the turn once the session runs".into(),
+        crate::Begun::Started(_) => "the app started a new session; it gets the turn once the session runs".into(),
+        crate::Begun::Queued(pos) => format!("the app asked to start its session, which waits under Hugh's cap (number {pos}); if it hasn't started within {} min, the turn moves on to the next in line", q::WAKE_GRACE_MINUTES),
+        crate::Begun::Sizing => "the app asked to start its session, which waits for the card to be sized".into(),
+    })
 }
 
 /// Every 2 s from the dispatch loop, and after each tool call or command.
@@ -696,12 +834,15 @@ pub fn pump(app: &AppHandle) {
     let shared = look(&shared_dir(), &dsh_dir(), now);
     let live = live_of(app);
     let board = app.state::<Board>();
-    let (apps, limit, changed) = {
+    let (apps, limit, changed, wakes) = {
         let Ok(mut store) = board.0.lock() else { return };
         let limit = store.test_app_limit().unwrap_or(q::DEFAULT_LIMIT);
-        let changed = run(&mut store, now, limit, &shared, &live);
-        (Apps::read(&store), limit, changed)
+        let (changed, wakes) = run(&mut store, now, limit, &shared, &live);
+        (Apps::read(&store), limit, changed, wakes)
     };
+    for (id, slot) in &wakes {
+        wake(app, id, *slot, now);
+    }
     publish(app, &apps, limit, &shared, &live, now);
     if changed {
         let _ = app.emit("cards-changed", ());
@@ -848,12 +989,13 @@ pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value
         return Ok(json!(format!("Released the old DSH lock folder: renamed to {}.", aside.display())));
     }
     let shared = look(&shared_dir(), &dsh_dir(), now);
+    let live = live_of(app);
     let reply = {
         let board = app.state::<Board>();
         let mut store = board.0.lock().map_err(|e| e.to_string())?;
         let own = crate::tools::caller_card(app, &store, caller);
         let limit = store.test_app_limit().unwrap_or(q::DEFAULT_LIMIT);
-        act(&mut store, own.as_deref(), action, args, now, limit, &shared)?
+        act(&mut store, own.as_deref(), action, args, now, limit, &shared, &live)?
     };
     // Hands a released turn on, writes the turn file and tells the page.
     pump(app);
@@ -865,7 +1007,10 @@ pub fn tool(app: &AppHandle, caller: Option<&str>, args: &Value) -> Result<Value
 const OUTSIDE_BY: &str = "a session outside the app";
 
 /// The tool's rules over the store, apart from files and sessions.
-pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now: DateTime<Utc>, limit: i64, shared: &Shared) -> Result<String, String> {
+/// A take gives the turn now by the pump's own rule (`TestAppQueue::take_now`, card #149):
+/// paused cards ahead are passed over, and `shared` blocks as it does in `step`.
+#[allow(clippy::too_many_arguments)]
+pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now: DateTime<Utc>, limit: i64, shared: &Shared, live: &Live) -> Result<String, String> {
     let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
     let install = args.get("install").and_then(Value::as_bool).unwrap_or(false) || args.get("kind").and_then(Value::as_str) == Some(INSTALL);
     let e = |e: kanban_store::Error| e.to_string();
@@ -888,8 +1033,10 @@ pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now
             };
             let mut queue = store.test_app_queue_for(slot).map_err(e)?;
             let ask = Ask::tester(id, c.number);
-            let blocked = shared.for_slot(slot).blocks(&ask.owner);
-            let t = queue.take(ask, now, blocked);
+            let seen = shared.for_slot(slot);
+            let t = queue.take_now(ask, now, |c| live.live.contains(c), |o| seen.blocks(o));
+            // Its own session asked, so it runs: a later stop may be woken again (card #168).
+            queue.ran(id);
             store.save_test_app_queue_for(slot, &queue).map_err(e)?;
             let app = q::slot_label(slot);
             let line = match &t {
@@ -941,8 +1088,8 @@ pub fn act(store: &mut Store, own: Option<&str>, action: &str, args: &Value, now
             let ask = Ask::install(owner, label);
             let shown = ask.label.clone();
             let mut queue = store.test_app_queue_for(slot).map_err(e)?;
-            let blocked = shared.for_slot(slot).blocks(&ask.owner);
-            let t = queue.take(ask, now, blocked);
+            let seen = shared.for_slot(slot);
+            let t = queue.take_now(ask, now, |c| live.live.contains(c), |o| seen.blocks(o));
             store.save_test_app_queue_for(slot, &queue).map_err(e)?;
             Ok(take_reply(&t, &shown, limit, None, slot))
         }
@@ -1111,7 +1258,7 @@ mod tests {
         parse("2026-11-06T03:00:00Z").unwrap() + Duration::minutes(min)
     }
     fn lv(live: &[&str], busy: &[&str]) -> Live {
-        Live { live: live.iter().map(|s| s.to_string()).collect(), busy: busy.iter().map(|s| s.to_string()).collect() }
+        Live { live: live.iter().map(|s| s.to_string()).collect(), busy: busy.iter().map(|s| s.to_string()).collect(), unheard: HashSet::new() }
     }
     fn cols(m: &[(&str, &str)]) -> impl Fn(&str) -> q::CardState {
         let m: HashMap<String, String> = m.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
@@ -1125,17 +1272,74 @@ mod tests {
         queue.take(Ask::tester("b", 2), t(0), false);
         queue.take(Ask::tester("c", 3), t(0), false);
         let card = cols(&[("a", "Human test"), ("b", "In progress"), ("c", "In progress")]);
-        // a moved on to Blocked: its turn ends; b is paused, so c gets it.
+        // a moved on to Blocked: its turn ends; b is paused, so the app starts b's session
+        // (card #168), and once that hasn't run for WAKE_GRACE_MINUTES c gets it.
         let card2 = cols(&[("a", "Blocked"), ("b", "In progress"), ("c", "In progress")]);
         let s = step(&mut queue, t(1), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card, 1);
         assert!(!s.changed, "Human test keeps the turn");
         let s = step(&mut queue, t(2), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card2, 1);
+        assert!(s.changed && queue.holder.is_none());
+        assert_eq!(s.wake.as_deref(), Some("b"));
+        assert!(s.logs.iter().any(|(id, l)| id == "a" && l.contains("moved to Blocked")));
+        let s = step(&mut queue, t(2 + q::WAKE_GRACE_MINUTES), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card2, 1);
         assert!(s.changed);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#3");
         assert_eq!(queue.line.len(), 1, "b keeps its place");
         assert!(s.messages.iter().any(|(id, m)| id == "c" && m.contains("your turn")));
         assert!(!s.messages.iter().any(|(id, _)| id == "a"), "a left the testing columns: nothing to hear");
-        assert!(s.logs.iter().any(|(id, l)| id == "a" && l.contains("moved to Blocked")));
+    }
+
+    /// Card #168: a card whose turn comes while its session is stopped is woken once, holds
+    /// its turn's place while its session starts, and hears its turn once it runs.
+    #[test]
+    fn a_stopped_card_whose_turn_comes_is_woken_and_gets_the_turn_once_its_session_runs() {
+        let mut queue = TestAppQueue::default();
+        queue.take(Ask::tester("a", 1), t(0), false);
+        queue.take(Ask::tester("b", 2), t(0), false);
+        queue.take(Ask::tester("c", 3), t(0), false);
+        let card = cols(&[("a", "In progress"), ("b", "Human test"), ("c", "In progress")]);
+        // a holds it and runs: nobody to wake.
+        let s = step(&mut queue, t(1), 60, &Seen::default(), &lv(&["a", "c"], &[]), &card, 1);
+        assert_eq!(s.wake, None);
+        // a releases; b is first and stopped: woken, and c doesn't get the turn.
+        queue.force();
+        let s = step(&mut queue, t(2), 60, &Seen::default(), &lv(&["c"], &[]), &card, 1);
+        assert_eq!(s.wake.as_deref(), Some("b"));
+        assert!(s.changed && queue.holder.is_none());
+        assert_eq!(slot_status(&queue, t(2), 60, &Seen::default(), &lv(&["c"], &[]))["line"][0]["waking"], true);
+        let s = step(&mut queue, t(3), 60, &Seen::default(), &lv(&["c"], &[]), &card, 1);
+        assert_eq!(s.wake, None, "woken once");
+        assert!(queue.holder.is_none(), "c waits while b's session starts");
+        // b's session runs: b gets the turn and its message.
+        let s = step(&mut queue, t(4), 60, &Seen::default(), &lv(&["b", "c"], &[]), &card, 1);
+        assert_eq!(queue.holder.as_ref().unwrap().who.label, "#2");
+        assert!(s.messages.iter().any(|(id, m)| id == "b" && m.contains("your turn")));
+        // A holder that heard its turn and then stopped (paused when idle) isn't woken.
+        let mut queue = TestAppQueue::default();
+        queue.take(Ask::tester("a", 1), t(0), false);
+        assert_eq!(step(&mut queue, t(1), 60, &Seen::default(), &Live::default(), &card, 1).wake, None);
+        // One given the turn while stopped (the slot line's take: its message waits) is woken, once.
+        let unheard = Live { unheard: ["a".to_string()].into_iter().collect(), ..Live::default() };
+        let s = step(&mut queue, t(1), 60, &Seen::default(), &unheard, &card, 1);
+        assert_eq!(s.wake.as_deref(), Some("a"));
+        assert_eq!(slot_status(&queue, t(1), 60, &Seen::default(), &Live::default())["holder"]["waking"], true);
+        assert_eq!(step(&mut queue, t(2), 60, &Seen::default(), &unheard, &card, 1).wake, None);
+        // Its session didn't come up within the grace: its turn ends, and it hears why.
+        let s = step(&mut queue, t(1 + q::WAKE_GRACE_MINUTES), 60, &Seen::default(), &unheard, &card, 1);
+        assert!(queue.holder.is_none());
+        assert!(s.logs.iter().any(|(id, l)| id == "a" && l.contains("its session was stopped and didn't start within 5 min")), "{:?}", s.logs);
+        assert!(s.messages.iter().any(|(id, m)| id == "a" && m.contains("Your turn on the test app ended")));
+        // A new session started for its turn is told where to start.
+        let m = woke_new_message(168, "Human test", 6);
+        assert!(m.contains("card #168") && m.contains("Test 6") && m.contains("Human test") && m.contains("kanban_get_card"), "{m}");
+        // A card that left the testing columns is never woken: it leaves the line instead.
+        let mut queue = TestAppQueue::default();
+        queue.take(Ask::tester("z", 9), t(0), false);
+        queue.take(Ask::tester("a", 1), t(0), false);
+        queue.force();
+        let s = step(&mut queue, t(1), 60, &Seen::default(), &Live::default(), cols(&[("a", "Planning")]), 1);
+        assert_eq!(s.wake, None);
+        assert!(queue.line.is_empty());
     }
 
     #[test]
@@ -1180,10 +1384,10 @@ mod tests {
         queue.take(Ask::tester("a", 1), t(0), false);
         queue.take(Ask::tester("b", 2), t(0), false);
         queue.force();
-        let dsh = Seen { dsh: Some(Dsh { owner: "105".into(), age_minutes: 3, dead: false }), ..Default::default() };
+        let dsh = Seen { dsh: Some(Dsh { owner: "105".into(), age_minutes: 3, dead: false, alive: false }), ..Default::default() };
         let card = cols(&[("a", "In progress"), ("b", "In progress")]);
         assert!(!step(&mut queue, t(1), 60, &dsh, &lv(&["a", "b"], &[]), &card, 1).changed);
-        let mine = Seen { dsh: Some(Dsh { owner: "2".into(), age_minutes: 3, dead: false }), ..Default::default() };
+        let mine = Seen { dsh: Some(Dsh { owner: "2".into(), age_minutes: 3, dead: false, alive: false }), ..Default::default() };
         step(&mut queue, t(2), 60, &mine, &lv(&["a", "b"], &[]), &card, 1);
         assert_eq!(queue.holder.as_ref().unwrap().who.label, "#2");
     }
@@ -1212,9 +1416,116 @@ mod tests {
         assert_eq!(q.holder.as_ref().unwrap().who.label, "#2");
         // A killed run's DSH folder (dead pid) blocks nobody.
         let mut q = mk();
-        let dead = Seen { dsh: Some(Dsh { owner: "router".into(), age_minutes: 5, dead: true }), ..Default::default() };
+        let dead = Seen { dsh: Some(Dsh { owner: "router".into(), age_minutes: 5, dead: true, alive: false }), ..Default::default() };
         step(&mut q, t(3), 60, &dead, &lv(&["a", "b"], &[]), &card, 1);
         assert_eq!(q.holder.as_ref().unwrap().who.label, "#1");
+    }
+
+    fn dsh(owner: &str, age_minutes: i64, dead: bool, alive: bool) -> Seen {
+        Seen { dsh: Some(Dsh { owner: owner.into(), age_minutes, dead, alive }), ..Default::default() }
+    }
+
+    /// Card #149, as it was on 9 Nov: nobody holds the turn, #131 is first in line and live,
+    /// and an older writer's DSH folder (owner 108, no pid line) is 3410 min old.
+    #[test]
+    fn a_stale_old_dsh_folder_no_longer_blocks_the_line() {
+        let card = cols(&[("card-131", "In progress")]);
+        let mk = || {
+            let mut q = TestAppQueue::default();
+            q.take(Ask::tester("card-131", 131), t(0), true);
+            q
+        };
+        let old = dsh("108", 3410, false, false);
+        assert!(!old.blocks("131"));
+        let mut q = mk();
+        let s = step(&mut q, t(1), 60, &old, &lv(&["card-131"], &[]), &card, 1);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "#131");
+        assert!(s.messages.iter().any(|(id, m)| id == "card-131" && m.contains("your turn")), "its session is told");
+        assert!(old.dsh.as_ref().unwrap().stale());
+        // Just under the stale age, it still blocks; at it, it doesn't.
+        let mut q = mk();
+        assert!(!step(&mut q, t(1), 60, &dsh("108", DSH_STALE_MINUTES - 1, false, false), &lv(&["card-131"], &[]), &card, 1).changed);
+        step(&mut q, t(2), 60, &dsh("108", DSH_STALE_MINUTES, false, false), &lv(&["card-131"], &[]), &card, 1);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "#131");
+    }
+
+    #[test]
+    fn a_fresh_dsh_folder_or_one_whose_install_still_runs_still_blocks() {
+        let card = cols(&[("card-131", "In progress")]);
+        let live = lv(&["card-131"], &[]);
+        for (seen, what) in [(dsh("108", 3, false, false), "fresh, no pid line"), (dsh("108", 3410, false, true), "old, but its run still runs")] {
+            let mut q = TestAppQueue::default();
+            q.take(Ask::tester("card-131", 131), t(0), true);
+            assert!(!step(&mut q, t(1), 60, &seen, &live, &card, 1).changed, "{what}");
+            assert!(q.holder.is_none(), "{what}");
+            assert!(!seen.dsh.as_ref().unwrap().stale(), "{what}");
+        }
+        // Its own owner isn't blocked by it.
+        let mut q = TestAppQueue::default();
+        q.take(Ask::tester("card-131", 131), t(0), true);
+        step(&mut q, t(1), 60, &dsh("131", 3, false, true), &live, &card, 1);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "#131");
+    }
+
+    #[test]
+    fn an_install_still_blocks_the_first_live_card() {
+        let card = cols(&[("card-131", "In progress")]);
+        let live = lv(&["card-131"], &[]);
+        let mk = || {
+            let mut q = TestAppQueue::default();
+            q.take(Ask::tester("card-131", 131), t(0), true);
+            q
+        };
+        // An install outside the queue holding install.lock, or its file there but unreadable.
+        for seen in [
+            Seen { lock: Some(Lock { owner: "hugh".into(), phase: "installing".into(), ..Default::default() }), lock_present: true, ..Default::default() },
+            Seen { lock_present: true, ..Default::default() },
+        ] {
+            let mut q = mk();
+            assert!(!step(&mut q, t(1), 60, &seen, &live, &card, 1).changed);
+        }
+        // An install turn held in the queue.
+        let mut q = TestAppQueue::default();
+        q.take(Ask::install("router", "wave 3"), t(0), false);
+        q.take(Ask::tester("card-131", 131), t(0), false);
+        let installing = Seen { lock: Some(Lock { owner: "router".into(), ..Default::default() }), lock_present: true, ..Default::default() };
+        step(&mut q, t(1), 60, &installing, &live, &card, 1);
+        assert_eq!(q.holder.as_ref().unwrap().who.label, "wave 3");
+        assert_eq!(q.line.len(), 1);
+    }
+
+    /// The tool's take, as #131's session called it: the reply says it has the turn.
+    #[test]
+    fn a_take_from_first_in_line_or_behind_a_paused_card_gets_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let mut p = kanban_store::Patch::new();
+        p.insert("title".into(), json!("x"));
+        let mut ids = vec![];
+        for _ in 0..2 {
+            let c = store.create(None, p.clone(), "t").unwrap();
+            store.move_by_hugh(&c.id, c.version, "In progress", kanban_store::Patch::new()).unwrap();
+            ids.push(c.id);
+        }
+        let (paused, me) = (ids[0].clone(), ids[1].clone());
+        let live = lv(&[&me], &[]);
+        let shared = |d: Seen| Shared { dsh: d.dsh, ..Default::default() };
+        let take = |s: &mut Store, sh: &Shared| act(s, Some(&me), "take", &json!({}), t(1), 60, sh, &live).unwrap();
+        // Blocked by a fresh DSH folder: in line. Asked again once it is stale: given.
+        let r = take(&mut store, &shared(dsh("108", 3, false, false)));
+        assert!(r.contains("number 1 in line"), "{r}");
+        let r = take(&mut store, &shared(dsh("108", 3410, false, false)));
+        assert!(r.contains("your turn"), "{r}");
+        let slot = q::card_slot(&store.get(&me).unwrap()).unwrap();
+        assert!(store.test_app_queue_for(slot).unwrap().line.is_empty());
+        // Behind a card whose session isn't running, on the same test app.
+        let mut queue = store.test_app_queue_for(slot).unwrap();
+        queue.release(Some(&me), "", TESTER);
+        queue.take(Ask::tester(&paused, 1), t(0), true);
+        store.save_test_app_queue_for(slot, &queue).unwrap();
+        let r = take(&mut store, &Shared::default());
+        assert!(r.contains("your turn"), "{r}");
+        assert_eq!(store.test_app_queue_for(slot).unwrap().line.len(), 1, "the paused card keeps its place");
     }
 
     #[test]
@@ -1313,7 +1624,7 @@ mod tests {
         let c = mk_card(&mut store, "In progress");
         let d = mk_card(&mut store, "Backlog");
         let e2 = mk_card(&mut store, "In progress");
-        let call = |s: &mut Store, own: Option<&str>, action: &str, args: Value| act(s, own, action, &args, t(0), 60, &Shared::default());
+        let call = |s: &mut Store, own: Option<&str>, action: &str, args: Value| act(s, own, action, &args, t(0), 60, &Shared::default(), &Live::default());
         // A card in Backlog is told which columns take a turn.
         let e = call(&mut store, Some(&d.id), "take", json!({})).unwrap_err();
         assert!(e.contains("In progress or Human test") && e.contains("Backlog"), "{e}");
@@ -1363,14 +1674,14 @@ mod tests {
         store.set_page_setting("testapp.slots", "1").unwrap();
         let a = mk_card(&mut store, "In progress");
         let b = mk_card(&mut store, "In progress");
-        let take = |s: &mut Store, own: &str| act(s, Some(own), "take", &json!({}), t(0), 60, &Shared::default());
+        let take = |s: &mut Store, own: &str| act(s, Some(own), "take", &json!({}), t(0), 60, &Shared::default(), &Live::default());
         take(&mut store, &a.id).unwrap();
         let r = take(&mut store, &b.id).unwrap();
         assert!(r.contains("Every test app up to Test is taken") && r.contains(&format!("Test #{}", a.number)) && r.contains("number 1 in line"), "{r}");
         // a goes to Ship it: the pump frees Test and gives it to b, whose session hears it.
         let a2 = store.get(&a.id).unwrap();
         store.move_by_hugh(&a.id, a2.version, "Ship it", kanban_store::Patch::new()).unwrap();
-        assert!(run(&mut store, t(1), 60, &Shared::default(), &lv(&[&b.id], &[])));
+        assert!(run(&mut store, t(1), 60, &Shared::default(), &lv(&[&b.id], &[])).0);
         assert_eq!(kanban_store::card_slot(&store.get(&a.id).unwrap()), None);
         assert_eq!(kanban_store::card_slot(&store.get(&b.id).unwrap()), Some(1));
         assert!(store.test_app_queue_for(1).unwrap().holds(Some(&b.id), &b.number.to_string(), TESTER));
@@ -1386,9 +1697,9 @@ mod tests {
         let b = mk_card(&mut store, "In progress");
         // An install into Test 2 runs; a gets Test and b Test 2.
         let shared = Shared { lock: Some(Lock { owner: "x".into(), channel: Some("test2".into()), ..Default::default() }), lock_present: true, ..Default::default() };
-        let r = act(&mut store, Some(&a.id), "take", &json!({}), t(0), 60, &shared).unwrap();
+        let r = act(&mut store, Some(&a.id), "take", &json!({}), t(0), 60, &shared, &Live::default()).unwrap();
         assert!(r.contains("your turn") && r.contains("Test ("), "Test 2's install doesn't hold a turn on Test: {r}");
-        let r = act(&mut store, Some(&b.id), "take", &json!({}), t(0), 60, &shared).unwrap();
+        let r = act(&mut store, Some(&b.id), "take", &json!({}), t(0), 60, &shared, &Live::default()).unwrap();
         assert!(r.contains("Test 2") && r.contains("number 1 in line for its turn"), "Test 2's own install holds its turn: {r}");
         assert_eq!(kanban_store::card_slot(&store.get(&b.id).unwrap()), Some(2));
     }
@@ -1408,7 +1719,7 @@ mod tests {
             waits: vec![Lock { owner: "router".into(), label: "wave 3".into(), phase: "waiting".into(), waiting_for: Some("the test app's turn: #1 (tester)".into()), channel: Some("test2".into()), ..Default::default() }],
             hold: Hold { until: Some(t(20)), allow_until: None },
             inputs: [(2, t(-3))].into_iter().collect(),
-            dsh: Some(Dsh { owner: "105".into(), age_minutes: 70, dead: false }),
+            dsh: Some(Dsh { owner: "105".into(), age_minutes: 70, dead: false, alive: false }),
             ..Default::default()
         };
         let s = status(&apps, t(46), 60, &shared, &lv(&["a"], &[]));
@@ -1465,10 +1776,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(dir.path().join("b.db")).unwrap();
         let a = mk_card(&mut store, "In progress");
-        act(&mut store, Some(&a.id), "take", &json!({}), t(0), 60, &Shared::default()).unwrap();
-        let e = act(&mut store, None, "take", &json!({ "install": true, "owner": "router", "slot": 1 }), t(0), 60, &Shared::default()).unwrap_err();
+        act(&mut store, Some(&a.id), "take", &json!({}), t(0), 60, &Shared::default(), &Live::default()).unwrap();
+        let e = act(&mut store, None, "take", &json!({ "install": true, "owner": "router", "slot": 1 }), t(0), 60, &Shared::default(), &Live::default()).unwrap_err();
         assert!(e.contains("Test holds card #") && e.contains("free --slot 1"), "{e}");
-        assert!(act(&mut store, None, "take", &json!({ "install": true, "owner": "router", "slot": 2 }), t(0), 60, &Shared::default()).is_ok());
+        assert!(act(&mut store, None, "take", &json!({ "install": true, "owner": "router", "slot": 2 }), t(0), 60, &Shared::default(), &Live::default()).is_ok());
     }
 
     #[test]
@@ -1488,6 +1799,32 @@ mod tests {
         store.move_by_hugh(&a.id, c.version, "Ship it", kanban_store::Patch::new()).unwrap();
         run(&mut store, t(3), 60, &Shared::default(), &Live::default());
         assert!(store.waiting(&a.id, "message").unwrap().is_none());
+    }
+
+    /// Card #168: a card given a test app and its turn while stopped (the slot line's take) is
+    /// woken; if its session hasn't started within the grace, its turn ends and its test app is
+    /// freed, so the next card waiting for one gets it.
+    #[test]
+    fn a_stopped_card_whose_start_never_comes_frees_its_test_app_for_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("b.db")).unwrap();
+        let a = mk_card(&mut store, "In progress");
+        store.give_test_app(&a.id, 2, t(0)).unwrap();
+        let mut queue = TestAppQueue::default();
+        queue.take(Ask::tester(&a.id, a.number), t(0), false);
+        store.save_test_app_queue_for(2, &queue).unwrap();
+        store.queue(&a.id, "message", &given_message(a.number, 60, 2)).unwrap();
+        // Stopped, its turn unheard: woken once.
+        let (_, wakes) = run(&mut store, t(1), 60, &Shared::default(), &Live::default());
+        assert_eq!(wakes, vec![(a.id.clone(), 2)]);
+        assert_eq!(run(&mut store, t(2), 60, &Shared::default(), &Live::default()).1, vec![]);
+        assert_eq!(kanban_store::card_slot(&store.get(&a.id).unwrap()), Some(2), "kept while its session starts");
+        // Not up within the grace: the turn ends and Test 2 is free again.
+        run(&mut store, t(1 + q::WAKE_GRACE_MINUTES), 60, &Shared::default(), &Live::default());
+        assert!(store.test_app_queue_for(2).unwrap().holder.is_none());
+        assert_eq!(kanban_store::card_slot(&store.get(&a.id).unwrap()), None);
+        let log: Vec<String> = store.log(&a.id).unwrap().iter().map(|l| l.text.clone()).collect();
+        assert!(log.iter().any(|l| l.contains("didn't start within 5 min")), "{log:?}");
     }
 
     #[test]
@@ -1554,13 +1891,18 @@ mod tests {
         std::fs::write(dsh.join("owner"), "105\n").unwrap();
         let d = read_dsh(&dsh, Utc::now()).unwrap();
         assert_eq!(d.owner, "105");
-        assert!(!d.dead, "an old card's folder has no pid line");
+        assert!(!d.dead && !d.alive, "an old card's folder has no pid line");
+        assert!(!d.stale() && d.blocks("1"), "fresh, it blocks");
+        let later = Utc::now() + Duration::minutes(DSH_STALE_MINUTES + 1);
+        assert!(read_dsh(&dsh, later).unwrap().stale(), "an hour on, it doesn't (card #149)");
         std::fs::write(dsh.join("owner"), "router\npid 4 2020-01-01T00:00:00Z\n").unwrap();
         let d = read_dsh(&dsh, Utc::now()).unwrap();
         assert_eq!(d.owner, "router");
-        assert!(d.dead);
+        assert!(d.dead && !d.alive);
         std::fs::write(dsh.join("owner"), format!("router\npid {me} {}\n", stamp(start))).unwrap();
-        assert!(!read_dsh(&dsh, Utc::now()).unwrap().dead);
+        let d = read_dsh(&dsh, later).unwrap();
+        assert!(!d.dead && d.alive);
+        assert!(!d.stale(), "its run still runs: never stale, whatever its age");
         let aside = release_dsh(&dsh, Utc::now()).unwrap();
         assert!(!dsh.exists() && aside.join("owner").exists());
         assert!(read_dsh(&dsh, Utc::now()).is_none());

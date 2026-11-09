@@ -641,6 +641,26 @@ cards. Decisions (the card session's, for Hugh to overturn):
   worktree's main checkout, else the own-worktree list, else `repos.json`) and keys the lane by
   the checkout's GitHub `origin`, so an old repo name shares its lane; none found is needs-hugh.
 
+## Card #168: a stopped card's session starts when its test-app turn comes (9 Nov 2026)
+
+Hugh's ask: "When it's their turn, their session should be started again." Decisions (the card
+session's, for Hugh to overturn):
+
+- **A third exception to "sessions start only by Hugh's click or auto-spawn"** (AGENTS.md), like
+  the merge lane's: only a card in In progress or Human test whose own turn has come, never a
+  desktop-only conversation, through `begin_session` so the cap applies.
+- **5 minutes' grace** (`WAKE_GRACE_MINUTES`): a woken card keeps the turn's place while its
+  session starts, so the card behind can't jump it; after that the line moves on, so a start
+  waiting under the cap, or one that hangs, never stalls the line. It keeps its place.
+- **Once per stop**, never retried: a start that fails ends a held turn and passes a place over
+  at once, logged. Seeing its session run again (a live holder, its own take) clears the mark.
+  A woken holder gets the same grace, then loses the turn. A holder that heard its turn and then
+  stopped (paused when idle) isn't woken: it has nothing new, and its turn times out as before.
+- **A card Hugh stopped is woken too.** To stop a card testing, move it out of In progress or
+  Human test.
+- **Card #149 folded in.** Its unshipped fix (d4d4b42) was cherry-picked onto this branch, its
+  conflicts resolved for card #147's test app per card; it ships with this card.
+
 ## Platforms (6 Nov 2026, cards #114 and #117)
 
 - Every operating-system call sits in `src-tauri/src/platform/` behind one interface
