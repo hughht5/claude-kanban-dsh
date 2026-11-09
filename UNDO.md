@@ -809,3 +809,16 @@ Docs, prompts and one test; no app code, no data. PowerShell 5.1 commands.
 | `src-tauri\src\presize.rs`, `begin_session`'s sizing step and `Begun::Sizing`, `router::record_with` and `router::RULES`, `Sessions::adopt`, the setting `sessions.size_before_start`, the "Sizing…" chip, the panel's start row and the Settings switch | Turn it off without a build: Settings > Sessions > untick "Size cards before their session starts". Or `git -C ~\claude-kanban-dsh revert --no-edit <the card #159 commits>`, then stage the live update as usual. A card left with a `sizing` field is harmless to an older build, which never reads it |
 | The bundled `prompts\planning.md` step 1 (a card that already has a route goes on from step 3) | The same revert |
 | The owner's private `prompts\planning.md`, the same line | Revert the card #159 commit in the private repo |
+
+## One merge lane per repo, the backend (9 Nov 2026, card #160, branch `card-160`)
+
+PowerShell 5.1 commands. `<checkout>` is the checkout named in the merge-lane setting, `<repo>` its `owner/name`.
+
+| Change | Undo |
+|---|---|
+| The setting `sessions.merge_lane_repos` (empty by default: no repo ships through a lane), and `lanes.model` / `lanes.effort` | Empty the list in Settings and Save. Every repo then ships with the per-card card-merger, as before |
+| Migration 16: the append-only `lane_sessions` table (`crates\store\src\schema16.sql`, `crates\store\src\lanes.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #160 commits>`. The board keeps the table at version 16; an older build opens it as it is and never reads it, so it is harmless left in place. The backup taken before the migration is in the data folder's `backups` (`*-pre-migration.db`) |
+| A lane's job on a card's `merge` field (states `queued`, `running`, `cancelled`, and `lane`, `base`, `startedAt`, `onto` beside the card-merger's) | Nothing to undo: an older build shows an unknown state as no chip, and every move into Ship it clears the field |
+| A lane's worktree, made by the app (`<checkout>\.claude\worktrees\merge-lane`, `<channel>-merge-lane` from a test app), detached, no branch | Once no lane runs: `git -C <checkout> worktree remove --force <checkout>\.claude\worktrees\merge-lane` (it holds only the lane's own commits, already reported by SHA) |
+| A lane's session folder and conversation (`%USERPROFILE%\.claude-kanban-dsh\sessions\<row>\`, the transcript under the main account) | Leave them: they are the lane's history. Nothing reads them once the list is empty |
+| The lane itself (`src-tauri\src\lane.rs`, `lanetools.rs`, `prompts\merge-lane.md`), `kanban_merge` (`tools.rs`, `api.rs`, `routertools.rs`), `sessions::is_app_key` and the lane plan (`sessions.rs`), `guard::lane_refusal` (`guard.rs`), the Ship it note (`dispatch.rs`), the feed's "merge lane" writers (`feed.rs`, both), `lane_status` / `lane_stop` (`main.rs`) | The same revert, then stage the live update as usual |
