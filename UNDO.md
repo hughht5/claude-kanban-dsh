@@ -916,6 +916,7 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
 
+
 ## Router panel: log and chat side by side (card #128, branch `dsh-128`)
 
 UI only; nothing on the board or in the data folder changes. The saved width (`router.width` in the WebView's localStorage) is only read.
@@ -955,3 +956,4 @@ Prompt text only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the car
 |---|---|
 | `src-tauri\windows\hooks.nsh`: the installer deletes old `kb.old-*.exe` copies, renames kb.exe to a free `kb.old-N.exe` (N up to 99), writes the new kb.exe, then deletes the moved copy if nothing runs it (or moves it back if the write failed); uninstall also deletes `kb.old-*.exe` and the emptied folder | `git revert` the card's commit. Leftover `kb.old-N.exe` files are only old copies, in the live folder and every test slot: `Get-ChildItem "$env:USERPROFILE\Programs\Claude Kanban DSH*\kb.old-*.exe" -ErrorAction SilentlyContinue \| Remove-Item -ErrorAction SilentlyContinue` (those still in use stay) |
 | `scripts\test-kb-locked.ps1` (new) | `Remove-Item scripts\test-kb-locked.ps1 -Confirm:$false` |
+
