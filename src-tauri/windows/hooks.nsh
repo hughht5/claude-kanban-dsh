@@ -15,6 +15,8 @@
 ; Copies still in use stay; the next install deletes them. They don't resolve as `kb`, so PATH
 ; and new sessions get the new kb.exe, and running ones keep the old copy until they end.
 ; If the new kb.exe doesn't land, the old one is moved back, so `kb` never goes missing.
+; Whenever kb.exe is left as the old one, the installer exits 3 (card #134): the app itself is
+; installed, so install.ps1 and Restart now's helper carry on, and say which processes hold it.
 
 ; This file is included at the top level of Tauri's installer.nsi, so it can declare these.
 Var KanbanKbN
@@ -37,15 +39,21 @@ Var KanbanKbOld
   kanban_kb_next:
     IntOp $KanbanKbN $KanbanKbN + 1
     IntCmp $KanbanKbN 99 kanban_kb_try kanban_kb_try 0
-  ; Nothing could move it (99 copies in use, or a lock that refuses renames): the write below
-  ; fails as it used to and the old kb.exe stays. Saying so loudly is card #133.
-  DetailPrint "kb.exe is in use and couldn't be moved aside; the old one stays"
+  ; Nothing could move it (99 copies in use, or a lock that refuses renames). Write over it
+  ; anyway; if that fails too, the old kb.exe stays and the installer exits 3 (card #134).
+  ClearErrors
+  File /nonfatal "${KANBAN_KB_EXE}"
+  IfErrors 0 kanban_kb_done
+  DetailPrint "kb.exe is in use and couldn't be replaced; the old one stays"
+  SetErrorLevel 3
+  Goto kanban_kb_done
   kanban_kb_write:
   File "${KANBAN_KB_EXE}"
   StrCmp $KanbanKbOld "" kanban_kb_done 0
   IfFileExists "$INSTDIR\kb.exe" kanban_kb_landed 0
-    ; The new one didn't land: put the old one back, so kb still runs.
+    ; The new one didn't land: put the old one back, so kb still runs, and exit 3.
     Rename "$KanbanKbOld" "$INSTDIR\kb.exe"
+    SetErrorLevel 3
     Goto kanban_kb_done
   kanban_kb_landed:
     ; Not in use after all: the copy goes now. In use: the delete fails and it waits.

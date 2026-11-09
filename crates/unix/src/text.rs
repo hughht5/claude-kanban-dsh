@@ -258,13 +258,24 @@ exit 0
     s
 }
 
-/// The helper's result file: (ok, error, at). `None` when it isn't the result's JSON.
+/// The helper's result file: (ok, error, at). `None` when it isn't the result's JSON. A
+/// byte-order mark is allowed, though neither helper writes one.
 pub fn restart_result(json: &str) -> Option<(bool, Option<String>, String)> {
-    let v: serde_json::Value = serde_json::from_str(json.trim()).ok()?;
+    let v: serde_json::Value = serde_json::from_str(json.trim_start_matches('\u{feff}').trim()).ok()?;
     let ok = v.get("ok")?.as_bool()?;
     let error = v.get("error").and_then(|e| e.as_str()).map(str::to_string);
     let at = v.get("at").and_then(|a| a.as_str()).unwrap_or("").to_string();
     Some((ok, error, at))
+}
+
+/// What the result is about (card #134): "kb" when the app installed but kb.exe is still the old
+/// one (Windows' installer exit 3); "install" otherwise, and for a file with no `kind`, as the
+/// Mac helper writes.
+pub fn restart_kind(json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(json.trim_start_matches('\u{feff}').trim())
+        .ok()
+        .and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "install".into())
 }
 
 /// What Cmd+Q does next.
@@ -467,6 +478,12 @@ mod tests {
         assert_eq!(restart_result(r#"{"ok":true,"extra":1}"#), Some((true, None, String::new())));
         assert_eq!(restart_result(r#"{"error":"x"}"#), None);
         assert_eq!(restart_result("not json"), None);
+        // With a byte-order mark, and with Windows' kind (card #134).
+        let kb = "\u{feff}{\"ok\":false,\"kind\":\"kb\",\"error\":\"powershell.exe (pid 7)\",\"at\":\"2026-11-09T21:00:00Z\"}";
+        assert_eq!(restart_result(kb), Some((false, Some("powershell.exe (pid 7)".into()), "2026-11-09T21:00:00Z".into())));
+        assert_eq!(restart_kind(kb), "kb");
+        assert_eq!(restart_kind(r#"{"ok":false,"error":"x"}"#), "install", "the Mac helper writes no kind");
+        assert_eq!(restart_kind(r#"{"ok":true,"kind":null}"#), "install");
     }
 
     #[test]

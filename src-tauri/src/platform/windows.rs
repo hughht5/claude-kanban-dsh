@@ -295,33 +295,62 @@ fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
+/// `scripts\kb-holders.ps1`: `Get-KbHolders <path>`, the processes holding a file (card #134).
+/// install.ps1 dot-sources the same file.
+const KB_HOLDERS: &str = include_str!("../../../scripts/kb-holders.ps1");
+
 /// The helper's script: wait for the app (pid) to exit, run the installer silently into the
 /// install folder, then start the app again whatever the installer did, so Hugh is never left
 /// without the board. It starts in front, not with `--background`: Hugh clicked Restart now, so
 /// he is looking at the board and expects it back. Each step is logged to `log`.
+///
+/// Before the start it writes `restart-result.json` beside the log, as the Mac helper does
+/// (card #134): UTF-8 with no byte-order mark, `{ok, kind, error, at}`. The installer's exit 3
+/// (hooks.nsh: the app is installed but kb.exe is still the old one) is kind "kb", with the
+/// processes holding kb.exe as its error; any other failure is kind "install".
 pub fn update_helper(pid: u32, installer: &Path, install_dir: &Path, app_exe: &Path, log: &Path) -> String {
+    let result = ps_quote(&log.with_file_name("restart-result.json").display().to_string());
+    let kb = ps_quote(&install_dir.join("kb.exe").display().to_string());
     let log = ps_quote(&log.display().to_string());
     let setup = ps_quote(&installer.display().to_string());
     // /D must come last and unquoted, even with spaces (NSIS).
     let d_arg = ps_quote(&format!("/D={}", install_dir.display()));
     let dir = ps_quote(&install_dir.display().to_string());
     let exe = ps_quote(&app_exe.display().to_string());
-    format!(
+    let body = format!(
         "$ErrorActionPreference = 'Continue'\n\
          $log = {log}\n\
+         $result = {result}\n\
          function Note($t) {{ \"$(Get-Date -Format o) $t\" | Out-File -FilePath $log -Append -Encoding utf8 }}\n\
+         function Result($ok, $kind, $err) {{\n\
+           try {{\n\
+             $j = [ordered]@{{ ok = $ok; kind = $kind; error = $err; at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }} | ConvertTo-Json -Compress\n\
+             [System.IO.File]::WriteAllText($result, $j, (New-Object System.Text.UTF8Encoding $false))\n\
+           }} catch {{ Note \"Couldn't write the result: $_\" }}\n\
+         }}\n\
          Note 'Waiting for the app (pid {pid}) to exit'\n\
          try {{ Wait-Process -Id {pid} -Timeout 300 -ErrorAction Stop }} catch {{}}\n\
-         if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Note 'The app is still running after 5 minutes; not installing.'; exit 1 }}\n\
+         if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Note 'The app is still running after 5 minutes; not installing.'; Result $false 'install' 'The app was still running after 5 minutes, so the update was not installed.'; exit 1 }}\n\
          Note ('Installing ' + {setup})\n\
+         $code = $null\n\
          try {{\n\
            $p = Start-Process -FilePath {setup} -ArgumentList '/S', {d_arg} -Wait -PassThru\n\
-           Note \"Installer exit code $($p.ExitCode)\"\n\
-         }} catch {{ Note \"Installer failed to start: $_\" }}\n\
+           $code = $p.ExitCode\n\
+           Note \"Installer exit code $code\"\n\
+         }} catch {{ Note \"Installer failed to start: $_\"; Result $false 'install' \"The installer didn't start: $_\" }}\n\
+         if ($code -eq 0) {{ Result $true $null $null }}\n\
+         elseif ($code -eq 3) {{\n\
+           $h = @(Get-KbHolders {kb})\n\
+           $who = if ($h.Count) {{ $h -join ', ' }} else {{ 'a process Windows would not name' }}\n\
+           Note \"kb.exe is still the old one: held by $who\"\n\
+           Result $false 'kb' $who\n\
+         }}\n\
+         elseif ($code -ne $null) {{ Result $false 'install' \"The installer exited with code $code\" }}\n\
          Note ('Starting ' + {exe})\n\
          Start-Process -FilePath {exe} -WorkingDirectory {dir}\n\
          Note 'Done'\n"
-    )
+    );
+    format!("{KB_HOLDERS}\n{body}")
 }
 
 /// Starts PowerShell with no window, in its own process group and (when allowed) outside any
@@ -424,6 +453,75 @@ mod tests {
         // The installer runs only after the wait, and the app starts after the installer.
         let (w, i, r) = (s.find("Wait-Process").unwrap(), s.find("'/S'").unwrap(), s.rfind("Start-Process -FilePath 'C:").unwrap());
         assert!(w < i && i < r);
+    }
+
+    /// Card #134: the result file goes beside the log, exit 3 is kind "kb" with the holders of
+    /// the install's kb.exe, and the helper still fits on a command line once encoded.
+    #[test]
+    fn helper_writes_a_result() {
+        let s = update_helper(7, Path::new(r"C:\a b\setup.exe"), Path::new(r"C:\a b\App"), Path::new(r"C:\a b\App\x.exe"), Path::new(r"C:\a b\u\restart.log"));
+        assert!(s.contains(r"$result = 'C:\a b\u\restart-result.json'"));
+        assert!(s.contains("UTF8Encoding $false"), "no byte-order mark");
+        assert!(s.contains("function Get-KbHolders"), "kb-holders.ps1 is embedded");
+        assert!(s.contains(r"Get-KbHolders 'C:\a b\App\kb.exe'"));
+        assert!(s.contains("$code -eq 3") && s.contains("Result $false 'kb' $who"));
+        // The result is written before the app starts, so the new app reads it at once.
+        assert!(s.find("Result $true").unwrap() < s.rfind("Start-Process -FilePath 'C:").unwrap());
+        // -EncodedCommand: base64 of UTF-16, within Windows' 32767-character command line.
+        assert!(s.encode_utf16().count() * 2 * 4 / 3 + 200 < 32_000, "the helper is too long to start");
+    }
+
+    /// Runs the real helper (hidden, no window) with an installer that isn't there and an app
+    /// that has already exited: it writes a kind "install" result with no byte-order mark.
+    #[test]
+    fn helper_result_has_no_bom() {
+        let t = tempfile::tempdir().unwrap();
+        let Ok(mut done) = Command::new("powershell.exe").args(["-NoProfile", "-Command", "exit 0"]).stdout(Stdio::null()).spawn() else {
+            return; // no PowerShell here
+        };
+        let pid = done.id();
+        done.wait().unwrap();
+        let log = t.path().join("restart.log");
+        let s = update_helper(pid, &t.path().join("no-setup.exe"), t.path(), &t.path().join("no-app.exe"), &log);
+        let file = t.path().join("helper.ps1");
+        std::fs::write(&file, s).unwrap();
+        Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&file)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        let bytes = std::fs::read(t.path().join("restart-result.json")).expect("a result file");
+        assert!(!bytes.starts_with(&[0xef, 0xbb, 0xbf]), "no byte-order mark");
+        let text = String::from_utf8(bytes).unwrap();
+        let (ok, error, at) = kanban_unix::text::restart_result(&text).expect("the result's JSON");
+        assert!(!ok);
+        assert!(error.unwrap().starts_with("The installer didn't start"), "{text}");
+        assert!(at.ends_with('Z') && at.len() == 20, "a UTC time: {at}");
+        assert_eq!(kanban_unix::text::restart_kind(&text), "install");
+    }
+
+    /// `scripts\kb-holders.ps1` names a process that holds a file open (here, the PowerShell
+    /// that opened it), and nothing once it is closed.
+    #[test]
+    fn kb_holders_names_who_holds_a_file() {
+        let t = tempfile::tempdir().unwrap();
+        let held = t.path().join("kb.exe");
+        std::fs::write(&held, b"MZ").unwrap();
+        let script = t.path().join("h.ps1");
+        let body = format!(
+            "{KB_HOLDERS}\n$f = {q}\n$h = [System.IO.File]::Open($f, 'Open', 'Read', 'Read')\n\"pid $PID\"\nGet-KbHolders $f\n$h.Close()\n\"after \" + @(Get-KbHolders $f).Count\n",
+            q = ps_quote(&held.display().to_string())
+        );
+        std::fs::write(&script, body).unwrap();
+        let Ok(out) = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(&script).output() else {
+            return; // no PowerShell here
+        };
+        let out = String::from_utf8_lossy(&out.stdout);
+        let pid = out.lines().find_map(|l| l.strip_prefix("pid ")).expect("its pid").trim().to_string();
+        assert!(out.contains(&format!("powershell.exe (pid {pid})")), "{out}");
+        assert!(out.contains("after 0"), "{out}");
     }
 
     /// The helper must be valid PowerShell: parse it (never run it) with PowerShell's own parser.

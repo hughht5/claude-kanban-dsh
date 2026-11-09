@@ -46,17 +46,33 @@ pub struct Status {
     ready: Option<Staged>,
     /// Why the last Restart now didn't install, once (macOS's helper records it; card #117).
     failed: Option<String>,
+    /// The last Restart now installed the app but left the old kb.exe: the processes that held
+    /// it (Windows' installer exit 3, card #134).
+    kb_notice: Option<String>,
 }
 
-/// The macOS update helper's result, `restart-result.json` beside its log: the error of a
-/// failed install, read once at the first status and then renamed, so the board says it once.
-/// Windows' helper writes no such file.
-fn last_failure(dir: &Path) -> Option<String> {
+/// What went wrong in the last Restart now, from the update helper's `restart-result.json`
+/// beside its log (both systems' helpers write it; Windows' since card #134).
+#[derive(Debug, PartialEq)]
+enum Failure {
+    /// The update didn't install: why.
+    Install(String),
+    /// The app installed, but kb.exe is still the old one: the processes holding it.
+    Kb(String),
+}
+
+/// The helper's result, read once at the first status and then renamed, so the board says it
+/// once. `None` for a good install or no file.
+fn last_failure(dir: &Path) -> Option<Failure> {
     let file = dir.join("restart-result.json");
     let text = std::fs::read_to_string(&file).ok()?;
     let _ = std::fs::rename(&file, dir.join("restart-result.seen.json"));
     let (ok, error, _) = kanban_unix::text::restart_result(&text)?;
-    (!ok).then(|| error.unwrap_or_else(|| "the helper gave no reason".into()))
+    if ok {
+        return None;
+    }
+    let why = error.unwrap_or_else(|| "the helper gave no reason".into());
+    Some(if kanban_unix::text::restart_kind(&text) == "kb" { Failure::Kb(why) } else { Failure::Install(why) })
 }
 
 #[derive(Serialize, Clone)]
@@ -73,8 +89,10 @@ pub struct Updates {
     /// The `built_at` Hugh clicked Later on. Kept in memory only, so it lasts until the app
     /// restarts; a newer staged build has another `built_at` and shows again.
     later: Mutex<Option<String>>,
-    /// Why the last Restart now didn't install (macOS), until Hugh clicks OK on it.
+    /// Why the last Restart now didn't install, until Hugh clicks OK on it.
     failed: Mutex<Option<String>>,
+    /// Who held kb.exe when the last Restart now couldn't replace it, until Hugh clicks OK.
+    kb_notice: Mutex<Option<String>>,
 }
 
 pub fn folder() -> PathBuf {
@@ -113,7 +131,19 @@ impl Updates {
             .ok()
             .and_then(|r| r.clone())
             .filter(|s| later.as_deref() != Some(s.built_at.as_str()));
-        Status { running: Running { version: VERSION, commit: COMMIT, built_at: BUILT_AT }, ready, failed: self.failed.lock().ok().and_then(|f| f.clone()) }
+        Status { running: Running { version: VERSION, commit: COMMIT, built_at: BUILT_AT }, ready, failed: self.failed.lock().ok().and_then(|f| f.clone()), kb_notice: self.kb_notice.lock().ok().and_then(|k| k.clone()) }
+    }
+
+    /// OK on the notice the page shows: the failure if there is one, else the kb.exe notice.
+    fn seen(&self) {
+        if let Ok(mut f) = self.failed.lock() {
+            if f.take().is_some() {
+                return;
+            }
+        }
+        if let Ok(mut k) = self.kb_notice.lock() {
+            *k = None;
+        }
     }
 
     /// Looks at the folder again; true if what is ready changed.
@@ -121,9 +151,13 @@ impl Updates {
         // A failed install's result is picked up at start and at any later look, so a helper
         // that gave up while this copy still ran is told too.
         let mut changed = false;
-        if let Some(why) = last_failure(dir) {
-            if let Ok(mut f) = self.failed.lock() {
-                *f = Some(why);
+        if let Some(failure) = last_failure(dir) {
+            let (slot, text) = match failure {
+                Failure::Install(why) => (&self.failed, why),
+                Failure::Kb(who) => (&self.kb_notice, who),
+            };
+            if let Ok(mut f) = slot.lock() {
+                *f = Some(text);
                 changed = true;
             }
         }
@@ -167,12 +201,11 @@ pub fn update_later(updates: State<Updates>, built_at: String) {
     }
 }
 
-/// OK on "The last update didn't install": the notice goes until another install fails.
+/// OK on "The last update didn't install" or the kb.exe notice: it goes until another install
+/// fails. The page shows one at a time, so OK clears the one it showed: the failure first.
 #[tauri::command]
 pub fn update_failure_seen(updates: State<Updates>) {
-    if let Ok(mut f) = updates.failed.lock() {
-        *f = None;
-    }
+    updates.seen();
 }
 
 /// Restart now: starts the helper, then suspends every session and exits.
@@ -249,11 +282,33 @@ mod tests {
         assert_eq!(last_failure(t.path()), None, "no result file: nothing to say");
         let file = t.path().join("restart-result.json");
         std::fs::write(&file, r#"{"ok":false,"error":"mv: rename failed: Operation not permitted","at":"2026-11-06T10:00:00Z"}"#).unwrap();
-        assert_eq!(last_failure(t.path()).as_deref(), Some("mv: rename failed: Operation not permitted"));
+        assert_eq!(last_failure(t.path()), Some(Failure::Install("mv: rename failed: Operation not permitted".into())));
         assert!(!file.exists() && t.path().join("restart-result.seen.json").is_file(), "kept, renamed");
         assert_eq!(last_failure(t.path()), None, "said once");
         std::fs::write(&file, r#"{"ok":true,"error":null,"at":"2026-11-06T10:00:00Z"}"#).unwrap();
         assert_eq!(last_failure(t.path()), None, "a good install says nothing");
+        // Windows' helper: no byte-order mark, kind "kb" for the installer's exit 3 (card #134).
+        std::fs::write(&file, r#"{"ok":false,"kind":"kb","error":"claude.exe (pid 9)","at":"2026-11-09T21:00:00Z"}"#).unwrap();
+        assert_eq!(last_failure(t.path()), Some(Failure::Kb("claude.exe (pid 9)".into())));
+        std::fs::write(&file, r#"{"ok":false,"kind":"install","error":"The installer exited with code 2","at":"2026-11-09T21:00:00Z"}"#).unwrap();
+        assert_eq!(last_failure(t.path()), Some(Failure::Install("The installer exited with code 2".into())));
+    }
+
+    #[test]
+    fn the_kb_notice_is_not_a_failure() {
+        let t = tempfile::tempdir().unwrap();
+        let u = Updates::default();
+        std::fs::write(t.path().join("restart-result.json"), r#"{"ok":false,"kind":"kb","error":"kb.exe (pid 4)","at":"2026-11-09T21:00:00Z"}"#).unwrap();
+        assert!(u.refresh(t.path()), "a new notice is a change");
+        assert!(!u.refresh(t.path()), "told once");
+        assert_eq!(u.status().kb_notice.as_deref(), Some("kb.exe (pid 4)"));
+        assert_eq!(u.status().failed, None, "the app did install");
+        // A failure and the notice together: OK clears the failure first, then the notice.
+        *u.failed.lock().unwrap() = Some("x".into());
+        u.seen();
+        assert_eq!((u.status().failed, u.status().kb_notice.as_deref()), (None, Some("kb.exe (pid 4)")));
+        u.seen();
+        assert_eq!(u.status().kb_notice, None);
     }
 
     #[test]

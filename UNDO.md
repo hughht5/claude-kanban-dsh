@@ -930,3 +930,12 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | `src-tauri\windows\hooks.nsh` NSIS_HOOK_POSTUNINSTALL: a comment on why the kb clean-up is POST, not PRE, and a log line when a held kb.exe (and so the folder) stays | `git -C ~\claude-kanban-dsh revert --no-edit <the card #137 commit>` |
 | `src-tauri\tests\nsis_hooks.rs` (new): POSTUNINSTALL deletes kb.exe and kb.old-*.exe before its RMDir; PREUNINSTALL touches no kb file | The same revert |
 | `scripts\test-uninstall.ps1` (new): uninstalls a test app twice (plain, and with kb.exe held) and installs it again | The same revert. A test app it left uninstalled (`-LeaveUninstalled`, or a failed run): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Channel <its channel>` |
+
+## Card #134: Restart now result file and kb.exe notice on Windows (9 Nov 2026, branch `stack-133-134`)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\windows\hooks.nsh`: the installer exits 3 when kb.exe is left as the old one | `git -C ~\claude-kanban-dsh revert --no-edit <the card #134 commit>`, then install again. Nothing on disk to clean up |
+| `scripts\kb-holders.ps1` (new); `scripts\install.ps1` treats exit 3 as a warning and exits 3 at the end | The same revert |
+| `platform\windows.rs` `update_helper` writes `update\restart-result.json`; `update.rs` `kb_notice`, `crates\unix` `restart_kind`, the notice bar in `ui\update.js` | The same revert. A result file left behind is read once and renamed `restart-result.seen.json`; an older build ignores the `kind` and shows a kb notice as a failed install |
+| The docs (README.md, HANDOVER.md, this section) | The same revert |

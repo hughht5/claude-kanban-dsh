@@ -18,10 +18,19 @@
   function render(st){
     if(busy)return;
     const r=st&&st.ready;shown=r||null;
-    // On a Mac the helper records a failed install. It comes first, even with the same update
+    // The helper records a failed install (on a Mac since card #117, on Windows since #134). It comes first, even with the same update
     // still staged, and stays until OK (card #117); then the update shows as before.
     if(st&&st.failed){
       bar.innerHTML=`<span class="ut"><b>The last update didn't install</b> — ${esc(st.failed)}. This is the version you had before; the helper's log is in the data folder's update/restart.log.</span>
+        <span class="ua"><button class="btn ghost" type="button" id="updOk">OK</button></span>`;
+      bar.hidden=false;
+      bar.querySelector("#updOk").onclick=()=>{call("update_failure_seen").catch(()=>{}).then(()=>call("update_status")).then(render,()=>{})};
+      return;
+    }
+    // On Windows the update installed, but something held kb.exe, so it is still the old one
+    // (the installer's exit 3, card #134). Not a failure: worded apart, and also until OK.
+    if(st&&st.kb_notice){
+      bar.innerHTML=`<span class="ut"><b>Updated, but kb.exe is still the old version</b> — held by ${esc(st.kb_notice)}. New sessions use the old kb until the next install replaces it; the helper's log is in the data folder's update/restart.log.</span>
         <span class="ua"><button class="btn ghost" type="button" id="updOk">OK</button></span>`;
       bar.hidden=false;
       bar.querySelector("#updOk").onclick=()=>{call("update_failure_seen").catch(()=>{}).then(()=>call("update_status")).then(render,()=>{})};
