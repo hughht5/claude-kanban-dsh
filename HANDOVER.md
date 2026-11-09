@@ -811,6 +811,128 @@ Built on the branch `dsh-100` in the worktree `~\kanban-app-100`, from
   `crates/store/tests/merge.rs` (the clear on entry to Ship it), `sessions.rs` (card sessions get
   it; the guard hook entry).
 
+## One merge lane per repo (9 Nov 2026, card #160)
+
+Built on the branch `card-160` in its worktree. A repo Hugh lists ships through one **merge
+lane**: a Claude Code session the app owns for that repo, which does the ship's merge for every
+card of the repo, one at a time, and keeps its conversation across ships. It resolves a conflict
+with what it learnt merging the earlier cards. Every other repo keeps the per-card card-merger
+(above), unchanged. The card's own session still pushes and ships.
+
+- **The setting:** `sessions.merge_lane_repos` (`crates/store/src/lanes.rs`
+  `MERGE_LANE_REPOS_KEY`), a list of `{repo, checkout}`, empty by default. `check_merge_lane_repos`
+  checks it as the own-worktree list is checked (`config::check_repo_checkout`, now shared): repo
+  `owner/name` and listed once, checkout an absolute path to a git checkout, no token.
+  `merge_lane_repos()` reads it (a saved value that no longer parses counts as none);
+  `merge_lane_repo_for(repo)` finds a card's entry. `lanes.model` and `lanes.effort`
+  (`lane_model_effort()`; default Opus 5.5, effort high, as the merger runs). All three are page
+  settings. The card's own merger switch (card #151) still decides: off means no merger and no
+  lane.
+- **`src-tauri/src/lane.rs`:** the lane. Built like the Router (card #119): key `lane:<repo>`
+  (repo lower case, `kanban_store::lane_key`) in the live session map; not a card;
+  `sessions::is_app_key` (the Router or a lane) replaces each place that skipped the Router's key
+  (the cap, the idle pause, the crash notice, the start queue, `control.rs`, `notify.rs`), so a
+  lane sits outside the cap and is never paused. `plan` gives it the main account (a resume
+  needs the account it ran on), `bypassPermissions`, and `Plan.lane`: `sessions.rs` then passes
+  `prompts/merge-lane.md` as `--append-system-prompt` (its rules survive every compaction), no
+  `--agents`, `--disallowedTools AskUserQuestion`, and the guard matcher `ROUTER_TOOLS` (shells and
+  the edit tools).
+  - `start` makes or finds its worktree (`worktree::make_lane`, 15 s cap, no board lock held),
+    then resumes the repo's last conversation on this channel (`latest_lane_session`, when its
+    transcript and folder are still there) or starts a new one, and records the start in
+    `lane_sessions`. The worktree is `<checkout>\.claude\worktrees\merge-lane`
+    (`<channel>-merge-lane` on a test board, `worktree::lane_path`), detached at `origin/main`
+    (else `main`), never a branch, and kept between jobs so its `target` stays warm.
+  - `request` is `kanban_merge`. `merge_refused` (pure) refuses it, saying why, when the card is
+    archived or not in Ship it, its ship hasn't started, its repo isn't listed, the merger is off,
+    it has no `branch` or `worktreePath`, or a merge already waits or runs. Then, with the board
+    let go, git checks the card's worktree is clean and reads its HEAD (the `base`). It writes
+    `merge` = `{state: "queued", lane, base, branch, worktree, branches?, rules?, checks?, at, by}`
+    and replies "The merge lane has it ... End your turn". `rules` and `checks` are at most 4000
+    characters and refused if they look like a secret.
+  - `tick` runs each dispatcher pass (`dispatch.rs`). With nothing waiting, no lane running and
+    nothing in memory it costs one COUNT (`lane_jobs_waiting`). Else it gathers the `Facts` for
+    each lane and acts on `decide`'s one `Action`: `Start` a lane for a waiting job (on its own
+    thread, at most `MAX_STARTS` = 2 tries, then unclear), `Brief` it when it is ready and idle
+    (`merge.state` "running", `startedAt`), `Type` a waiting note, `Cancel` a job whose card left
+    Ship it (state "cancelled", and the lane is told to drop it), `Resume` a lane that ended during
+    its job (once; it gets `resume_note` and the job again), `TimeOut` after 60 min with no report
+    (unclear), `GiveUp` (unclear: the repo left the list, a lane that ended twice or never
+    started), and `Stop` a lane idle 15 min with no job (its conversation is kept).
+  - `brief`: the card, title, branch, base, the card's worktree (read only for the lane), the
+    other branches, the rules, the checks, and the repo's last 5 finished merges
+    (`recent_merges`, from the cards' `merge` records: card, title, state, head, detail). So the
+    history survives a compaction or a new conversation. A dry-run card's brief starts with the
+    dry-run line.
+  - `record_result` is `kanban_merge_result` (only for the lane's running job). It is recorded
+    with `merger::record_of`, as the card-merger's report, by "the app (merge lane)". A PASS also
+    needs `onto`, and `head` on top of it (`worktree::on_top_of`, `git merge-base --is-ancestor`),
+    else it is unclear. origin moved, or unclear, also tells Hugh. `finish` then wakes the card's
+    session (`stackrun::wake`) with `verdict_message`: on a PASS, check the worktree is clean and
+    HEAD is still `base`, `git reset --hard <head>`, check `git range-diff <onto> <base> <head>`,
+    then go on as 1a's PASS; else `needs-hugh` and stop.
+  - `lane_note` (the Ship it message, beside `subagents_note`, `dispatch.rs`): for a listed repo
+    with the merger on, "don't run the card-merger subagent ... call kanban_merge ... end your
+    turn".
+  - `lane_status` / `lane_stop` (Tauri commands, `main.rs`). `status` gives each listed repo's
+    `{repo, checkout, worktree, state, card, model, effort, live}`; `state_word` (pure) says
+    `off`, `starting`, `idle`, `merging` or `down`. `stop` is Hugh's Stop: the conversation is
+    kept and a job it was on is resumed once. Every change emits `lanes-changed`.
+- **`src-tauri/src/lanetools.rs`:** a lane's MCP tools and instructions (`api.rs` routes a lane's
+  row by `lane::key_of_row`): `kanban_get_card` and `kanban_stack_list` (by number),
+  `kanban_add_log` (only on its job's card) and `kanban_merge_result` (only for its job). Nothing
+  else. `kanban_merge` is in `tools::CARD_SESSION_ONLY`: only a card's own session is offered it,
+  not the Router (`routertools::NOT_FOR_ROUTER`), a lane, `kb` or an outside session.
+- **The guard:** `guard::lane_refusal`. An Edit, Write, NotebookEdit or MultiEdit outside its
+  worktree is refused. In a shell: what the Router may never run (`router_shell_refusal` with no
+  install at all: any push, `gh pr merge`, `gh api`, `kb`, `claude config` / `mcp`,
+  `install.ps1`, a stop of the app, the board database), plus any move of a branch or a worktree
+  (`moves_a_branch`: `git update-ref`, `git switch`, `git branch -f/-d/-D/-m/-c`, `git checkout
+  -b/-B/--orphan`, `git worktree remove/move/prune`). Each refusal is logged on its job's card
+  ("Refused ... by the merge lane").
+- **The store:** migration 16 (`schema16.sql`), the append-only `lane_sessions` (seq, id, repo,
+  claude_session_id, channel, account, cwd, model, effort, started_at; triggers refuse updates and
+  deletes; backup first), with `add_lane_session`, `latest_lane_session(repo, channel)`,
+  `is_lane_row` and `lane_of_row`. Rows carry their channel, so a test board never resumes
+  another channel's lane. A lane's jobs are the cards' `merge` records (`MERGE_STATES`: queued,
+  running, passed, failed, unclear, cancelled), so an app restart loses nothing: `lane_jobs`,
+  `lane_jobs_all`, `lane_jobs_waiting`. A board copy (`-FreshCopy`) cancels the source's waiting
+  jobs (`detach_lane_jobs`). `merge` stays out of `UPDATABLE`. The feeds count "the app (merge
+  lane)" and "the merge lane" as the merger.
+- **UI:** Settings › Sessions, "Ship through one merge lane per repo" (`ui/settings.js`
+  `mergeLaneBox`), on the same `{repo, checkout}` list editor as the own-worktree box
+  (`repoListBox`), with its last 5 changes. Under the list: the lanes' model and effort (saved
+  at once) and each listed repo's lane, its state chip (Off, Starting, Idle, Merging #n, Down),
+  model and effort, and Stop (only while it runs; a confirm while it merges). It polls
+  `lane_status` every 3 s while the section is open and redraws on `lanes-changed`; closing
+  Settings or changing section stops both. `ui/board.js` `CHECKS` `merge` adds the chips
+  "Waiting for the lane" (queued), "Merging" (running) and "Merge cancelled" (cancelled); with
+  `merge.lane` set its hover title starts "In the merge lane for <repo>".
+- **Prompts:** `prompts/merge-lane.md` (the lane's rules and the ship job, rewritten for a
+  detached worktree: clean, fetch, record onto and originBefore, `git checkout --detach <base>`,
+  `git rebase <onto>`, the other branches on top by SHA, resolve, the `(card #n)` check, the
+  checks, fetch again, report). `ship-it.md` 1a and `kanban-app.md` Ship it 1a: "If the app's
+  note says this repo ships through its merge lane", call `kanban_merge` and end the turn; on a
+  PASS the checks, reset and range-diff above, then the push as before. The owner's private
+  prompts get the same on their own branch.
+- **Tests:** `lane.rs` (`decide` for each action, `merge_refused`, the brief, the verdict
+  message, `state_word`, `job_of`, the note, the plan, the rules), `lanetools.rs` (four tools
+  only, logs only on its job's card), `guard.rs`
+  `the_lane_guard_refuses_pushes_kb_installs_branch_moves_and_edits_outside` (and its own work
+  runs), `worktree.rs` (per channel; detached, found again, no branch), `sessions.rs` (the
+  command line), `dispatch.rs` (the Ship it note), `tools.rs` and `api.rs` (`kanban_merge` for
+  card sessions only), `merger.rs` (both ship prompts have the lane step; `merge-lane.md` never
+  pushes and works detached), `crates/store/tests/lanes.rs` (append-only, the backup, an older
+  build opens the board, the list's checks, model and effort, the jobs query, the history, the
+  copy, the merge record isn't a session's), `tools/ui-tests/lane.test.mjs` (the chips, the
+  Settings box, Stop, the shared editor).
+- **Known limits:** no lane panel: Hugh sees the lane's steps in the card's log, its chip, and
+  its state in Settings; opening its chat and terminal is card #129's Running now list. The
+  stack job (a child onto its stack's branch) stays with the lead's card-merger: a stack ships
+  once, on the lead, through the repo's lane. The lane's history is its conversation plus the
+  last 5 merges in each brief; a new conversation (its transcript gone) starts from the brief
+  alone. A lane takes one job at a time. There is no button to start a fresh conversation.
+
 ## Stacks build in parallel (6 Nov 2026, card #113)
 
 Built on the branch `dsh-113` in the worktree `~\kanban-app-113`, from `dsh-agents`

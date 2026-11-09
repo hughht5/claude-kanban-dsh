@@ -580,6 +580,36 @@ its own test app, ship one by one or together if stacked):
   its checkout, so editing its `main` would change every live session before the code ships. The
   private branch ships with the stack.
 
+## Card #160: one merge lane per repo (9 Nov 2026)
+
+Hugh's ask (agreed): replace the per-card card-merger at ship with one merger per repo, a merge
+lane that lives across ships and resolves conflicts with what it learnt merging the earlier
+cards. Decisions (the card session's, for Hugh to overturn):
+
+- **The lane only merges; the card's session still pushes and ships.** Pushing from the lane
+  would make it the one session that may push, and Ship it's PR, deploy and live staging are card
+  work. The lane makes commits on a detached HEAD and reports a SHA; the card's session checks it
+  (its branch unmoved, then `git range-diff`), resets to it and pushes, so the one-push rule and
+  the ORIGIN check stay as they were.
+- **Opt-in per repo, empty by default** (`sessions.merge_lane_repos`, `{repo, checkout}` like the
+  own-worktree list), so nothing changes until Hugh lists a repo. The card's merger switch (card
+  #151) still decides: off means no merger and no lane.
+- **It starts on a ship's merge request, not by a Start button.** Hugh's move into Ship it
+  approved that ship: a second exception to "sessions start only by Hugh's click or auto-spawn",
+  beside R1.
+- **Main account; stopped after 15 min idle.** A resume needs the account it ran on. The
+  conversation is kept, so the next merge resumes it without a process sitting idle.
+- **Its own worktree, kept between jobs** (`<checkout>\.claude\worktrees\merge-lane`, detached),
+  so its build folders stay warm. Cost: one more build folder per repo and a slow first test run.
+- **Its jobs are the cards' `merge` records** (queued, running, then a verdict, or cancelled), so
+  an app restart loses nothing and there is no queue table.
+- **History twice:** the lane's own conversation, plus the repo's last 5 merges in every brief,
+  so it survives a compaction or a lost transcript.
+- **The stack job stays with the lead.** Merging a child into its stack's branch is the lead's
+  card-merger's, as before; the stack still ships once, on the lead, through the repo's lane.
+- **No lane panel on this card.** Hugh sees the lane in the card's log and chips and in Settings;
+  opening its chat and terminal is card #129's.
+
 ## Platforms (6 Nov 2026, cards #114 and #117)
 
 - Every operating-system call sits in `src-tauri/src/platform/` behind one interface

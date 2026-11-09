@@ -203,6 +203,26 @@ Run on dry-run card #29 (main account, low effort). Toasts and the tray are nati
 | 105.8 | Sessions and `kb` can set the fields | `tools.rs` `done_when_fields_are_updatable`; `kb` `done_when_fields_pass_through_update` |
 | 105.9 | The status rule gives each of the five states | In the test app, `tools/cdp.mjs eval` calling `doneWhenStatus` on a fixture card per state (no JavaScript test runner in this repo) |
 
+## Card #160: one merge lane per repo (9 Nov 2026)
+
+| # | Test | How |
+|---|---|---|
+| 160.1 | `lane_sessions` is append-only, migration 16 backs up first, and an older build opens the board | `crates/store/tests/lanes.rs` `migration_16_adds_an_append_only_lane_sessions_table`, `an_older_board_is_backed_up_before_migration_16`, `a_board_at_this_version_opens_on_an_older_build` |
+| 160.2 | The merge-lane list is empty by default and checked like the own-worktree list; the lanes' model and effort default to Opus high and are checked | `the_list_is_empty_by_default_and_checked_like_the_own_worktree_list`, `the_lanes_model_and_effort_default_to_opus_high_and_are_checked` |
+| 160.3 | A lane's latest session is per repo and channel; a board copy cancels the source's waiting jobs; a session can't write `merge` | `a_lane_is_never_a_card_and_its_latest_session_is_per_repo_and_channel`, `a_board_copy_cancels_the_sources_lane_jobs`, `a_session_may_not_write_the_merge_record` |
+| 160.4 | The jobs query counts and lists what each lane owes; the history is the repo's last finished merges, newest first | `the_jobs_query_counts_and_lists_what_each_lane_owes`, `the_history_is_the_repos_last_finished_merges_newest_first` |
+| 160.5 | `decide`: start, brief when free, a note first, time out at 60 min, resume once, cancel when the card leaves Ship it, give up when unlisted, stop after 15 idle min | `src-tauri/src/lane.rs` tests |
+| 160.6 | `kanban_merge` is refused, saying why, for each case; only a card session is offered it | `lane.rs` `kanban_merge_is_refused_saying_why`; `tools.rs` `kanban_merge_is_listed_for_card_sessions`; `api.rs` tool list test |
+| 160.7 | The brief names the job, the history and the dry run; the verdict message gives the PASS steps (status, rev-parse, reset, range-diff) or needs-hugh | `the_brief_names_the_job_the_history_and_the_dry_run`, `the_verdict_message_tells_the_session_the_pass_steps_or_needs_hugh` |
+| 160.8 | The guard refuses the lane's pushes, `kb`, installs, branch moves and edits outside its worktree, and lets its own work run | `guard.rs` `the_lane_guard_refuses_pushes_kb_installs_branch_moves_and_edits_outside` |
+| 160.9 | The lane's worktree is per channel, inside the checkout, detached, found again, and makes no branch | `worktree.rs` `the_lanes_worktree_is_per_channel_inside_the_checkout`, `the_lanes_worktree_is_detached_found_again_and_makes_no_branch` |
+| 160.10 | A lane is offered its four tools only and logs only on its job's card | `lanetools.rs` tests |
+| 160.11 | A lane's command line has its rules as the system prompt, no subagents, no AskUserQuestion | `sessions.rs` `a_lanes_command_line_has_its_rules_no_agents_and_no_questions` |
+| 160.12 | Ship it's message tells a listed repo's card to use `kanban_merge`; not another repo, not with the merger off | `dispatch.rs` `a_ship_of_a_listed_repo_is_told_to_use_its_merge_lane`; `lane.rs` `the_lane_note_is_for_a_listed_repo_in_ship_it_with_the_merger_on` |
+| 160.13 | Both ship prompts have the lane step; `merge-lane.md` never pushes and works detached | `merger.rs` `both_ship_prompts_have_the_merge_lane_step`, `the_merge_lane_rules_never_push_and_work_detached`; `lane.rs` `the_rules_say_what_the_lane_must_and_must_not_do` |
+| 160.14 | The Merger chips Waiting for the lane, Merging and Merge cancelled, titled with the lane's repo; Settings › Sessions lists the lanes with state, model, effort and Stop; the own-worktree box works as before | `tools/ui-tests/lane.test.mjs` |
+| 160.15 | Two cards of a scratch repo ship through one lane: the second resumes the same conversation and its brief lists the first; a FAIL and a repo not listed | In the card's test app with a scratch repo and a local bare origin (the card's deliverable 9) |
+
 ## macOS (card #117, 6 Nov 2026): untested on real hardware, unsigned
 
 Nobody has a Mac yet, so the proof is CI on GitHub's Mac runners. The app is unsigned (no Apple

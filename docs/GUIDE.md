@@ -968,6 +968,40 @@ Before a card's ship pushes, a subagent brings its branch up to date with the la
   still push in ways the app doesn't see, so its report also gives origin's SHA before and after:
   if origin moved while it ran, the card says "Merge unclear" and you get a notification.
 
+## One merge lane per repo
+
+Instead of a fresh card-merger for each ship, a repo can ship through one **merge lane** (card
+#160, 9 Nov 2026). It is one Claude Code session the app keeps for that repo. It merges each of
+the repo's ships, one at a time, and keeps its conversation between them, so it resolves a
+conflict with what it learnt merging the earlier cards.
+
+- **Turn it on per repo** in Settings › Sessions › "Ship through one merge lane per repo": a repo
+  (`owner/name`) and its checkout folder. Empty is off, the default. A repo that isn't listed
+  ships with the card-merger, as before. A card with its merger turned off gets neither.
+- **Its model and effort** are under the list (default Opus 5.5, effort high). A change applies
+  the next time a lane starts.
+- **When it runs:** your move into Ship it approves the ship. The card's session commits and asks
+  the lane to merge, and the lane starts (or picks up its last conversation). It stops after 15
+  minutes with nothing to do; the next ship resumes the same conversation. Each brief also lists
+  the repo's last 5 merges, so the history survives a new conversation too.
+- **Where it works:** its own worktree, `.claude\worktrees\merge-lane` inside the checkout,
+  detached. It never touches the card's worktree or branch, the main checkout, or any branch: it
+  makes commits and reports one SHA.
+- **On the card:** **Waiting for the lane**, then **Merging**, then **Merged**, **Merge failed**
+  or **Merge unclear** (hover for the repo and the detail). The lane logs each step on the card.
+  **Merge cancelled** means the card left Ship it while its merge waited or ran.
+- **After a PASS** the card's session checks its branch hasn't moved, resets it to the lane's
+  commit, checks with `git range-diff` that its own commits are all there, and then pushes as
+  before. The lane itself never pushes, and the app refuses it a push, `kb`, an install, a move of
+  a branch and an edit outside its worktree, and logs each refusal on the card.
+- **When it goes wrong:** a FAIL, or no report within 60 minutes, leaves the card in Ship it with
+  Needs Hugh and the reason. A lane that stops during a merge (a crash, your Stop, an app restart)
+  is resumed once; a second stop makes the merge unclear.
+- **In Settings,** each listed repo's lane shows its state (Off, Starting, Idle, Merging #n,
+  Down), its model and effort, and a Stop button while it runs. Its conversation is kept.
+- A stack still ships once, on its lead, through the repo's lane. Merging a child into its
+  stack's branch stays with the lead's own card-merger.
+
 ## Before-and-after evidence on the card
 
 The card-tester leaves screenshots of the change it tested on the card, so you can judge a small

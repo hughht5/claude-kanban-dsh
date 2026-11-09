@@ -39,6 +39,7 @@ repo. Distilled from `HANDOVER.md`, `README.md`, `UNDO.md`, `ACCEPTANCE.md`, `PL
 |---|---|
 | `src-tauri/` | The app: sessions, Job Object, dispatch, update, the localhost API (MCP, REST, hooks) |
 | `src-tauri/src/platform/` | Every operating-system call (`windows.rs`; macOS is card #117). Nothing outside it calls a Windows API, reads `USERPROFILE` or names a `.exe`: `src-tauri/tests/platform_guard.rs` fails if it does |
+| `src-tauri/src/lane.rs`, `lanetools.rs` | The merge lanes (card #160): one app-owned session per listed repo merges its ships; `prompts/merge-lane.md` is its system prompt |
 | `crates/store/` | The SQLite store, migrations (`schemaN.sql`), templates, stacks; tests in `tests/` |
 | `crates/kb/` | `kb.exe`, the CLI and `kb mcp` stdio bridge |
 | `ui/` | Plain JavaScript, no bundler; vendored libraries in `ui/vendor` (`ui-deps/vendor.mjs`) |
@@ -81,9 +82,11 @@ app, and they ship one at a time.
   ... up to `testapp.slots`), kept on the card as `testApp` while it is In progress or Human test
   (card #147). Its reply names the install command (`-Channel test`, `test2`, ...) and the CDP
   port (9333 + N). Hugh tests each card in its own test app.
-- **Ships go one at a time per repo** (card #79). At ship the card-merger rebases the branch onto
-  the latest `origin/main` and reruns the tests (card #100); `main` is fast-forwarded to it and
-  pushed. A stack's cards ship together, once, on the lead (card #113).
+- **Ships go one at a time per repo** (card #79). At ship the repo's merge lane (card #160, for a
+  repo in `sessions.merge_lane_repos`), or else its card-merger (card #100), rebases the branch
+  onto the latest `origin/main` and reruns the tests; `main` is fast-forwarded to it and pushed.
+  A lane only merges, in its own detached worktree: the card's session checks its commit
+  (`git range-diff`), resets its branch to it and pushes. A stack's cards ship together, once, on the lead (card #113).
 - **Private prompts too.** The live app reads the private folder's `prompts\` from its `main`, so a
   change there goes on a branch in a worktree of the private repo, and ships with the card.
 
@@ -171,6 +174,11 @@ app, and they ship one at a time.
   desktop app is never auto-started. One exception (PLAN.md, R1, card #113): Hugh's move of a
   stack's lead into Planning or In progress approves the app starting and resuming that stack's
   sessions (a child's start, a merge brief to the lead), still only in a column with auto-spawn.
+  A second (card #160): a repo's merge lane starts, or resumes its last conversation, when a
+  card's Ship it session asks it to merge (`kanban_merge`): Hugh's move into Ship it approved
+  that ship. It is app-owned, not a card (`lane_sessions`), stops after 15 idle minutes, and never
+  pushes, runs `kb`, installs, moves a branch or edits outside its worktree (`guard::lane_refusal`).
+  Never start or stop a lane yourself; Hugh's Stop is in Settings › Sessions.
 - **The Router (card #119)** is an app-owned session, not a card (`router_sessions`,
   `router_log`). Only Hugh's Start turns it on; the app resumes it after a restart while it is on.
   It starts card sessions only while Hugh's "Router may start cards" is on, and never ships,
@@ -195,8 +203,8 @@ app, and they ship one at a time.
   - In progress: commit on the card's own branch in its worktree, with `(card #<n>)` in the
     message, then push that branch (`git push -u origin card-<n>`, or a stack card's branch).
     Never push `main`.
-  - Ship it, one card or one stack at a time per repo: the card-merger rebases the branch onto
-    `origin/main` and reruns the tests, `main` is fast-forwarded to it in the main checkout and
+  - Ship it, one card or one stack at a time per repo: the repo's merge lane, or its card-merger,
+    rebases the branch onto `origin/main` and reruns the tests, `main` is fast-forwarded to it in the main checkout and
     pushed, the card's branch is deleted on GitHub, then the live update is staged
     (`scripts\install.ps1`, never `-Now`). The card's worktree is removed once its session has
     stopped (Windows won't remove a folder a running session is in).
