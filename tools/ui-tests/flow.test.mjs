@@ -68,7 +68,7 @@ test("the Card flow box: Default shows what the default is, and a change sends o
   assert.equal(chosen("tester"), "off");
   assert.equal(chosen("critic"), "default");
   assert.equal(sel("critic").querySelector('option[value="default"]').textContent, "Default (off)");
-  assert.equal(box.querySelectorAll("select[data-flow]").length, 8, "two skips and six subagents");
+  assert.equal(box.querySelectorAll("select[data-flow]").length, 7, "two skips and five subagents");
   assert.match(box.querySelector(".meta").textContent, /Now: Skip Human test; subagents off: card-critic, card-tester\./);
   // One change: only that key, null for Default.
   sel("critic").value = "on";
@@ -107,7 +107,7 @@ test("Settings › Sessions: the two skip defaults sit with the subagent default
   assert.equal(box.querySelector("h4").textContent, "Card flow defaults");
   const rules = box.querySelectorAll("[data-rule]").map((x) => x.dataset.rule);
   assert.deepEqual(rules.slice(0, 2), ["sessions.skip_planning", "sessions.skip_human_test"]);
-  assert.equal(rules.length, 8);
+  assert.equal(rules.length, 7);
   const skipP = box.querySelector('[data-rule="sessions.skip_planning"]');
   assert.match(skipP.querySelector("label").textContent, /Skip Planning/);
   assert.ok(!skipP.querySelector("input").hasAttribute("checked"), "off");

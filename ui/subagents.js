@@ -59,7 +59,7 @@ window.SUBAGENT_OF_CHECK={test:"tester",review:"reviewer",critique:"critic",repr
 // The chip text for a subagent's override: "Critic off", "Tester on".
 const subChip=(s,on)=>{const n=s.name.replace(/^card-/,"");return n.charAt(0).toUpperCase()+n.slice(1)+(on?" on":" off")};
 // The card's overrides that differ from the default as it is now, as [{key, text, title}], in
-// the board's order: the two skips, then the six subagents.
+// the board's order: the two skips, then the five subagents.
 window.flowChips=c=>{
   if(!c||!defaults)return[];
   const out=[];

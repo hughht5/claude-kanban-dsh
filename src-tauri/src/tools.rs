@@ -150,7 +150,7 @@ fn doc(store: &Store, c: &Card) -> Value {
     // default (a card made before it). Hugh's only: kanban_update_card refuses the field.
     d[kanban_store::SUBAGENTS_KEY] = Value::Object(store.subagents_of(c));
     // Card #162: the card's flow, each option's value and whether it is the card's own or the
-    // default: skipPlanning, skipHumanTest and the six subagents.
+    // default: skipPlanning, skipHumanTest and the five subagents.
     d["flow"] = store.flow_of(c);
     d
 }

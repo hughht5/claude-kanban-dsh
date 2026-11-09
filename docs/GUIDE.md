@@ -584,7 +584,7 @@ would; before, it just sat there.
 
 ## Card flow: skip Planning, skip Human test, and the agents per card (card #162)
 
-Each card's details have a **Card flow** box: **Skip Planning**, **Skip Human test** and the six
+Each card's details have a **Card flow** box: **Skip Planning**, **Skip Human test** and the five
 card agents, each with three choices. **Default (on)** or **Default (off)** follows Settings ›
 Sessions › Card flow defaults, now and whenever you change it there. **On** or **Off** is that
 card's own. Each change saves at once, on its own, and the card's session is told. Add card has

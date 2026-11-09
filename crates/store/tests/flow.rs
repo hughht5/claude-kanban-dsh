@@ -78,7 +78,7 @@ fn the_flow_object_says_each_value_and_whose_it_is() {
     assert_eq!(f["subagents"]["tester"], json!({ "value": false, "from": "card", "default": true }));
     assert_eq!(f["subagents"]["critic"], json!({ "value": false, "from": "default", "default": false }));
     assert_eq!(f["subagents"]["router"], json!({ "value": true, "from": "default", "default": true }));
-    assert_eq!(f["subagents"].as_object().unwrap().len(), 6);
+    assert_eq!(f["subagents"].as_object().unwrap().len(), 5);
     assert!(f.get("note").is_none());
 }
 

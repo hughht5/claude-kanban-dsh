@@ -441,7 +441,7 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
             // Card #151: Hugh's choice of subagents; the keys the patch names change, a null one
             // back to the default (card #162), and the field goes when no override is left.
             crate::SUBAGENTS_KEY => {
-                // A null for the whole field puts all six back to the defaults.
+                // A null for the whole field puts all five back to the defaults.
                 let new = if v.is_null() { None } else { crate::subagents::merged(card.fields.get(k), v)? };
                 if card.fields.get(k) != new.as_ref() {
                     match new {

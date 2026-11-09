@@ -28,7 +28,7 @@ through the running app (a card session's own card when <n> is left out):
                                        the card's flow, only from outside a card session (Hugh's own):
                                        --skip-planning on|off|default  --skip-human-test on|off|default
                                        --subagent critic=on|off|default (router, critic, reproducer,
-                                       reviewer, tester, merger; give it once for each)
+                                       reviewer, tester; give it once for each)
   kb log <n> "<text>"                  add a log line
   kb move <n> "<column>" [--reason r]  move a card (your own card's move waits for your turn to end)
   kb create --title <t> [--repo r] [--column c] [--summary s] [--template id] [--stack <lead>] [--labels BUG,RCS] [--to Planning|"Human test"]
