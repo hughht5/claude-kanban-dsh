@@ -6,7 +6,8 @@
 //! - Writes and moves need `if_version` (finding 16): an event can be some minutes old.
 //! - Moves: `routersession::move_refused` (between Planning, In progress, Human test and Blocked;
 //!   Backlog to Planning only with "Router may start cards"; never Ship it).
-//! - Hands off a card Hugh has open or changed in the last 2 minutes (decision 4).
+//! - Hands off a card Hugh has open or changed in the last 2 minutes (decision 4), for writes and
+//!   moves; a message (`kanban_session_send`) is allowed anyway (card #170).
 //! - Anything that starts a session needs "Router may start cards".
 //! - Never a ship: `kanban_set_passed`, `kanban_ship_result` and `kanban_request_ship` are
 //!   refused; a test-channel Router never installs.
@@ -194,9 +195,8 @@ pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Valu
                 let board = app.state::<Board>();
                 let store = board.0.lock().map_err(|e| e.to_string())?;
                 let c = store.get_by_number(number(args)?).map_err(|e| e.to_string())?;
-                if let Some(why) = routersession::hands_off(app, &store, &c) {
-                    return Err(format!("refused: {why}"));
-                }
+                // A message is not a write: allowed even while Hugh has the card open or changed
+                // it just now (card #170). Writes and moves keep the hands-off rule.
                 let live = app.state::<Arc<crate::sessions::Sessions>>().is_live(&c.id).is_some();
                 (c.id, live)
             };
@@ -463,6 +463,16 @@ mod tests {
         assert!(body.contains("after_move_card(app, card_id, from)"), "the card's own after-move");
         assert!(!body.contains("start_stack"), "never a stack's children");
         assert!(body.contains("ship_start_refused"), "a card that goes on by itself is checked again");
+    }
+
+    /// Card #170: a message to a card Hugh has open is allowed; a write or move is not.
+    #[test]
+    fn a_message_ignores_the_hands_off_rule_but_writes_keep_it() {
+        let src = include_str!("routertools.rs").replace("\r\n", "\n");
+        let send = src.split("\"kanban_session_send\" => {").nth(1).unwrap().split("\n        _ => Err").next().unwrap();
+        assert!(!send.contains("hands_off"), "a message is not a write");
+        let write = src.split("fn card_for_write").nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(write.contains("hands_off"), "writes and moves keep the rule");
     }
 
     /// Final-test F1: a card with no worktree starts where Hugh's start would.

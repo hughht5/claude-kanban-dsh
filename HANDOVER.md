@@ -2031,7 +2031,7 @@ or any session with `kanban_router`. The decisions below are the router's after 
   the board once.
 - **Tools.** `routertools.rs` checks, then `tools::call_as_router` runs the card tool with
   `by` = "the router" and the card sessions' gates. `if_version` is required on writes and moves;
-  a card Hugh has open or changed in the last 2 minutes is refused (`hands_off`); moves follow
+  a write or move on a card Hugh has open or changed in the last 2 minutes is refused (`hands_off`; a `kanban_session_send` message is not, card #170); moves follow
   `routersession::move_refused` (Planning, In progress, Human test, Blocked freely; Backlog to
   Planning only with `router.may_start_cards`; never Ship it, never out of Ship it or Deploy
   complete, never into Deploy complete or Done). `kanban_start_card` (setting on, the card's own
