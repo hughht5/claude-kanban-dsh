@@ -20,6 +20,8 @@ mod secret;
 // The Router's own sessions and log (card #119).
 mod router;
 mod marks;
+// The reviewer and the tester run together: a pass started before the other's FAIL (card #162).
+mod pair;
 pub mod search;
 mod sessions;
 mod ships;
@@ -68,6 +70,7 @@ pub use router::{
 pub use secret::{looks_like_token, looks_secret, mask_secrets, mask_tokens};
 pub use search::SearchIndex;
 pub use marks::{CardMarks, LatestSession};
+pub use pair::{failed_at as verdict_failed_at, hhmm, stale_passes, stamp_times, started_at as verdict_started_at, StalePass, FAILED_AT_KEY, STARTED_AT_KEY};
 pub use sessions::{SessionRow, MID_TURN, RESUME_OFFER_KEY};
 pub use ships::{ship_goes_first, ship_lane, ship_started, QUEUED as SHIP_QUEUED};
 pub use stacks::{children_reviewed as stack_children_reviewed, lead_missing, lead_missing_in_stack, merged as stack_merged, own_build as stack_own_build, OWN_BUILD_KEY as STACK_OWN_BUILD_KEY, stack_ready, stack_stage, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_HELD_KEY, STACK_RULE_KEY};

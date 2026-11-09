@@ -44,8 +44,11 @@ fn state_of<'a>(card: &'a Card, key: &str) -> Option<&'a str> {
 /// What still holds a lead back from Human test (card #96): its own subagent test or review,
 /// each while Hugh's rule for it is on, until it has passed. A capped one (`capped: true`, its
 /// third FAIL) holds it whatever a later verdict says, until Hugh moves the lead into In progress.
-/// `rules` is (field, what it is, on).
+/// `rules` is (field, what it is, on). While both the test and the review are on, a pass that
+/// started before the other's latest FAIL doesn't count either (card #162, `pair.rs`).
 pub fn lead_missing(lead: &Card, rules: &[(&str, &str, bool)]) -> Vec<String> {
+    let on = |k: &str| rules.iter().any(|(key, _, on)| *key == k && *on);
+    let stale = if on(crate::TEST_KEY) && on(crate::REVIEW_KEY) { crate::stale_passes(lead) } else { vec![] };
     rules
         .iter()
         .filter(|(_, _, on)| *on)
@@ -56,7 +59,7 @@ pub fn lead_missing(lead: &Card, rules: &[(&str, &str, bool)]) -> Vec<String> {
             } else if rec.and_then(|t| t.get("state")).and_then(Value::as_str) != Some("passed") {
                 Some(what.to_string())
             } else {
-                None
+                stale.iter().find(|s| s.key == *key).map(|s| format!("{what} ({})", s.short()))
             }
         })
         .collect()

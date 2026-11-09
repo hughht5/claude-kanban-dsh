@@ -88,6 +88,8 @@ pub const GATES: &[Gate] = &[
     crate::repro::gate,
     crate::reviewer::gate,
     crate::tester::gate,
+    // A pass that started before the other's FAIL (card #162).
+    stale_pass,
 ];
 
 /// The `kanban` tools that change cards. No subagent may use them, under either server name:
@@ -327,14 +329,22 @@ pub fn checkout_of(store: &Store, card: &Card) -> Option<String> {
     store.small_repo_for(repo).map(|e| e.checkout).filter(|p| !p.trim().is_empty())
 }
 
-/// The work as it was when each of the app's PASS/FAIL agents started (card #104): per session
-/// row and agent, the checkout and its snapshot, oldest first. A verdict counts for the work
-/// only when it is still the same when the agent stops, so a commit made while it ran never
-/// gets its pass.
-static STARTS: std::sync::Mutex<Option<std::collections::HashMap<(String, String), Vec<(String, crate::small::Snapshot)>>>> = std::sync::Mutex::new(None);
+/// One run of a PASS/FAIL agent as it started: when (card #162, every card), and the work then
+/// (card #104, a card in a listed repo only: its checkout and snapshot).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Start {
+    pub at: String,
+    pub place: Option<(String, crate::small::Snapshot)>,
+}
 
-/// A `PreToolUse` hook: an `Agent` (or `Task`) call starting one of the app's PASS/FAIL agents,
-/// on a card in a listed repo, takes a snapshot of the work.
+/// Each of the app's PASS/FAIL agents' runs as they started, per session row and agent, oldest
+/// first. A verdict counts for the work only when it is still the same when the agent stops, so
+/// a commit made while it ran never gets its pass (card #104); and its record keeps when its run
+/// started, so a pass that started before the other check's FAIL doesn't count (card #162).
+static STARTS: std::sync::Mutex<Option<std::collections::HashMap<(String, String), Vec<Start>>>> = std::sync::Mutex::new(None);
+
+/// A `PreToolUse` hook: an `Agent` (or `Task`) call starting one of the app's PASS/FAIL agents
+/// notes when it started, and, on a card in a listed repo, takes a snapshot of the work.
 pub fn on_pre_tool(app: &AppHandle, row_id: &str, body: &Value) {
     let tool = body.get("tool_name").and_then(Value::as_str).unwrap_or("");
     let kind = body.pointer("/tool_input/subagent_type").and_then(Value::as_str).unwrap_or("");
@@ -342,18 +352,23 @@ pub fn on_pre_tool(app: &AppHandle, row_id: &str, body: &Value) {
     if !matches!(tool, "Agent" | "Task") || !matches!(agent.on_stop, OnStop::Check(_)) {
         return;
     }
+    let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     // The Router's brief names its card ("CARD: <n>", card #119): the snapshot is of that card's checkout.
     let named = body.pointer("/tool_input/prompt").and_then(Value::as_str).and_then(|p| parse_verdict(p).card);
     let checkout = app.state::<Board>().0.lock().ok().and_then(|s| own_or_named(app, &s, row_id, named).and_then(|c| checkout_of(&s, &c)));
-    let Some(checkout) = checkout else { return };
-    let Ok(snap) = crate::small::snapshot(&checkout) else { return };
+    let place = checkout.and_then(|c| crate::small::snapshot(&c).ok().map(|snap| (c, snap)));
+    push_start(row_id, agent.name, Start { at, place });
+}
+
+/// Adds a run's start to the list of `agent` in session `row_id`.
+fn push_start(row_id: &str, agent: &str, start: Start) {
     if let Ok(mut g) = STARTS.lock() {
-        g.get_or_insert_with(Default::default).entry((row_id.to_string(), agent.name.to_string())).or_default().push((checkout, snap));
+        g.get_or_insert_with(Default::default).entry((row_id.to_string(), agent.to_string())).or_default().push(start);
     }
 }
 
-/// The oldest start snapshot of `agent` in session `row_id`, taken off the list.
-fn take_start(row_id: &str, agent: &str) -> Option<(String, crate::small::Snapshot)> {
+/// The oldest start of `agent` in session `row_id`, taken off the list.
+fn take_start(row_id: &str, agent: &str) -> Option<Start> {
     let mut g = STARTS.lock().ok()?;
     let list = g.as_mut()?.get_mut(&(row_id.to_string(), agent.to_string()))?;
     (!list.is_empty()).then(|| list.remove(0))
@@ -461,6 +476,7 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
     let results = if check.agent == crate::tester::TESTER { crate::done_when::check_lines(text) } else { Vec::new() };
     // Taken first, so a report that isn't recorded doesn't leave its start for the next one.
     let start = take_start(row_id, check.agent);
+    let start_place = start.as_ref().and_then(|s| s.place.as_ref());
     let board = app.state::<Board>();
     // Where the verdict was given (card #104): found under the lock, read from git without it.
     let checkout = board.0.lock().ok().and_then(|s| {
@@ -469,7 +485,7 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
         let card = target_card(&s, &own, named).ok()?;
         checkout_of(&s, &card)
     });
-    let snap = checkout.as_deref().filter(|_| start.is_some()).and_then(|c| crate::small::snapshot(c).ok());
+    let snap = checkout.as_deref().filter(|_| start_place.is_some()).and_then(|c| crate::small::snapshot(c).ok());
     let mut v = parse_verdict(text);
     let board = app.state::<Board>();
     // First, under a short lock: the session's card and the card the verdict is for. Nothing is
@@ -513,8 +529,8 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
     pass_fails_on_checks(&card, &mut v, &results);
     let before = card.fields.get(check.key).and_then(|t| t.get("round")).and_then(Value::as_u64).unwrap_or(0);
     let (mut rec, line) = record_of(check, &v, tools, agent_id, &at, before);
-    let place = place_of(start.as_ref(), checkout.as_deref(), snap.as_ref());
-    if start.is_some() && place.is_none() {
+    let place = place_of(start_place, checkout.as_deref(), snap.as_ref());
+    if start_place.is_some() && place.is_none() {
         // The work changed while it ran: the verdict stands, but it can't let the card go on.
         rec["placeMoved"] = json!(true);
     }
@@ -523,6 +539,9 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
     let prev = card.fields.get(check.key);
     let already = prev.and_then(|p| p.get("capped")).and_then(Value::as_bool) == Some(true);
     carry_cap(prev, &mut rec);
+    // Card #162: when this run started (the verdict's time if its start wasn't seen), and when
+    // this check last failed, carried until the In progress reset, as the cap is.
+    kanban_store::stamp_times(prev, &mut rec, start.as_ref().map(|s| s.at.as_str()), &at);
     // The cap fires once; from then on `capped_hold` keeps the card from going anywhere but Blocked.
     let cap = !already && !small && capped(check, &rec, &card.column);
     if cap {
@@ -608,7 +627,7 @@ fn record_check(app: &AppHandle, row_id: &str, body: &Value, check: &Check) {
     }
     // A tester's FAIL line that names a bug a person can see ("- BUG: ...") is a bug report for
     // the card-reproducer (card #112): the tester found it in the installed app, so it can be
-    // reproduced there. Not the reviewer's: it reads the diff before the install. The session
+    // reproduced there. Not the reviewer's: it reads the diff, not the installed app. The session
     // sees the FAIL itself; the hold tells it the rest.
     let failed = rec.get("state").and_then(Value::as_str) == Some("failed");
     let bugs = (failed && check.agent == crate::tester::TESTER).then(|| crate::repro::bug_lines(&v.failures)).flatten();
@@ -713,6 +732,38 @@ pub fn not_passed(check: &Check, card: &Card, to: &str, before: &[&str], into: &
     }
 }
 
+/// Card #162: the card-reviewer and the card-tester run together, so a pass counts only if its
+/// run started after the other's latest FAIL (`kanban_store::stale_passes`): a fix came after
+/// that FAIL, and the pass never saw it. Why a card session may not make the moves `not_passed`
+/// holds while one doesn't count. Only while both are on for the card; not for a lead whose
+/// children's reviews stand in for its own, nor while either is capped (`capped_hold` says what
+/// to do then).
+pub fn stale_pass(store: &Store, card: &Card, to: &str) -> Option<String> {
+    use crate::tester::{BEFORE_TEST, INTO_TEST};
+    if !BEFORE_TEST.contains(&card.column.as_str()) || !INTO_TEST.contains(&to) {
+        return None;
+    }
+    if !store.subagent_on(card, "tester") || !store.subagent_on(card, "reviewer") {
+        return None;
+    }
+    let capped = |k: &str| card.fields.get(k).and_then(|r| r.get("capped")).and_then(Value::as_bool) == Some(true);
+    if capped(kanban_store::TEST_KEY) || capped(kanban_store::REVIEW_KEY) {
+        return None;
+    }
+    if card.is_lead() && kanban_store::stack_children_reviewed(&store.stack_children(card).unwrap_or_default()) {
+        return None;
+    }
+    let stale = kanban_store::stale_passes(card);
+    let first = stale.first()?;
+    let what = if stale.len() > 1 { "test and review passed, but neither counts".to_string() } else { format!("{} passed, but it doesn't count", if first.key == kanban_store::TEST_KEY { "test" } else { "review" }) };
+    let why: Vec<String> = stale.iter().map(|s| s.why()).collect();
+    Some(format!(
+        "Card #{n}'s subagent {what} yet (Hugh's rule: the card-reviewer and the card-tester run together, so each pass counts only if it started after the other's latest FAIL). {why} If it runs in the background, wait for its notification before you move the card.",
+        n = card.number,
+        why = why.join(" ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,10 +843,13 @@ mod tests {
         assert_eq!(place_of(Some(&start), Some(r"C:\other"), Some(&a)), None);
         assert_eq!(place_of(Some(&start), Some(r"C:\r"), None), None);
         assert_eq!(place_of(None, Some(r"C:\r"), Some(&a)), None, "no start seen");
-        // Starts are taken oldest first, per session and agent.
-        let s2 = (r"C:\r".to_string(), b.clone());
-        STARTS.lock().unwrap().get_or_insert_with(Default::default).insert(("row-t".into(), "card-tester".into()), vec![start.clone(), s2.clone()]);
-        assert_eq!(take_start("row-t", "card-tester"), Some(start));
+        // Starts are taken oldest first, per session and agent; one with no place (a card in no
+        // listed repo, card #162) is still a start, with its time.
+        let s1 = Start { at: "2026-11-09T10:00:00.000Z".into(), place: Some(start.clone()) };
+        let s2 = Start { at: "2026-11-09T10:01:00.000Z".into(), place: None };
+        push_start("row-t", "card-tester", s1.clone());
+        push_start("row-t", "card-tester", s2.clone());
+        assert_eq!(take_start("row-t", "card-tester"), Some(s1));
         assert_eq!(take_start("row-t", "card-reviewer"), None);
         assert_eq!(take_start("row-t", "card-tester"), Some(s2));
         assert_eq!(take_start("row-t", "card-tester"), None);
@@ -1036,6 +1090,59 @@ mod tests {
         s.set_page_setting(kanban_store::TEST_RULE_KEY, "off").unwrap();
         assert!(move_refused(&s, &no_test, "Human test").is_none());
         assert!(move_refused(&s, &no_review, "Human test").is_some());
+    }
+
+    // Card #162: the reviewer and the tester run together, so a pass that started before the
+    // other's latest FAIL doesn't get the card to Human test.
+    #[test]
+    fn a_pass_that_started_before_the_others_fail_is_refused() {
+        const T0: &str = "2026-11-09T10:00:00.000Z";
+        const T1: &str = "2026-11-09T10:05:00.000Z";
+        const T2: &str = "2026-11-09T10:10:00.000Z";
+        let hm = |s: &str| kanban_store::hhmm(&chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc));
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        // Both started at T0; the reviewer failed at T1, was fixed and passed from T2; the
+        // tester's pass is from T0, before the fix.
+        let stale_test = json!({ "title": "T", "test": { "state": "passed", "at": T1, "startedAt": T0 }, "review": { "state": "passed", "at": T2, "startedAt": T2, "failedAt": T1 } });
+        let why = move_refused(&s, &card(stale_test.clone(), "In progress", 7), "Human test").unwrap();
+        let want = format!("The reviewer failed at {}, after this test started ({}): the fix wasn't tested. Run the card-tester again.", hm(T1), hm(T0));
+        assert!(why.contains("Card #7's subagent test passed, but it doesn't count yet") && why.contains(&want), "{why}");
+        assert!(!why.contains("has no subagent review") && !why.contains("hasn't passed a subagent test"), "only the stale rule: {why}");
+        assert!(move_refused(&s, &card(stale_test.clone(), "In progress", 7), "Deploy complete").is_some());
+        assert!(move_refused(&s, &card(stale_test.clone(), "Blocked", 7), "Human test").is_some());
+        // Other moves are free, and so is a card already in Human test.
+        assert!(move_refused(&s, &card(stale_test.clone(), "In progress", 7), "Blocked").is_none());
+        assert!(move_refused(&s, &card(stale_test.clone(), "Human test", 7), "Deploy complete").is_none());
+        // A test run started after the FAIL: the move goes.
+        let fresh = json!({ "title": "T", "test": { "state": "passed", "at": T2, "startedAt": T2 }, "review": { "state": "passed", "at": T2, "startedAt": T2, "failedAt": T1 } });
+        assert!(move_refused(&s, &card(fresh, "In progress", 7), "Human test").is_none());
+        // Symmetric: the tester failed at T1, the review's pass is from T0.
+        let stale_review = json!({ "title": "T", "review": { "state": "passed", "at": T1, "startedAt": T0 }, "test": { "state": "passed", "at": T2, "startedAt": T2, "failedAt": T1 } });
+        let why = move_refused(&s, &card(stale_review, "In progress", 7), "Human test").unwrap();
+        assert!(why.contains("Card #7's subagent review passed") && why.contains(&format!("The tester failed at {}, after this review started ({}): the fix wasn't reviewed. Run the card-reviewer again.", hm(T1), hm(T0))), "{why}");
+        // No startedAt (an older build's record, or a start the app didn't see): its `at` counts.
+        let old = json!({ "title": "T", "test": { "state": "passed", "at": T0 }, "review": { "state": "passed", "at": T2, "failedAt": T1 } });
+        assert!(stale_pass(&s, &card(old, "In progress", 7), "Human test").is_some());
+        let old = json!({ "title": "T", "test": { "state": "passed", "at": T2 }, "review": { "state": "passed", "at": T2, "failedAt": T1 } });
+        assert!(stale_pass(&s, &card(old, "In progress", 7), "Human test").is_none());
+        // The review still failed: both holds speak, and the stale one says to run the tester too.
+        let failed = json!({ "title": "T", "test": { "state": "passed", "at": T2, "startedAt": T0 }, "review": { "state": "failed", "at": T1, "failedAt": T1, "detail": "x" } });
+        let why = move_refused(&s, &card(failed, "In progress", 7), "Human test").unwrap();
+        assert!(why.contains("Its latest review failed: x.") && why.contains("Run the card-tester again."), "{why}");
+        // Only while both subagents are on for the card.
+        for off in [json!({ "tester": false }), json!({ "reviewer": false })] {
+            let mut f = stale_test.clone();
+            f["subagents"] = off.clone();
+            assert!(stale_pass(&s, &card(f, "In progress", 7), "Human test").is_none(), "{off}");
+        }
+        s.set_page_setting(kanban_store::REVIEW_RULE_KEY, "off").unwrap();
+        assert!(stale_pass(&s, &card(stale_test.clone(), "In progress", 7), "Human test").is_none());
+        s.set_page_setting(kanban_store::REVIEW_RULE_KEY, "on").unwrap();
+        // A capped review says what to do itself (go to Blocked): no second hold.
+        let mut capped = stale_test.clone();
+        capped["review"]["capped"] = json!(true);
+        assert!(stale_pass(&s, &card(capped, "In progress", 7), "Human test").is_none());
     }
 
     // Card #105: the card-tester's CHECK lines and the card's acceptance checks.
