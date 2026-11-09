@@ -278,7 +278,7 @@ async function laneStatus(b){
   const model=mo&&(mo.value||mo.default)||"claude-opus-5-5",effort=ef&&(ef.value||ef.default)||"high";
   const models=MODELS.some(([v])=>v===model)?MODELS:[...MODELS,[model,model]];
   const d=document.createElement("div");d.className="st-lanebox";b.appendChild(d);
-  d.innerHTML=`<div class="st-row"><label class="f">Lane model<select class="tx" id="st-lmodel"${mo?"":" disabled"}>${models.map(([v,n])=>opt(v,model,n)).join("")}</select></label>
+  d.innerHTML=`<div class="st-row"><label class="f">Lane model<select class="colsel" id="st-lmodel"${mo?"":" disabled"}>${models.map(([v,n])=>opt(v,model,n)).join("")}</select></label>
     <label class="f">Lane effort<select class="colsel" id="st-leffort"${ef?"":" disabled"}>${EFFORTS.map(x=>opt(x,effort)).join("")}</select></label>
     <span class="msg" id="st-lsetmsg"></span></div>
    <p class="meta">Default: Opus 5.5, effort high. A change applies the next time a lane starts.</p>
