@@ -876,3 +876,16 @@ PowerShell 5.1 commands. No migration and no new setting.
 | `startedAt` and `failedAt` on the `test` and `review` records (and the other PASS/FAIL agents'), and `agents::on_pre_tool` noting every run's start | The same revert. The fields are harmless left on cards: an older build never reads them, and the next move into In progress drops them |
 | The prompts: `prompts\in-progress.md` *Review and test it together*, `prompts\kanban-app.md` In progress 4a and 6a and its stack section; the reviewer's and tester's descriptions and gate texts (`reviewer.rs`, `tester.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 prompts commit>`. The owner's private prompts change in the private repo: revert the card #162 commit there |
 | The tests (`crates\store\tests\pair.rs`, `src-tauri\tests\prompt_rules.rs`) and the docs (HANDOVER.md, README.md, docs\GUIDE.md, PLAN.md, ACCEPTANCE.md, this file) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 docs commit>`. Text only: nothing to stage |
+
+## The merge lane everywhere (9 Nov 2026, card #162)
+
+PowerShell 5.1 commands. No migration and no new stored field beyond `merge.checkout` on a lane job.
+
+| Change | Undo |
+|---|---|
+| No `sessions.merge_lane_repos` setting and no list in Settings: every card with a branch, on every repo, ships through its repo's merge lane (`crates\store\src\lanes.rs`, `config.rs`, `ui\settings.js`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #162 commits>`, then stage the live update as usual. A list card #160's build saved is still on the board, untouched, so the reverted build reads it again |
+| The lane's checkout found at `kanban_merge` (`lane::find_checkout`, `private::folder_for`) and kept on the job as `merge.checkout`; lanes keyed by the checkout's GitHub `origin` | The same revert. `merge.checkout` is harmless to an older build (it reads only the fields it knows), and every move into Ship it clears `merge` |
+| The card-merger off the card's subagents: no `merger` row, no `sessions.merger_at_ship` default (`crates\store\src\subagents.rs`, `ui\subagents.js`); its prompt refuses a ship and its report on a Ship it card isn't recorded (`src-tauri\src\merger.rs`) | The same revert. A saved `sessions.merger_at_ship` value and each card's stored `merger` choice were never touched, so they hold again after it |
+| The Ship it step in the bundled `prompts\ship-it.md` and `prompts\kanban-app.md` (the lane path only), `prompts\router.md` job 5 | The same revert |
+| The owner's private copies of `ship-it.md` and `kanban-app.md` | Revert the card #162 commit in the private repo |
+| A lane worktree made in a checkout no list named before (`<checkout>\.claude\worktrees\merge-lane`, `<channel>-merge-lane` from a test app) | Once no lane runs: `git -C <checkout> worktree remove --force <checkout>\.claude\worktrees\merge-lane` |

@@ -67,8 +67,8 @@ Several cards for this app's own repo build at once (card #145). Each one:
 - **is tested in its own test app** (*Turns on the test app*, above), so several cards can wait
   for you in Human test side by side. The card's hand-over names its test app and port.
 - **ships alone.** Cards of one repo ship one at a time (*One ship at a time per repo*), and each
-  ship's card-merger first rebases the card's branch onto the latest `origin/main` and reruns the
-  tests (*The merger at ship*), so each ships on top of the last. A stack still ships as one, on
+  ship's merge lane first rebases the card's branch onto the latest `origin/main` and reruns the
+  tests (*One merge lane per repo*), so each ships on top of the last. A stack still ships as one, on
   its lead (*Stacked cards*).
 
 A ship can't remove the card's worktree, because the card's session runs in it and Windows won't
@@ -505,8 +505,8 @@ Hugh, moved out of Ship it or archived), the app hands the oldest waiting card o
 session within a couple of seconds, as if you had just moved it. Cards of different repos ship side
 by side, and cards with no repo never wait. Moving a waiting card out of Ship it cancels its
 request. A card whose session never started (say, its conversation is in the desktop app) stops
-holding its repo after a minute. Each card built on its own branch, so its card-merger first
-rebases that branch onto the latest `origin/main` (*The merger at ship*): the second card ships on
+holding its repo after a minute. Each card built on its own branch, so its repo's merge lane first
+rebases that branch onto the latest `origin/main` (*One merge lane per repo*): the second card ships on
 top of the first.
 
 ## The Archive (no Done column)
@@ -963,28 +963,21 @@ A bug reported on a card comes back to you with proof, not another round of test
 - Like the other subagents, the reproducer can't edit files or use the card-changing board tools,
   `kb` or `claude config`. It keeps Bash, so its "changes no code" rests on its prompt.
 
-## The merger at ship
+## The card-merger (a stack's children)
 
-Before a card's ship pushes, a subagent brings its branch up to date with the latest `main`
-(card #100, 6 Nov 2026), for every repo's cards.
+Each card session the app starts has a **card-merger** subagent (card #100, 6 Nov 2026). It no
+longer does a ship (card #162): every ship's merge goes through its repo's merge lane (*One merge
+lane per repo*, next), and the card-merger refuses a ship's brief.
 
-- Each card session the app starts has a **card-merger** subagent. In Ship it, before the push,
-  the session briefs it with the card, its checkout and its branch, and the branch of any card you
-  dropped on it to ship as one. It checks the card is in Ship it (and changes nothing if not),
-  rebases the branch onto the latest `origin/main`, then every other branch of the ship onto that,
-  and resolves the conflicts. It takes a repo's own merge rules (files to keep both sides of, a
-  version to bump) from its brief or from the repo's CLAUDE.md or AGENTS.md; for this app it checks that every commit
-  to be pushed names a card of this ship (`(card #n)`), so nobody else's unshipped work goes with
-  it. Then it reruns the checks that don't need a dev stack. It ends with PASS or FAIL. It runs
-  at high effort, whatever the session's.
-- **A stack's finished child** (card #113): the merger also brings one child that passed its test
-  and review onto the stack's branch, in the lead's worktree, without touching the child's own
-  branch or `main`.
-- **It never pushes:** the session pushes, after a PASS. On a FAIL the merger puts every branch
-  back where it started, and the ship stops with **Needs Hugh** and the reason.
-- **On the card:** a **Merged**, **Merge failed** or **Merge unclear** chip on Ship it and Deploy
-  complete cards, and a **Merger** row in the panel's details. A new move into Ship it clears the
-  last one. There is no hold in the app: the session acts on the verdict itself.
+- **A stack's finished child** (card #113): a stack's lead runs it to bring one child that passed
+  its test and review onto the stack's branch, in the lead's worktree, without touching the
+  child's own branch or `main`. It rebases, resolves the conflicts by the repo's own merge rules
+  (from its brief, or the repo's CLAUDE.md or AGENTS.md), and reruns the checks that don't need a
+  dev stack. It ends with PASS or FAIL. It runs at high effort, whatever the session's.
+- **It never pushes.** On a FAIL it puts the stack's branch back where it started.
+- **On the card:** a **Merged**, **Merge failed** or **Merge unclear** chip, and a **Merger** row
+  in the panel's details. A report on a card in Ship it is never recorded: that card's merge is
+  its lane's.
 - **It can't push:** the merger may edit files (it resolves conflicts), but the app refuses its
   `git push` (in any form it can see, `git -C ...` and `sh -c "..."` included), `gh pr merge` and
   `gh api`, through a hook on every shell call, and logs the refusal on the card. A shell can
@@ -993,16 +986,19 @@ Before a card's ship pushes, a subagent brings its branch up to date with the la
 
 ## One merge lane per repo
 
-Instead of a fresh card-merger for each ship, a repo can ship through one **merge lane** (card
-#160, 9 Nov 2026). It is one Claude Code session the app keeps for that repo. It merges each of
-the repo's ships, one at a time, and keeps its conversation between them, so it resolves a
-conflict with what it learnt merging the earlier cards.
+Every repo ships through its own **merge lane** (cards #160 and #162, 9 Nov 2026). It is one
+Claude Code session the app keeps for that repo. It merges each of the repo's ships, one at a
+time, and keeps its conversation between them, so it resolves a conflict with what it learnt
+merging the earlier cards.
 
-- **Turn it on per repo** in Settings › Sessions › "Ship through one merge lane per repo": a repo
-  (`owner/name`) and its checkout folder. Empty is off, the default. A repo that isn't listed
-  ships with the card-merger, as before. A card with its merger turned off gets neither.
-- **Its model and effort** are under the list (default Opus 5.5, effort high). A change applies
-  the next time a lane starts.
+- **Nothing to set up.** Every card with a branch, on every repo, ships through its repo's lane.
+  The app finds the repo's checkout when the card asks: the main checkout of the card's
+  worktree, else the repo's checkout under "Build each card in its own worktree", else its
+  folder in `repos.json`. The checkout's `origin` on GitHub names the lane, so a card filed under
+  an old name of the repo shares its lane. If the app finds no checkout, the ship stops with
+  **Needs Hugh**, saying where it looked. A card with no branch has nothing to merge.
+- **Its model and effort** are in Settings › Sessions › Merge lanes (default Opus 5.5, effort
+  high). A change applies the next time a lane starts.
 - **When it runs:** your move into Ship it approves the ship. The card's session commits and asks
   the lane to merge, and the lane starts (or picks up its last conversation). It stops after 15
   minutes with nothing to do; the next ship resumes the same conversation. Each brief also lists
@@ -1020,8 +1016,9 @@ conflict with what it learnt merging the earlier cards.
 - **When it goes wrong:** a FAIL, or no report within 60 minutes, leaves the card in Ship it with
   Needs Hugh and the reason. A lane that stops during a merge (a crash, your Stop, an app restart)
   is resumed once; a second stop makes the merge unclear.
-- **In Settings,** each listed repo's lane shows its state (Off, Starting, Idle, Merging #n,
-  Down), its model and effort, and a Stop button while it runs. Its conversation is kept.
+- **In Settings,** each lane that has run or has a merge waiting shows its state (Off,
+  Starting, Idle, Merging #n, Down), its model and effort, and a Stop button while it runs. Its
+  conversation is kept. A test app's lanes are its own, in their own worktrees.
 - A stack still ships once, on its lead, through the repo's lane. Merging a child into its
   stack's branch stays with the lead's own card-merger.
 

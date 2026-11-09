@@ -862,6 +862,11 @@ Built on the branch `dsh-112` (worktree `~\kanban-app-112`), from `dsh-agents` a
 Built on the branch `dsh-100` in the worktree `~\kanban-app-100`, from
 `dsh-agents` (card #96's foundation).
 
+**Card #162 took the ship job away** (below, "The merge lane everywhere"): every ship now merges in
+its repo's merge lane. The card-merger keeps its "stack" job (and the Router's "integrate");
+its prompt refuses a ship, and its report on a card in Ship it is not recorded. What follows is
+how it was built.
+
 - **`merger.rs`:** `AGENT` in `agents.rs` `AGENTS` (`edits: true`, the first agent that may edit:
   it resolves conflicts; `also_denied` empty; effort `high`, the router's call, so a stack lead's
   low-effort session still merges at high). No `GATES` entry: there is no hold, because the push
@@ -920,6 +925,9 @@ Built on the branch `dsh-100` in the worktree `~\kanban-app-100`, from
   it; the guard hook entry).
 
 ## One merge lane per repo (9 Nov 2026, card #160)
+
+**Card #162 made it platform-wide** (next section): no list, no card-merger at ship. What
+follows is card #160 as built; the next section says what changed.
 
 Built on the branch `card-160` in its worktree. A repo Hugh lists ships through one **merge
 lane**: a Claude Code session the app owns for that repo, which does the ship's merge for every
@@ -1040,6 +1048,68 @@ with what it learnt merging the earlier cards. Every other repo keeps the per-ca
   once, on the lead, through the repo's lane. The lane's history is its conversation plus the
   last 5 merges in each brief; a new conversation (its transcript gone) starts from the brief
   alone. A lane takes one job at a time. There is no button to start a fresh conversation.
+
+## The merge lane everywhere (9 Nov 2026, card #162)
+
+Hugh: "This doesn't need to be a setting ... just platform wide." Every card with a branch, on
+every repo, ships through its repo's merge lane. Card #160's list and the per-card card-merger
+at ship are gone.
+
+- **No setting.** `sessions.merge_lane_repos` is no page setting now (`config.rs`
+  `PAGE_SETTINGS`; `check_merge_lane_repos`, `merge_lane_repos`, `merge_lane_repo_for` and
+  `MERGE_LANE_REPOS_KEY` are gone). A board where #160's build saved a list keeps the value
+  (nothing deletes it; an older build still reads it); this build never reads it.
+  `lanes.model` and `lanes.effort` stay.
+- **The lane's place, found at `kanban_merge`** (`lane::find_checkout`, with the board let go):
+  the first that works of (1) the main checkout of the card's `worktreePath`
+  (`git rev-parse --git-common-dir`, its parent, when it is a `.git`), (2) the card's repo's
+  checkout on the own-worktree list (`own_worktree_repo_for`), (3) its `folder` in `repos.json`
+  (`private::folder_for`; never the home folder). Each must be a git checkout whose `origin`
+  names a GitHub `owner/name` (`lane::github_repo`: https, ssh and scp forms; a token in the URL
+  is never kept). The checkout is canonicalised (`clean_path`). None: refused with every place and
+  why, ending "Report needs-hugh with this reason".
+- **Keyed by the origin repo.** The job's lane is `lane_key(<origin owner/name>)`, lower case,
+  so a `hughht5/kanban-app` card built in the claude-kanban-dsh checkout shares that repo's lane
+  and its one lane worktree. The job record gains `checkout` (`merge.checkout`), so a restart
+  needn't look again; `tick` takes the lane's `MergeLaneRepo` (repo from the key, checkout from
+  the job). A job with no checkout (asked for by #160's build) is given up as unclear.
+- **Two lanes never share a worktree.** The lane worktree is
+  `worktree::lane_path(checkout, channel)` as before (per channel, so a test app's lanes stay
+  apart from live's). `start` refuses when another lane key runs in that path, and resumes the
+  last conversation only if it ran in this path. If two checkouts of one repo exist, a lane free
+  in the other checkout's worktree is stopped (`Facts.elsewhere`, `Action::Stop`) and the next
+  pass starts it in the job's checkout. The brief's history is the lane's finished merges
+  (`merge.lane`) plus the card's repo's older ones (`recent_merges(key, repo, ...)`).
+- **`lane_note`** goes on every Ship it message for a card with a `branch` (any repo; an old
+  card's `merger: false` changes nothing). A card with no branch hears nothing: the ship prompt's
+  no-branch path. `merge_refused` lost its "not listed" and "merger off" refusals; its no-branch
+  refusal says there is nothing to merge.
+- **The card-merger leaves the ship.** `subagents.rs`: no `merger` row (five subagents), no
+  `sessions.merger_at_ship` (`MERGER_RULE_KEY` gone; a saved value is ignored). An old card's
+  stored `merger` is ignored (`subagent_on` says off, `subagents_of` leaves it out); a choice that
+  names `merger` (an older page) has it dropped, not refused (`subagents::RETIRED`). The card's
+  details and Add card show five. `merger.rs` keeps the stack job and the Router's integrate
+  job: its description and prompt no longer speak of ship time, the prompt refuses a ship, and
+  `on_stop` doesn't record a report on a card in Ship it or with a lane job waiting or running
+  (`not_a_ship`), so it can't overwrite a lane job. `merger::record_of` still records the lane's
+  verdicts.
+- **Prompts:** `ship-it.md` 1a and `kanban-app.md` Ship it 1a are the lane path only: commit,
+  `kanban_merge`, end the turn; on PASS check, reset and range-diff, then push (or fast-forward
+  main); on FAIL `needs-hugh`. `kanban_merge` refusing for no checkout is `needs-hugh`. 2b's
+  CONFLICTING goes back to the lane. `ship-it.md` has a no-branch path (skip 1a and 2, prove as
+  6c). `router.md` job 5 says the lane rebases, never the card-merger for a ship.
+- **UI:** Settings › Sessions' "Merge lanes" box: the help, the lanes' model and effort, and each
+  lane that has a job, runs, or ran on this channel (`Store::lanes_seen`, `lane::lanes_listed`)
+  with its state and Stop. No list editor (the own-worktree box keeps `repoListBox`).
+- **Tests:** `lane.rs` (`the_lanes_checkout_is_found_in_order_or_refused_saying_where_it_looked`
+  and `a_lane_is_keyed_by_its_origin_so_an_alias_shares_it` on scratch repos, `github_repo`,
+  `checkout_of_lane_path`, `lanes_listed`, the note for every repo, a lane elsewhere stops, a job
+  with no checkout), `dispatch.rs` `every_ship_with_a_branch_is_told_to_use_its_merge_lane`,
+  `merger.rs` `both_ship_prompts_merge_only_through_the_lane` and `the_merger_does_no_ship`,
+  `prompt_rules.rs`, `crates/store/tests/lanes.rs` (the old list kept and ignored,
+  `lanes_seen`, the history by lane), `crates/store/tests/subagents.rs`
+  (`the_card_mergers_switch_and_choice_are_gone_and_ignored`), `subagents.rs`,
+  `tools/ui-tests/lane.test.mjs`.
 
 ## Stacks build in parallel (6 Nov 2026, card #113)
 
