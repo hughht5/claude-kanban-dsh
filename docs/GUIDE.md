@@ -618,6 +618,8 @@ the same box, every option at Default.
   follows it at once; a card whose session is in the column where it matters is told.
 - **From your own Claude session:** `kb update <n> --skip-planning on|off|default`,
   `--skip-human-test on|off|default`, `--subagent critic=on|off|default` (once per agent).
+  `kb create --title ... --skip-planning` (card #169) makes a card that skips Planning and starts
+  it now, straight in In progress.
   `kb card <n>` shows a `flow` object: each option's value and whether it is the card's own or the
   default. A card's session and the Router can't set them.
 

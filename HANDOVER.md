@@ -2004,6 +2004,9 @@ default as it is now). `crates/store/src/flow.rs` holds the keys and the store's
   plain `kb` (not held in `tools.rs` `call_inner`: `not_updatable_by`), which also log and run
   `after_edit`. A card session and the Router are refused. `kb update` takes `--skip-planning`,
   `--skip-human-test` (on, off, default) and `--subagent <name>=on|off|default`.
+  `kanban_create_card` takes `skipPlanning: true` from the same callers (card #169, `kb create
+  --skip-planning`; refused with `stack`): it sets the new card's `skipPlanning` and starts it, so
+  `move_as` sends it to In progress.
   `kanban_get_card` and `kb card` show a computed `flow` (`Store::flow_of`).
 - **UI:** `ui/subagents.js`: the Card flow box (`subagentsBox`, three-way selects, one key per
   change), Add card's box (`subagentTicks`, `flowChoice`: only what isn't Default), the chips (a

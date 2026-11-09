@@ -991,3 +991,11 @@ Also carries card #149's fix (the rows above), cherry-picked onto this branch, a
 | AGENTS.md, HANDOVER.md, PLAN.md, this file | Same revert. Text only |
 
 Data: a queue saved while a card was being woken has `wokeAt` on its entry; an older build ignores it. Nothing else on the board changes.
+
+## Skip Planning when a card is made (9 Nov 2026, card #169, branch `card-169`)
+
+PowerShell 5.1 commands.
+
+| Change | Undo |
+|---|---|
+| `kanban_create_card`'s `skipPlanning` (`src-tauri\src\tools.rs`), `kb create --skip-planning` (`crates\kb\src\main.rs`) and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #169 commit>`, then stage the live update as usual. A card made this way only has #162's `skipPlanning` field |
