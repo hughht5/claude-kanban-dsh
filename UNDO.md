@@ -944,3 +944,7 @@ Tests only: the app's behaviour is unchanged (the live budget for a worktree's g
 |---|---|
 | `hang_tests::the_focus_flag_under_the_board_lock_never_hangs` runs until the main thread has run 101 commands (up to 60 s) instead of a fixed 2 s; `load` takes `enough` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #171 commit>` |
 | `worktree.rs`: a test build's `MAKE_LIMIT` is 300 s (`#[cfg(test)]`), the error text names the budget the call had (`Git.limit`), and the test `git_past_its_limit_is_not_run` | The same revert |
+
+## Card #176: the card-merger accepts a switched-off reviewer (9 Nov 2026)
+
+Prompt text only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #176 commit>`, then stage the live update. Files: `src-tauri\src\merger.rs` (prompt and test), `src-tauri\src\stackrun.rs` (merge brief), `HANDOVER.md`. A lead session already running keeps the old merger prompt until it restarts.
