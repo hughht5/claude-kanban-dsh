@@ -151,7 +151,7 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
             let (id, _) = card_id(app, args)?;
             let last = args.get("last").and_then(Value::as_u64).unwrap_or(10).clamp(1, 100) as usize;
             let tools = args.get("include_tools").and_then(Value::as_bool).unwrap_or(false);
-            let chunk = crate::transcript_read(app.state::<Board>(), id, 0, None).map_err(err)?;
+            let chunk = crate::transcript_chunk(&app.state::<Board>(), &id, 0, None).map_err(err)?;
             let v = serde_json::to_value(&chunk).map_err(|e| e.to_string())?;
             let entries: Vec<Value> = v["entries"]
                 .as_array()

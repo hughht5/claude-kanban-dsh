@@ -204,7 +204,13 @@ pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Valu
             if !live && !may_start {
                 return Err("refused: that card's session isn't running, and a message would start it; that needs Hugh's \"Router may start cards\" setting".into());
             }
-            let _ = id;
+            // The Router's words are the app's, not Hugh's: recorded before they are sent, so
+            // the card's chat draws them centred (card #153). session_send sends them as Hugh's.
+            if let Some(t) = args.get("text").and_then(Value::as_str) {
+                if let Ok(mut st) = app.state::<Board>().0.lock() {
+                    let _ = st.note_app_message(&id, t);
+                }
+            }
             let out = crate::control::call(app, name, args)?;
             log_decision(app, args.get("card").and_then(Value::as_i64), &format!("Sent #{} a message", args.get("card").and_then(Value::as_i64).unwrap_or(0)));
             Ok(out)

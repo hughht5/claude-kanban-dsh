@@ -36,11 +36,26 @@ impl Store {
         record(&self.conn, card_id, text)
     }
 
-    /// The texts of the newest app messages to `card_id` (at most `MATCH_LIMIT`), newest first,
-    /// each once.
+    /// For a message that carries Hugh's `words` inside the app's own text (a Fail note, a
+    /// message that moved a card back, a bug report): records each blank-line piece of `full`
+    /// that holds none of his words, so the chat draws the app's sentences apart from his.
+    pub fn note_app_pieces(&mut self, card_id: &str, full: &str, words: &str) -> Result<()> {
+        let full = norm(full);
+        let words = norm(words);
+        let his: Vec<&str> = words.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).collect();
+        for piece in full.split("\n\n").map(str::trim).filter(|p| !p.is_empty()) {
+            if !his.iter().any(|h| piece.contains(h)) {
+                record(&self.conn, card_id, piece)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The texts of the newest app messages to `card_id` (at most `MATCH_LIMIT`), each once,
+    /// longest first (the order `split_app_parts` matches in).
     pub fn app_messages(&self, card_id: &str) -> Result<Vec<String>> {
         let mut st = self.conn.prepare(
-            "SELECT text FROM app_messages WHERE card_id = ?1 GROUP BY text ORDER BY MAX(seq) DESC LIMIT ?2",
+            "SELECT text FROM (SELECT text, MAX(seq) AS s FROM app_messages WHERE card_id = ?1 GROUP BY text ORDER BY s DESC LIMIT ?2) ORDER BY length(text) DESC, s DESC",
         )?;
         let rows = st.query_map(params![card_id, MATCH_LIMIT as i64], |r| r.get::<_, String>(0))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -61,8 +76,11 @@ pub fn split_app_parts(text: &str, apps: &[String]) -> Option<Vec<MsgPart>> {
     }
     let m = norm(text);
     // Longest first, so a text that starts with a shorter app text still matches whole.
+    // `Store::app_messages` already gives them so; sorted here only when they aren't.
     let mut cands: Vec<&str> = apps.iter().map(|a| a.as_str()).filter(|a| !a.is_empty()).collect();
-    cands.sort_by_key(|a| std::cmp::Reverse(a.len()));
+    if !cands.windows(2).all(|w| w[0].len() >= w[1].len()) {
+        cands.sort_by_key(|a| std::cmp::Reverse(a.len()));
+    }
     let app_at = |pos: usize| -> Option<usize> {
         let rest = &m[pos..];
         cands

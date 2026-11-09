@@ -57,6 +57,29 @@ fn the_apps_messages_are_recorded_and_hughs_are_not() {
 }
 
 #[test]
+fn the_apps_sentences_around_hughs_words_are_recorded_and_his_are_not() {
+    let (_d, mut s, id) = board();
+    // A Fail note: the app's lead-in, Hugh's note (two paragraphs), then the app's ask note.
+    let note = "The button is grey.\n\nIt should be blue.";
+    let full = format!("Hugh failed this card in Human test.\n\nHugh's note:\n\n{note}\n\nRun the card-reproducer.");
+    s.note_app_pieces(&id, &full, note).unwrap();
+    let mut got = s.app_messages(&id).unwrap();
+    got.sort();
+    assert_eq!(got, vec!["Hugh failed this card in Human test.".to_string(), "Hugh's note:".to_string(), "Run the card-reproducer.".to_string()]);
+    assert_eq!(
+        split_app_parts(&full, &s.app_messages(&id).unwrap()),
+        Some(vec![app("Hugh failed this card in Human test."), app("Hugh's note:"), hugh(note), app("Run the card-reproducer.")])
+    );
+    // Hugh's words inside a sentence of the app's keep the whole sentence his.
+    let (_d2, mut s2, id2) = board();
+    s2.note_app_pieces(&id2, "Hugh answered the question: use blue\n\nGo on.", "use blue").unwrap();
+    assert_eq!(s2.app_messages(&id2).unwrap(), vec!["Go on.".to_string()]);
+    // His plain message records nothing.
+    s2.note_app_pieces(&id2, "proceed", "proceed").unwrap();
+    assert_eq!(s2.app_messages(&id2).unwrap().len(), 1);
+}
+
+#[test]
 fn a_message_splits_into_the_apps_parts_and_hughs() {
     let apps = vec!["It is your turn on the test app (card #128).\nUse it now.".to_string(), "From the Router: go on.".to_string()];
     // Hugh's own message: nothing to split.

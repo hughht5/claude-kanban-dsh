@@ -1567,16 +1567,24 @@ The chat (card panel and Router panel) draws text the app sent on its own in the
 tagged "Automatic"; Hugh's words stay on the right and Claude's on the left. Migration 15 adds
 the append-only `app_messages` table (`card_id` is the card's id, or `router`). `Store::queue`
 records every `message` it queues as the app's; Hugh's words go through `Store::queue_hugh`
-(`send_to_session(.., hugh: true)`: his chat message, Send now, Fail note, Found a problem, stack
-answer) and are never recorded. A message put back in the queue (`sessions.rs`, untaken) uses
-`queue_hugh` too, as it was recorded when first queued. Sends that skip the queue record with
-`Store::note_app_message`: the monitor's typed nudge, the Router's first message, its events
-batch and a card's message to it (`send_by` with a `by` not starting "Hugh").
-`transcript_read` (main view only) splits each user entry with `kanban_store::split_app_parts`:
-the queue joins waiting messages with a blank line, so a piece between blank lines that equals a
-recorded text is the app's and the rest is Hugh's, in order (`Entry.parts`). `userHtml` in
-`panel.js` draws them; `router.js` uses it too. Messages sent before this build have no record
-and still show on the right. Hugh's words wrapped in the app's text (a Fail note) count as his.
+(`send_to_session(.., Some(words))`: his chat message, Send now, Report a bug, Fail note, Found a
+problem, stack answer) and are never recorded. Where the app wraps his words (a Fail note's
+lead-in and reproducer note, a message that moved a card back, a bug report),
+`Store::note_app_pieces` records each blank-line piece that holds none of his words, so those
+sentences show as the app's; a sentence with his words inside stays his. A message put back in
+the queue (`sessions.rs`, untaken) uses `queue_hugh` too, as it was recorded when first queued.
+Sends that skip the queue record with `Store::note_app_message`, before the send: the monitor's
+typed nudge, the Router's `kanban_session_send` to a card (`routertools.rs`; `session_send`
+itself sends as Hugh, for `kb`), the Router's first message, its events batch and a card's
+message to it (`send_by` with a `by` not starting "Hugh").
+`transcript_read` (the chat's read, main view only) splits each user entry with
+`kanban_store::split_app_parts`: the queue joins waiting messages with a blank line, so a piece
+between blank lines that equals a recorded text is the app's and the rest is Hugh's, in order
+(`Entry.parts`). `transcript_chunk` is the plain read (`kanban_session_read` uses it).
+`userHtml` in `panel.js` draws them; `router.js` uses it too.
+Limits: messages sent before this build have no record and still show on the right; a message
+still waiting (the faded "Sent" or "Queued" bubble) shows on the right until Claude takes it;
+text Hugh pastes that equals one of the app's earlier messages is drawn as the app's.
 
 ## Router panel: images (7 Nov 2026, card #127)
 

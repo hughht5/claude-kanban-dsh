@@ -665,8 +665,12 @@ fn act(app: &AppHandle, live: &Arc<Sessions>, memory: &mut Memory, card: &Card, 
             Action::Nudge(text) => {
                 let about = hit.map(|h| h.about.clone()).unwrap_or_default();
                 // Checked again at the moment of typing, and never typed at an open question
-                // (`type_now` refuses that too).
-                let typed = still_repeating(live, &card.id, &about, interval) && !crate::router::restarting(&card.id) && live.type_now(&card.id, &text, true).unwrap_or(false);
+                // (`type_now` refuses that too). Recorded as the app's before it is typed, so the
+                // chat never reads it unmarked (card #153); a nudge not typed matches nothing.
+                if let Ok(mut st) = app.state::<Board>().0.lock() {
+                    let _ = st.note_app_message(&card.id, &text);
+                }
+                let typed =still_repeating(live, &card.id, &about, interval) && !crate::router::restarting(&card.id) && live.type_now(&card.id, &text, true).unwrap_or(false);
                 if !typed {
                     if let Some(s) = next.as_mut() {
                         s.typed = false; // Hugh is told at the next check if it is still stuck
@@ -675,7 +679,6 @@ fn act(app: &AppHandle, live: &Arc<Sessions>, memory: &mut Memory, card: &Card, 
                 let board = app.state::<Board>();
                 let Ok(mut store) = board.0.lock() else { continue };
                 if typed {
-                    let _ = store.note_app_message(&card.id, &text);
                     memory.nudged.entry(card.id.clone()).or_default().insert(about);
                     log(&mut store, &card.id, "Typed a nudge into the session: it was making the same call with the same result over and over");
                 } else {

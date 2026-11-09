@@ -355,7 +355,7 @@ pub(crate) fn stack_join_op(app: &AppHandle, store: &mut Store, lead: i64, child
     let _ = store.add_log(&c.id, &format!("Joined stack #{lead} ({by}); {}", if dispatch::built(&c) { "already built: its branch is to be merged into the stack's" } else { "it builds itself in its own session, and the stack's lead merges it" }), by);
     let _ = store.stack_recheck(lead, &format!("#{child} joined"), by);
     let l = store.get_by_number(lead).map_err(|e| e.to_string())?;
-    send_to_session(app, store, &l.id, &dispatch::dry(&l, text), false)?;
+    send_to_session(app, store, &l.id, &dispatch::dry(&l, text), None)?;
     // A card keeps its own session in a stack (card #113); only a lead that joins stands down,
     // since the stack it joined has its own integrator.
     if dispatch::has_session(app, store, &c.id) {
@@ -611,7 +611,7 @@ fn stack_problem(app: AppHandle, board: State<Board>, id: String, note: String) 
     }
     // A dry-run stack (the test board's copies) only says what it would do.
     let text = match store.get(&to) { Ok(l) => dispatch::dry(&l, text), Err(_) => text };
-    let sent = send_to_session(&app, &mut store, &to, &text, true);
+    let sent = send_to_session(&app, &mut store, &to, &text, Some(&note));
     if let Err(e) = &sent {
         let _ = store.add_log(&to, &format!("Couldn't send Hugh's problem note on #{} to the session: {e}", card.number), "the app");
     }
@@ -650,7 +650,7 @@ fn stack_answer(app: AppHandle, board: State<Board>, id: String, answer: String)
     };
     // A dry-run stack (the test board's copies) only says what it would do.
     let text = match store.get(&to) { Ok(l) => dispatch::dry(&l, text), Err(_) => text };
-    let sent = send_to_session(&app, &mut store, &to, &text, true);
+    let sent = send_to_session(&app, &mut store, &to, &text, Some(&answer));
     if let Err(e) = &sent {
         let _ = store.add_log(&to, &format!("Couldn't send Hugh's answer on #{} to the session: {e}", card.number), "the app");
     }
