@@ -103,6 +103,26 @@ not, say so on the card and go on with step 2 as before.
    was. Report `needs-hugh` with `kanban_ship_result` and its reason, and stop. Don't resolve it
    yourself and don't push.
 
+**If the app's note says this repo ships through its merge lane** (card #160), the repo's one
+merge lane does the merge instead of a card-merger in your session. Don't run the card-merger.
+
+1. Call `kanban_merge`, with `branches` (the branch of any card the owner dropped on this one),
+   `rules` (the repo's merge rules, as above) and `checks` (its check commands). Commit
+   everything first: it refuses a worktree with uncommitted work. Then end your turn. The app
+   sends you the lane's verdict.
+2. On **PASS**, the app's message gives the lane's commit (`head`), the commit your branch was at
+   (`base`) and what it rebased onto (`onto`). In your worktree:
+   - `git status --porcelain` must be empty and `git rev-parse HEAD` must still be `base`.
+     Otherwise your branch moved while the lane worked: report `needs-hugh` and stop.
+   - `git reset --hard <head>`.
+   - `git range-diff <onto> <base> <head>` must show each of your commits, with only the
+     conflict resolutions the lane listed. If one is missing or changed in a way it didn't list,
+     report `needs-hugh` and stop.
+   - Then go on as step 2 above says for a PASS (push with `--force-with-lease`). If 2b finds the
+     PR `CONFLICTING`, call `kanban_merge` again instead of rebasing yourself.
+3. On **FAIL**, or "Merge unclear" on the card, every branch is where it was (the lane never
+   moves one). Report `needs-hugh` with its reason, and stop.
+
 ## 2. Merge the PR, and prove it
 
 a. Push the branch. If no PR is open, open one with `Closes #<n>` in the body, and put it on the

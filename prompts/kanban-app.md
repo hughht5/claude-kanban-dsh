@@ -234,6 +234,15 @@ card #79) until this ship is done, so each one ships on top of the last.
    - On **FAIL** (or "Merge unclear" on the card): `kanban_ship_result` `needs-hugh` with its
      reason, and stop. A commit with no `(card #<n>)` of this ship is someone else's unshipped
      work: never push it.
+   - **If the app's note says this repo ships through its merge lane** (card #160), don't run the
+     card-merger. Call `kanban_merge` with `rules` "every commit in origin/main..HEAD carries
+     (card #<n>) for a card of this ship" and `checks` "cargo test --workspace", then end your
+     turn: the app sends you the lane's verdict. On **PASS**, in your worktree:
+     `git status --porcelain` is empty and `git rev-parse HEAD` is still its `base` (else
+     `needs-hugh`); `git reset --hard <head>`; `git range-diff <onto> <base> <head>` shows each of
+     your commits, changed only as the lane listed (else `needs-hugh`). Then fast-forward main as
+     above and go on with step 2. On **FAIL** or "Merge unclear": `needs-hugh` with its reason,
+     and stop.
 2. Make sure the tested commit is what's on `main` (`git -C <checkout> log -1`, tests pass).
 3. `git -C <checkout> push origin main`. Then delete the card's branch on GitHub if you pushed it:
    `git push origin --delete <branch>` (each card of a stack: its own branch). Leave the card's
