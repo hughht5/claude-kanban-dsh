@@ -175,3 +175,13 @@ test("the Done pile column gets --w and an edge too, so Archive can be resized",
   b.show([pileCard]);
   close(wOf(cols(b).find(isPile)), 2.5);
 });
+
+test("index.html loads colwidths.js after every script that adds a column, as the harness does", async () => {
+  const fs = await import("node:fs"), path = await import("node:path");
+  const { UI, FILES } = await import("./harness.mjs");
+  const order = [...fs.readFileSync(path.join(UI, "index.html"), "utf8").matchAll(/<script src="([\w.-]+\.js)"/g)].map((m) => m[1]);
+  assert.ok(order.indexOf("colwidths.js") > order.indexOf("archive-ask.js"), "colwidths.js comes after archive-ask.js in index.html");
+  assert.equal(FILES.indexOf("colwidths.js"), FILES.length - 1);
+  const inHtml = FILES.filter((f) => order.includes(f)).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  assert.deepEqual(FILES, inHtml, "the harness's FILES follow index.html's order");
+});
