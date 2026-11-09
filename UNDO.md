@@ -720,6 +720,6 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 
 | Change | Undo |
 |---|---|
-| `Ring` counts the session's output (`total`), `pty` events carry `run` and `end`, `session_snapshot` returns `{run, end, data}`, and the new `session_run` (`sessions.rs`, `session_cmds.rs`, `main.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #95 commit>`. Nothing is stored: it is all in memory |
+| `Ring` counts the session's output (`total`), `pty` events carry `run` and `end`, `session_snapshot` returns `{run, end, data}`, and the new `session_run` (`sessions.rs`, `session_cmds.rs`, `main.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #95 commits, newest first>`. Nothing is stored: it is all in memory |
 | `ui\termlink.js` and its tag in `ui\index.html`; the card panel (`ui\panel.js`) and the Router pane (`ui\router.js`) use it | Same revert. The terminals go back to replaying the whole ring on every refresh |
 | `tools\ui-tests\termlink.test.mjs` | Same revert |
