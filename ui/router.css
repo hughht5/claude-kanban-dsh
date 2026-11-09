@@ -3,7 +3,13 @@
    panel's message styles (panel.css: .m, .msgs, .compose, .busy, details.tools). Uses board.css's
    tokens, so it follows light and dark. The .rpane* classes may also get shared rules from a later
    ui/rpane.css (card #120); these rules are complete without it. */
-:root{--rpane-w:380px}
+:root{--rpane-w:380px;--apane-w:380px;--rpane-top:64px;--pane-used:0px}
+/* What the docked panes take on the right (card #167): the Router panel, the Agents drawer, or both
+   side by side (the drawer to the left of the Router panel, 16px gap). The board and a card panel
+   keep clear of the total. */
+body.router-open{--pane-used:var(--rpane-w)}
+body.agents-open{--pane-used:var(--apane-w)}
+body.router-open.agents-open{--pane-used:calc(var(--rpane-w) + var(--apane-w) + 16px)}
 
 /* The header button and its state dot: off grey, idle green, working accent, asks amber, down red. */
 .rbtn{display:inline-flex;align-items:center;gap:6px;align-self:center}
@@ -22,9 +28,12 @@
 .rpill[hidden]{display:none}
 
 /* Room for the panel: the board (and what sits beside it) gets narrower, never goes under it. */
-body.rpane-open > main.board,body.rpane-open > #emptyNote,body.rpane-open > .banner{margin-right:calc(var(--rpane-w) + 12px)}
+body.rpane-open > main.board,body.rpane-open > #emptyNote,body.rpane-open > .banner{margin-right:calc(var(--pane-used) + 12px)}
 /* A card panel in its default box ends to the left of the Router panel (router.js narrows a moved one). */
-body.rpane-open .panel{right:calc(var(--rpane-w) + 28px)}
+body.rpane-open .panel{right:calc(var(--pane-used) + 28px)}
+/* Both open: the Agents drawer floats like the Router panel, to its left, same top and bottom. */
+body.router-open.agents-open #agentsPane{top:var(--rpane-top);bottom:16px;right:calc(max(16px,env(safe-area-inset-right,0px)) + var(--rpane-w) + 16px);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.14);z-index:22;overflow:hidden}
 
 /* The panel. */
 .rpane{position:fixed;top:64px;right:max(16px,env(safe-area-inset-right,0px));bottom:16px;width:var(--rpane-w);z-index:22;

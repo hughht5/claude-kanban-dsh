@@ -90,7 +90,7 @@ function applyWidth(w){
 function placeTop(){
   if(!pane)return;const h=document.querySelector("header");
   const top=h?Math.round(h.getBoundingClientRect().bottom+8):16;
-  pane.el.style.top=top+"px";
+  pane.el.style.top=top+"px";document.documentElement.style.setProperty("--rpane-top",top+"px");
 }
 function openPane(){
   if(pane){drawButton();return}
@@ -111,7 +111,7 @@ function openPane(){
   document.body.appendChild(el);
   pane={el,tab:"chat",entries:[],tools:{},offset:0,open:new Set(),more:new Set(),ask:{},reading:false,timer:null,term:null,fit:null,
     feed:null,feedOpen:store("router.feedOpen")!=="0",digest:null,unlisten:[],question:null,att:[]};
-  document.body.classList.add("rpane-open");
+  document.body.classList.add("rpane-open","router-open");
   applyWidth(width());
   el.querySelector("#r-close").onclick=closePane;
   el.querySelector("#r-stop").onclick=stopRouter;
@@ -139,8 +139,8 @@ function closePane(){
   if(pane.term){termUnlink(pane.link);try{pane.term.dispose()}catch(e){}}
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
-  document.body.classList.remove("rpane-open");
-  document.documentElement.style.removeProperty("--rpane-w"); // the Agents drawer and board margins fall back to 380 px
+  document.body.classList.remove("router-open");if(!document.body.classList.contains("agents-open"))document.body.classList.remove("rpane-open");
+  document.documentElement.style.removeProperty("--rpane-w"); // the board margins fall back to 380 px
   fitCardPanel();
   drawButton();
 }
@@ -192,7 +192,7 @@ function fitCardPanel(){
   fitting=true;
   try{
     if(!pane||!p.style.left||p.style.left==="auto")return;
-    const limit=innerWidth-width()-16-14,r=p.getBoundingClientRect();
+    const limit=innerWidth-width()-(document.body.classList.contains("agents-open")?parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--apane-w"))+16:0)-16-14,r=p.getBoundingClientRect();
     if(r.right<=limit)return;
     const w=Math.max(Math.min(480,limit-14),Math.min(r.width,limit-14)),l=Math.max(14,Math.min(r.left,limit-w));
     p.style.left=l+"px";p.style.width=w+"px";

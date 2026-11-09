@@ -21,5 +21,6 @@
 .rpane-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .rpane-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 /* With the pane open, a card panel keeps clear of it. */
-body.rpane-open .panel{max-width:calc(100vw - var(--rpane-w,380px) - 28px)}
+body.rpane-open .panel{max-width:calc(100vw - var(--pane-used,var(--rpane-w,380px)) - 28px)}
+#agentsPane.rpane{width:var(--apane-w,380px)}
 @media (max-width:640px){.rpane{width:100vw}body.rpane-open .panel{max-width:none}}

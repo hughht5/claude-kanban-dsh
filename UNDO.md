@@ -921,3 +921,7 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 UI only; nothing on the board or in the data folder changes. The saved width (`router.width` in the WebView's localStorage) is only read.
 
 Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <the card #128 commit>`. A width saved while this was live still works in the old layout.
+
+## Agents drawer beside the Router panel (9 Nov 2026, card #167)
+
+UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 commit>`, then stage the live update. Files: `ui\router.css`, `ui\rpane.css`, `ui\router.js`, `ui\agents-feed.js`.

@@ -249,7 +249,7 @@
   function openPane(){
     if(!pane)build();
     back=document.activeElement;
-    pane.hidden=false;document.body.classList.add("rpane-open");btn.setAttribute("aria-pressed","true");
+    pane.hidden=false;document.body.classList.add("rpane-open","agents-open");btn.setAttribute("aria-pressed","true");
     if(feed)feed.refresh();else feed=mountAgentsFeed(pane.querySelector("#ap-feed"),{onCard:openCard,active:isOpen});
     // The focus goes in only from the board; over a card in review it stays where it is, so the keys go on working.
     if(!(typeof panel!=="undefined"&&panel))pane.focus({preventScroll:true});
@@ -257,7 +257,7 @@
   function closePane(){
     if(!isOpen())return;
     const had=pane.contains(document.activeElement);
-    pane.hidden=true;document.body.classList.remove("rpane-open");btn.setAttribute("aria-pressed","false");
+    pane.hidden=true;document.body.classList.remove("agents-open");if(!document.body.classList.contains("router-open"))document.body.classList.remove("rpane-open");btn.setAttribute("aria-pressed","false");
     // The feed stays mounted, so it opens again where it was; while closed it ignores the app's
     // events (active: isOpen), and openPane refreshes it.
     if(had){const b=back&&back.isConnected&&back!==document.body?back:btn;try{b.focus({preventScroll:true})}catch(e){}}
