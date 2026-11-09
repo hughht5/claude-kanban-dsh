@@ -25,6 +25,10 @@ through the running app (a card session's own card when <n> is left out):
                                        --labels BUG,RCS sets the card's labels; --labels null clears them
                                        --doneWhen "it shows" --doneWhenChecks '["one check","another"]'
                                        --blockedBy 12,40 sets the cards it waits on; --blockedBy null clears them
+                                       the card's flow, only from outside a card session (Hugh's own):
+                                       --skip-planning on|off|default  --skip-human-test on|off|default
+                                       --subagent critic=on|off|default (router, critic, reproducer,
+                                       reviewer, tester, merger; give it once for each)
   kb log <n> "<text>"                  add a log line
   kb move <n> "<column>" [--reason r]  move a card (your own card's move waits for your turn to end)
   kb create --title <t> [--repo r] [--column c] [--summary s] [--template id] [--stack <lead>] [--labels BUG,RCS] [--to Planning|"Human test"]
@@ -256,7 +260,7 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
         "list" => ("kanban_list_cards", json!({ "column": opt("--column"), "include_archived": args.iter().any(|a| a == "--archived") })),
         "update" => {
             let n = num(0).ok_or("update needs a card number")?;
-            ("kanban_update_card", json!({ "card": n, "fields": api::fields(&args[1..])? }))
+            ("kanban_update_card", json!({ "card": n, "fields": update_fields(&args[1..])? }))
         }
         "log" => ("kanban_add_log", json!({ "card": num(0).ok_or("log needs a card number")?, "text": args.get(1).ok_or("log needs the text")? })),
         "move" => ("kanban_move_card", json!({ "card": num(0).ok_or("move needs a card number")?, "column": args.get(1).ok_or("move needs a column")?, "reason": opt("--reason") })),
@@ -474,6 +478,20 @@ mod tests {
         assert_eq!(status_holder(&json!({ "holder": { "owner": "x" } }), 1)["owner"], "x", "an older app's status");
     }
 
+    /// Card #162: kb update sets the card's flow with on, off or default.
+    #[test]
+    fn update_takes_the_cards_flow() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let f = update_fields(&a(&["--skip-planning", "on", "--skip-human-test", "default", "--subagent", "critic=off", "--subagent", "card-tester=On", "--summary", "s"])).unwrap();
+        assert_eq!(f, json!({ "skipPlanning": true, "skipHumanTest": null, "subagents": { "critic": false, "tester": true }, "summary": "s" }));
+        assert_eq!(update_fields(&a(&["--subagent", "router=default"])).unwrap(), json!({ "subagents": { "router": null } }));
+        assert_eq!(update_fields(&a(&["--skip-planning", "off"])).unwrap(), json!({ "skipPlanning": false }));
+        for bad in [&["--skip-planning", "yes"][..], &["--skip-human-test"][..], &["--subagent", "critic"][..], &["--subagent", "critic=maybe"][..]] {
+            assert!(update_fields(&a(bad)).is_err(), "{bad:?}");
+        }
+        assert!(USAGE.contains("--skip-planning on|off|default") && USAGE.contains("--subagent critic=on|off|default"));
+    }
+
     #[test]
     fn usage_names_blocked_by() {
         assert!(USAGE.contains("--blockedBy 12,40"));
@@ -501,6 +519,52 @@ mod tests {
         assert!(ship_args(&a(&["--asked-by-hugh"])).is_err());
         assert_eq!(ship_args(&a(&["34", "--asked-by-hugh"])).unwrap(), json!({ "card": 34, "asked_by_hugh": true }));
     }
+}
+
+/// `on`, `off` or `default` as a flow option's value (card #162): true, false or null.
+fn on_off_default(name: &str, v: Option<&String>) -> Result<serde_json::Value, String> {
+    match v.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("on") => Ok(json!(true)),
+        Some("off") => Ok(json!(false)),
+        Some("default") => Ok(serde_json::Value::Null),
+        _ => Err(format!("{name} takes on, off or default")),
+    }
+}
+
+/// `kb update`'s fields: `--<field> <value>` pairs (see `api::fields`), and the card's flow
+/// (card #162), Hugh's alone: `--skip-planning on|off|default`, `--skip-human-test
+/// on|off|default`, and `--subagent <name>=on|off|default`, which may be given more than once.
+fn update_fields(args: &[String]) -> Result<serde_json::Value, String> {
+    let mut rest = Vec::new();
+    let mut flow = serde_json::Map::new();
+    let mut subs = serde_json::Map::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--skip-planning" => {
+                flow.insert("skipPlanning".into(), on_off_default("--skip-planning", it.next())?);
+            }
+            "--skip-human-test" => {
+                flow.insert("skipHumanTest".into(), on_off_default("--skip-human-test", it.next())?);
+            }
+            "--subagent" => {
+                let v = it.next().ok_or("--subagent needs <name>=on|off|default, like critic=off")?;
+                let (name, value) = v.split_once('=').ok_or("--subagent needs <name>=on|off|default, like critic=off")?;
+                let key = name.trim().trim_start_matches("card-").to_string();
+                subs.insert(key, on_off_default("--subagent", Some(&value.to_string()))?);
+            }
+            _ => rest.push(a.clone()),
+        }
+    }
+    let mut out = match api::fields(&rest)? {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    out.extend(flow);
+    if !subs.is_empty() {
+        out.insert("subagents".into(), serde_json::Value::Object(subs));
+    }
+    Ok(serde_json::Value::Object(out))
 }
 
 /// `kb search <words> [--card n] [--limit n]`: the words are everything else, in order.
