@@ -23,9 +23,10 @@ enum Msg {
     Command,
 }
 
-/// Runs the load for up to `run`. Returns whether the dispatcher's focus check ever waited
-/// past `stuck` (the hang), and how many commands the main thread ran.
-fn load(name: &'static str, old_way: bool, run: Duration, stuck: Duration) -> (bool, u64, Arc<Watched<u64>>) {
+/// Runs the load for up to `run`, or until the main thread has run `enough` commands. Returns
+/// whether the dispatcher's focus check ever waited past `stuck` (the hang), and how many
+/// commands the main thread ran.
+fn load(name: &'static str, old_way: bool, run: Duration, stuck: Duration, enough: u64) -> (bool, u64, Arc<Watched<u64>>) {
     let board = Arc::new(Watched::new(name, 0u64));
     let stop = Arc::new(AtomicBool::new(false));
     let commands = Arc::new(AtomicU64::new(0));
@@ -110,7 +111,7 @@ fn load(name: &'static str, old_way: bool, run: Duration, stuck: Duration) -> (b
         })
     };
     let until = Instant::now() + run;
-    while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+    while Instant::now() < until && !stop.load(Ordering::Relaxed) && commands.load(Ordering::Relaxed) < enough {
         std::thread::sleep(Duration::from_millis(10));
     }
     stop.store(true, Ordering::Relaxed);
@@ -130,14 +131,18 @@ fn load(name: &'static str, old_way: bool, run: Duration, stuck: Duration) -> (b
 
 #[test]
 fn the_old_focus_check_under_the_board_lock_hangs() {
-    let (hung, _, _) = load("hang-old", true, Duration::from_secs(10), Duration::from_millis(500));
+    let (hung, _, _) = load("hang-old", true, Duration::from_secs(10), Duration::from_millis(500), u64::MAX);
     assert!(hung, "the old way should hang under this load");
 }
 
+/// The proof is that the main thread keeps getting the board, not how fast: on a busy machine
+/// (other cards' builds beside `cargo test`) it once ran 12 commands in 2 s (card #171). So the
+/// load runs until the main thread has run 100 commands, with a minute's room; a hang stops it at
+/// the first one, however long it is given.
 #[test]
 fn the_focus_flag_under_the_board_lock_never_hangs() {
-    let (hung, commands, board) = load("hang-new", false, Duration::from_secs(2), Duration::from_millis(500));
+    let (hung, commands, board) = load("hang-new", false, Duration::from_secs(60), Duration::from_millis(500), 101);
     assert!(!hung);
-    assert!(commands > 100, "the main thread kept running commands: {commands}");
+    assert!(commands > 100, "the main thread kept running commands: {commands} in a minute");
     assert!(*board.lock().unwrap() > commands);
 }

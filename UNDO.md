@@ -935,3 +935,12 @@ UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 co
 | `prompts\kanban-app.md` In progress step 6, `AGENTS.md` Hard rules, README, HANDOVER, PLAN, `src-tauri\tests\prompt_rules.rs` | The same revert |
 | The private folder's `prompts\kanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
 | To keep the rule but let one more repo in or out | Edit `REPOS` in `nobrowser.rs` |
+
+## Card #171: timing tests allow for a busy machine (9 Nov 2026)
+
+Tests only: the app's behaviour is unchanged (the live budget for a worktree's git calls stays 15 s).
+
+| Change | Undo |
+|---|---|
+| `hang_tests::the_focus_flag_under_the_board_lock_never_hangs` runs until the main thread has run 101 commands (up to 60 s) instead of a fixed 2 s; `load` takes `enough` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #171 commit>` |
+| `worktree.rs`: a test build's `MAKE_LIMIT` is 300 s (`#[cfg(test)]`), the error text names the budget the call had (`Git.limit`), and the test `git_past_its_limit_is_not_run` | The same revert |
