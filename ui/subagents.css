@@ -7,3 +7,8 @@
 .sub-off{white-space:nowrap}
 .st-subagents h4{margin:0;font-size:14px;font-weight:600}
 .st-subagents > .st-box{border:0;padding:0}
+/* Card #162: the Card flow box (three-way picks). Its chips on the card face are plain .tag spans. */
+.flow-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 16px}
+.flow-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+.flow-row select{font:inherit;font-size:12.5px}
+.flow-box .msg:empty{display:none}

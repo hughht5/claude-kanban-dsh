@@ -1,11 +1,13 @@
-// Card #151: Hugh's choice of the app's five subagents for each card (card #162 took the
-// card-merger off it: every ship merges in its repo's merge lane, and an old card's `merger` is
-// ignored). The card keeps its own (`subagents`: {router, critic, reproducer, reviewer, tester}, each true or false), set
-// from the Settings switches when it is made; a card made before #151 has none and follows the
-// switches as they are now. The Add card form's ticks, the card's details box (saved as soon as
-// one changes), and the Settings switches (settings.js) all use this one list. Only Hugh changes
-// it: card sessions and the Router can't (kanban_update_card refuses the field). Uses board.js's
-// esc, invoke, cards, canWrite, write and say.
+// A card's flow (cards #151 and #162): Hugh's per-card choice of the app's five subagents (card #162 took the card-merger off: every
+// ship merges in its repo's merge lane, and an old card's `merger` is ignored) and of
+// skipping Planning or Human test. Each has a default in Settings > Sessions, and each card is
+// three-way: Default (follows Settings as it changes), On or Off (the card's own). A card's
+// `subagents` holds only its own overrides ({critic: false}); `skipPlanning` and `skipHumanTest`
+// are true, false or absent. The Add card form, the card's "Card flow" box in its details (saved
+// as soon as one changes, only that one), a chip on the card for each override that differs from
+// the default, and the Settings defaults (settings.js) all use these lists. Only Hugh changes them:
+// card sessions and the Router can't (kanban_update_card refuses the fields). Uses board.js's
+// esc, invoke, cards, canWrite, write, status, render, renderDetail and boardHooks.
 (()=>{
 window.NEW_CARD_SUBAGENTS=[
   {card:"router",name:"card-router",key:"sessions.router_in_planning",label:"card-router: size the card first in Planning",
@@ -20,56 +22,103 @@ window.NEW_CARD_SUBAGENTS=[
    help:"The session can move the card from In progress to Human test only after the card-tester has tested the real thing and passed it. The app records each verdict on the card. Off: the session tests it itself. Default on."},
 ];
 const SUBS=window.NEW_CARD_SUBAGENTS;
-// The Settings switches, as {router: true, ...}: read when the form opens and kept for the details.
+// Card #162: skip Planning and skip Human test, each with its Settings default (off unless turned on).
+window.CARD_FLOW_SKIPS=[
+  {card:"skipPlanning",key:"sessions.skip_planning",label:"Skip Planning",chip:"No plan",offChip:"Planning on",
+   help:"A move into Planning from Backlog or Blocked (your drag, Add card's Take it to, a blocked card starting by itself, the Router) goes straight to In progress instead: no plan request, no Planning session and no plan critique. The session is told to read the card, make its worktree if it has none, write a short approach into the summary, and build. Your own move into Planning from a later column still plans it. A stack's cards are planned by their lead, whatever this says. Default off."},
+  {card:"skipHumanTest",key:"sessions.skip_human_test",label:"Skip Human test",chip:"No human test",offChip:"Human test on",
+   help:"When the card's session (or the stack rules) moves it into Human test, after its subagent checks passed, the app moves it on into Ship it for you, as Take it to: Deploy complete does: that is your approval to ship it with no human test. It waits its turn in the ship queue like any ship, and a stack waits until every card in it is ready. Your own drag into Human test never skips, and Take it to: Human test still stops it there. A stack's cards go with their lead. Default off."},
+];
+const SKIPS=window.CARD_FLOW_SKIPS;
+const isSkip=k=>SKIPS.some(s=>s.card===k);
+// The Settings defaults, as {router: true, ..., skipPlanning: false, ...}: read at the start, and
+// again whenever Hugh changes one.
 let defaults=null;
 async function loadDefaults(){
   const out={};
-  await Promise.all(SUBS.map(async s=>{try{const g=await invoke("get_setting",{key:s.key});out[s.card]=g.value!=="off"}catch(e){out[s.card]=true}}));
+  await Promise.all([
+    ...SUBS.map(async s=>{try{const g=await invoke("get_setting",{key:s.key});out[s.card]=g.value!=="off"}catch(e){out[s.card]=true}}),
+    ...SKIPS.map(async s=>{try{const g=await invoke("get_setting",{key:s.key});out[s.card]=g.value==="on"}catch(e){out[s.card]=false}})]);
   defaults=out;return out}
+const dflt=k=>defaults?!!defaults[k]:!isSkip(k);
 const own=c=>c&&c.subagents&&typeof c.subagents==="object"&&!Array.isArray(c.subagents)?c.subagents:{};
-// Does the card have a choice of its own for every one of them?
-const ownAll=c=>SUBS.every(s=>typeof own(c)[s.card]==="boolean");
-// The card's subagents as they hold now: its own choice, else the default.
-const subsOf=c=>{const o={};for(const s of SUBS){const v=own(c)[s.card];o[s.card]=typeof v==="boolean"?v:(defaults?defaults[s.card]!==false:true)}return o};
-// Why a subagent is off on the card, for its row ("" when it is on): its own choice, or the
-// default a card made before #151 follows.
-window.subagentOffText=(c,card)=>subsOf(c)[card]!==false?"":typeof own(c)[card]==="boolean"?"off for this card":"off by the default in Settings";
+// The card's own value for one option: true, false, or undefined (it follows the default).
+const ownOf=(c,k)=>{const v=isSkip(k)?(c?c[k]:undefined):own(c)[k];return typeof v==="boolean"?v:undefined};
+// A stack's card never skips: its lead's flow covers it.
+const isChild=c=>!!c&&c.stackOf!=null&&c.stackOf!=="";
+// The value that holds now: the card's own, else the default.
+const nowOf=(c,k)=>{if(isSkip(k)&&isChild(c))return false;const v=ownOf(c,k);return v===undefined?dflt(k):v};
+// The card's subagents as they hold now.
+const subsOf=c=>{const o={};for(const s of SUBS)o[s.card]=nowOf(c,s.card);return o};
+// Why a subagent is off on the card, for its row ("" when it is on): its own choice, or the default.
+window.subagentOffText=(c,card)=>subsOf(c)[card]!==false?"":ownOf(c,card)!==undefined?"off for this card":"off by the default in Settings";
 // Which subagent a verdict field belongs to (board.js's CHECKS), for its "off" note.
 // (Card #162: the merge chip has none: a ship always merges in its lane.)
 window.SUBAGENT_OF_CHECK={test:"tester",review:"reviewer",critique:"critic",repro:"reproducer"};
 
-// The Add card form: six ticks, set from the defaults. `host` is an empty element in the form.
-window.subagentTicks=async function(host){
-  const d=await loadDefaults();
-  host.innerHTML=`<fieldset class="subs-set"><legend>Subagents</legend><div class="subs-row">${SUBS.map(s=>`<label class="st-radio" title="${esc(s.help)}"><input type="checkbox" data-sub="${esc(s.card)}"${d[s.card]?" checked":""}> ${esc(s.name)}</label>`).join("")}</div>
-  <p class="meta">Ticked as Settings &gt; Sessions sets them for a new card. Only you change them later, in the card's details.</p></fieldset>`};
-// The ticks' choice, as the card's `subagents`.
-window.subagentChoice=host=>{const o={};host.querySelectorAll("input[data-sub]").forEach(x=>{o[x.dataset.sub]=x.checked});return o};
+// The chip text for a subagent's override: "Critic off", "Tester on".
+const subChip=(s,on)=>{const n=s.name.replace(/^card-/,"");return n.charAt(0).toUpperCase()+n.slice(1)+(on?" on":" off")};
+// The card's overrides that differ from the default as it is now, as [{key, text, title}], in
+// the board's order: the two skips, then the six subagents.
+window.flowChips=c=>{
+  if(!c||!defaults)return[];
+  const out=[];
+  for(const s of SKIPS){const v=ownOf(c,s.card);if(v===undefined||v===dflt(s.card)||isChild(c))continue;
+    out.push({key:s.card,text:v?s.chip:s.offChip,title:`${s.label}: ${v?"on":"off"} for this card (the default is ${dflt(s.card)?"on":"off"})`})}
+  for(const s of SUBS){const v=ownOf(c,s.card);if(v===undefined||v===dflt(s.card))continue;
+    out.push({key:s.card,text:subChip(s,v),title:`${s.name}: ${v?"on":"off"} for this card (the default is ${dflt(s.card)?"on":"off"})`})}
+  return out};
+// On the card's face, in its chip row (face.js lays the row out after this).
+if(typeof boardHooks!=="undefined")boardHooks.decorate.push((b,c)=>{
+  const tags=b.querySelector(":scope > .tags");if(!tags)return;
+  for(const x of window.flowChips(c)){const el=document.createElement("span");el.className="tag flow-chip";el.dataset.flowChip=x.key;el.title=x.title;el.textContent=x.text;tags.appendChild(el)}});
 
-// The card's details: the six, each saved as soon as it changes.
-let pend=null; // {id, subs}: a change being saved, so a redraw meanwhile doesn't put the old one back
+// One three-way pick: Default (shows what it is now), On, Off. `cur` is the card's own value.
+const pick=(k,cur,dis)=>`<select class="flow-pick" data-flow="${esc(k)}" aria-label="${esc(k)}"${dis?" disabled":""}><option value="default"${cur===undefined?" selected":""}>Default (${dflt(k)?"on":"off"})</option><option value="on"${cur===true?" selected":""}>On</option><option value="off"${cur===false?" selected":""}>Off</option></select>`;
+const rows=(cur,dis)=>`<div class="flow-rows">${SKIPS.map(s=>`<label class="flow-row" title="${esc(s.help)}"><span>${esc(s.label)}</span>${pick(s.card,cur(s.card),dis)}</label>`).join("")}
+  ${SUBS.map(s=>`<label class="flow-row" title="${esc(s.help)}"><span>${esc(s.name)}</span>${pick(s.card,cur(s.card),dis)}</label>`).join("")}</div>`;
+const valueOf=v=>v==="on"?true:v==="off"?false:null;
+
+// The Add card form: every option at Default. `host` is an empty element in the form.
+window.subagentTicks=async function(host){
+  await loadDefaults();
+  host.innerHTML=`<fieldset class="subs-set flow-set"><legend>Card flow</legend>${rows(()=>undefined,false)}
+  <p class="meta">Default follows Settings &gt; Sessions, now and when it changes. On or Off is this card's own. Only you change them later, in the card's details.</p></fieldset>`};
+// The form's choice: only what isn't Default, as card fields ({skipPlanning, subagents: {...}}).
+window.flowChoice=host=>{const o={},subs={};
+  host.querySelectorAll("select[data-flow]").forEach(x=>{const v=valueOf(x.value);if(v===null)return;if(isSkip(x.dataset.flow))o[x.dataset.flow]=v;else subs[x.dataset.flow]=v});
+  if(Object.keys(subs).length)o.subagents=subs;return o};
+// The subagents part of it alone (card #151's name).
+window.subagentChoice=host=>window.flowChoice(host).subagents||{};
+
+// The card's details: one "Card flow" box, each option saved as soon as it changes, only that one.
+let pend=null; // {id, k, v}: a change being saved, so a redraw meanwhile doesn't put the old one back
 window.subagentsBox=c=>{
-  const now=pend&&pend.id===c.id?pend.subs:subsOf(c);
-  const off=SUBS.filter(s=>!now[s.card]).map(s=>s.name);
-  const from=ownAll(c)?"This card's own choice.":"This card was made before the per-card choice, so it follows Settings &gt; Sessions (Subagents on a new card) until you change one here.";
-  return`<div class="shipbox subs-box" data-subs="${esc(c.id)}"><h3>Subagents</h3>
-  <div class="subs-row">${SUBS.map(s=>`<label class="st-radio" title="${esc(s.help)}"><input type="checkbox" data-sub="${esc(s.card)}"${now[s.card]?" checked":""}${typeof canWrite!=="undefined"&&!canWrite?" disabled":""}> ${esc(s.name)}</label>`).join("")}</div>
-  <span class="meta">${from} ${off.length?`Off: ${esc(off.join(", "))}: its session skips them and nothing waits for them.`:"All on."} Saved as soon as you change one; its session is told.</span>
+  const cur=k=>pend&&pend.id===c.id&&pend.k===k?(pend.v===null?undefined:pend.v):ownOf(c,k);
+  const dis=typeof canWrite!=="undefined"&&!canWrite;
+  const off=SUBS.filter(s=>!nowOf(c,s.card)).map(s=>s.name);
+  const skips=SKIPS.filter(s=>nowOf(c,s.card)).map(s=>s.label);
+  const child=isChild(c)?" This card is in a stack, so it never skips Planning or Human test: its lead's flow covers it.":"";
+  return`<div class="shipbox subs-box flow-box" data-subs="${esc(c.id)}"><h3>Card flow</h3>
+  ${rows(cur,dis)}
+  <span class="meta">Now: ${skips.length?esc(skips.join(", "))+"; ":""}${off.length?`subagents off: ${esc(off.join(", "))}`:"all subagents on"}.${child} Default follows Settings &gt; Sessions as it changes; On or Off is this card's own. Saved as soon as you change one; its session is told. Only you change these, not its session or the Router.</span>
   <span class="msg subs-msg"></span></div>`};
 document.addEventListener("change",async e=>{
-  const x=e.target;if(!x.matches||!x.matches(".subs-box input[data-sub]"))return;
-  const box=x.closest(".subs-box"),id=box.dataset.subs,c=cards.find(k=>k.id===id);if(!c)return;
-  const subs=Object.assign(subsOf(c),window.subagentChoice(box));
-  const m=box.querySelector(".subs-msg");
-  pend={id,subs};box.querySelectorAll("input").forEach(i=>i.disabled=true);
-  const ok=await write(id,{subagents:subs},true);pend=null;
-  const now=document.querySelector(`.subs-box[data-subs="${CSS.escape(id)}"]`);
-  if(now){now.querySelectorAll("input").forEach(i=>i.disabled=typeof canWrite!=="undefined"&&!canWrite);const mm=now.querySelector(".subs-msg");
+  const x=e.target;if(!x.matches||!x.matches(".flow-box select[data-flow]"))return;
+  const box=x.closest(".flow-box"),id=box.dataset.subs,c=cards.find(k=>k.id===id);if(!c)return;
+  const k=x.dataset.flow,v=valueOf(x.value);
+  const patch=isSkip(k)?{[k]:v}:{subagents:{[k]:v}};
+  pend={id,k,v};box.querySelectorAll("select").forEach(i=>i.disabled=true);
+  const ok=await write(id,patch,true);pend=null;
+  const now=document.querySelector(`.flow-box[data-subs="${CSS.escape(id)}"]`);
+  if(now){now.querySelectorAll("select").forEach(i=>i.disabled=typeof canWrite!=="undefined"&&!canWrite);const mm=now.querySelector(".subs-msg");
     if(ok){mm.textContent="Saved";mm.className="msg subs-msg ok"}
-    else{const cur=subsOf(cards.find(k=>k.id===id)||c);now.querySelectorAll("input[data-sub]").forEach(i=>{i.checked=!!cur[i.dataset.sub]});mm.textContent="Not saved. Try again.";mm.className="msg subs-msg err"}}
-  else if(m&&!ok)status("The subagents weren't saved. Try again.",true);
+    else{const cc=cards.find(q=>q.id===id)||c;now.querySelectorAll("select[data-flow]").forEach(i=>{const o=ownOf(cc,i.dataset.flow);i.value=o===undefined?"default":o?"on":"off"});mm.textContent="Not saved. Try again.";mm.className="msg subs-msg err"}}
+  else if(!ok&&typeof status==="function")status("The card's flow wasn't saved. Try again.",true);
 });
-// The defaults, for the details of a card made before #151; again whenever Hugh changes a switch.
-loadDefaults().then(()=>{if(typeof renderDetail==="function")renderDetail()});
-try{window.__TAURI__.event.listen("settings-changed",async p=>{if(p&&SUBS.some(s=>s.key===p.payload)){await loadDefaults();if(typeof renderDetail==="function")renderDetail()}})}catch(e){}
+// The defaults, for the details and the chips; again whenever Hugh changes one in Settings.
+const redraw=()=>{if(typeof render==="function")render();if(typeof renderDetail==="function")renderDetail()};
+loadDefaults().then(redraw);
+try{window.__TAURI__.event.listen("settings-changed",async p=>{if(p&&[...SUBS,...SKIPS].some(s=>s.key===p.payload)){await loadDefaults();redraw()}})}catch(e){}
+window.cardFlow={loadDefaults,ownOf,nowOf,valueOf};
 })();

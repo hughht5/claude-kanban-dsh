@@ -205,12 +205,13 @@ async function sessions(m){
     if(!/^\d+$/.test(v)||+v>1440){note(km,"Give a whole number from 0 to 1440.","err");return}
     try{const x=await invoke("set_setting",{key:"sessions.stuck_check_minutes",value:v});kb.querySelector("#st-stuck").value=x;note(km,"Saved","ok")}
     catch(e){note(km,"Not saved: "+errText(e),"err")}};
-  // Card #151: the subagents a new card starts with. Each card keeps its own choice (Add card, its
-  // details); these are the defaults, each an on/off setting saved at once. One entry each.
+  // Cards #151 and #162: a card's flow defaults, skip Planning, skip Human test and the six
+  // subagents, each an on/off setting saved at once. A card follows them unless it has its own.
   const sh=document.createElement("div");sh.className="st-box st-subagents";
-  sh.innerHTML=`<h4>Subagents on a new card</h4>
-  <p class="meta">Each new card starts with these on or off. Change them for one card on Add card or in its details: only you can, not its session or the Router. A subagent that is off holds nothing, and the card's session is told to skip it. Cards made before this setting follow these switches as they are now.</p>`;
+  sh.innerHTML=`<h4>Card flow defaults</h4>
+  <p class="meta">Every card follows these unless you set an option On or Off for that card (Add card, or Card flow in its details): only you can, not its session or the Router. A change here reaches every card that follows it, and the sessions it matters to are told. A subagent that is off holds nothing, and the card's session is told to skip it.</p>`;
   m.appendChild(sh);
+  for(const r of window.CARD_FLOW_SKIPS||[])await ruleBox(sh,r); // subagents.js, card #162
   for(const r of window.NEW_CARD_SUBAGENTS||[])await ruleBox(sh,r); // subagents.js
   await ruleBox(m,SIZE_FIRST_RULE); // card #159
   await ruleBox(m,SMALL_GO_ON_RULE); // card #98

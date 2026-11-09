@@ -42,7 +42,7 @@ const BACKUP_NOTE="No Claude session is watching the board; the backup check wil
 const shipChip=c=>{const st=shipState(c);if(!SHIP_LABEL[st])return"";const det=c.ship&&c.ship.detail?String(c.ship.detail):"";
   const backup=st==="requested"&&det===BACKUP_NOTE;
   return`<span class="tag chip ${esc(st)}"${det&&!SECRET.test(det)?` title="${esc(det)}"`:""}>${SHIP_LABEL[st]}${backup?" · backup check":""}</span>`};
-const PLAN_LABEL={requested:"Plan requested",claimed:"Starting session",started:"Session started"};
+const PLAN_LABEL={requested:"Plan requested",claimed:"Starting session",started:"Session started",skipped:"Planning skipped"}; // skipped: card #162
 const planState=c=>c.plan&&typeof c.plan==="object"?c.plan.state:"";
 const PLAN_NOTE="No board session is watching; start one or open the card's session";
 const planChip=c=>{const st=planState(c);if(!PLAN_LABEL[st])return"";if(st==="started"&&colOf(c)!=="Planning")return"";const det=c.plan&&c.plan.detail?String(c.plan.detail):"";
@@ -460,6 +460,7 @@ async function moveCard(id,col,extra){const c=cards.find(x=>x.id===id);if(!c||is
   if(r.ship&&r.shipWaitFor)status(`Moved to Ship it: it waits for #${r.shipWaitFor} to finish shipping, then its session is told`);
   else if(r.ship)status("Moved to Ship it: the card's session is told to ship it");
   else if(r.plan)status("Moved to Planning: a session starts on it, or its session is told");
+  else if(r.skippedPlanning)status("Skipped Planning (your choice for this card or the default): moved to In progress, and its session is told"); // card #162
   else status(col==="Done"?"Archived: it's in the Archive column, and its session has stopped":`Moved to ${col}`)}
 // A save refused because the card changed keeps Hugh's text: he sees the card as it is now and re-applies or discards.
 let stale=null;
@@ -548,7 +549,7 @@ async function openAdd(){
       const fields={title,summary};
       if(repo)fields.repo=repo;if(issue)fields.issue=issue;if(links.length)fields.links=links;
       if($("#a-tpl").value)fields.templateId=$("#a-tpl").value; // its starting prompt opens the card's first session
-      if(typeof subagentChoice==="function"&&$("#a-subs").querySelector("input"))fields.subagents=subagentChoice($("#a-subs")); // card #151
+      if(typeof flowChoice==="function"&&$("#a-subs").querySelector("select"))Object.assign(fields,flowChoice($("#a-subs"))); // cards #151, #162: only what isn't Default
       const to=Object.hasOwn(TAKE_TO,$("#a-to").value)?$("#a-to").value:"Backlog";
       const args={id,fields};if(to!=="Backlog")args.to=to; // the store moves it on and sets autoTo
       const c=await invoke("create_card",args);
