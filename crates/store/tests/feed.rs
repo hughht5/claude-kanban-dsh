@@ -235,3 +235,23 @@ fn a_verdict_shows_once_not_also_as_its_own_log_line() {
     assert_eq!(texts(&page.items), vec!["log:tester:Subagent test: started", "verdict:tester:passed", "log:tester:Subagent test: PASS"]);
     assert_eq!(page.items.iter().filter(|i| i.card == 1).count(), 2);
 }
+
+// Card #129: a verdict row names its subagent, so the board can open that subagent's conversation.
+#[test]
+fn a_verdict_carries_its_subagents_id_and_a_log_row_none() {
+    let (_d, path) = temp_board();
+    board(&path, false);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    rev(&db, "card-1", T0, "the app (card-critic subagent)", json!({ "critique": { "state": "passed", "agentId": "a2028e5c88100b872" } }));
+    rev(&db, "card-1", T0 + MIN, "the app", json!({ "test": { "state": "failed", "agentId": "" } }));
+    log(&db, "card-1", T0 + 2 * MIN, "a line", Some("card-tester"));
+    let s = Store::open(&path).unwrap();
+    let items = s.agents_feed(&FeedQuery::default()).unwrap().items;
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0].agent_id, None, "a log row has no subagent id");
+    assert_eq!(items[1].agent_id, None, "an empty id is no id");
+    assert_eq!(items[2].agent_id.as_deref(), Some("a2028e5c88100b872"));
+    let v = serde_json::to_value(&items[2]).unwrap();
+    assert_eq!(v["agent_id"], "a2028e5c88100b872");
+    assert!(serde_json::to_value(&items[0]).unwrap().get("agent_id").is_none(), "left out when there is none");
+}

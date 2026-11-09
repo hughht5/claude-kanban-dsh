@@ -106,6 +106,10 @@ pub struct FeedItem {
     /// The card field the verdict is in (verdicts only).
     pub field: Option<String>,
     pub text: String,
+    /// The subagent that gave the verdict, from the verdict record's `agentId` (verdicts only,
+    /// card #129): the board opens that subagent's own conversation from the row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(skip)]
     sub: i64,
 }
@@ -315,7 +319,7 @@ fn feed_items(revs: bool, row: &Row) -> Vec<FeedItem> {
     let by_agent = agent_of_by(by);
     if !revs {
         return by_agent
-            .map(|a| FeedItem { seq: row.seq, at: row.at.clone(), card: row.card, agent: a.into(), kind: "log".into(), verdict: None, field: None, text: mask_secrets(&row.body), sub: 0 })
+            .map(|a| FeedItem { seq: row.seq, at: row.at.clone(), card: row.card, agent: a.into(), kind: "log".into(), verdict: None, field: None, text: mask_secrets(&row.body), agent_id: None, sub: 0 })
             .into_iter()
             .collect();
     }
@@ -327,7 +331,8 @@ fn feed_items(revs: bool, row: &Row) -> Vec<FeedItem> {
             let v = changed.get(*f)?;
             let agent = by_agent.or_else(|| if by == APP { agent_of_field(f) } else { None })?;
             let (verdict, text) = verdict_of(f, v);
-            Some(FeedItem { seq: row.seq, at: row.at.clone(), card: row.card, agent: agent.into(), kind: "verdict".into(), verdict: Some(verdict), field: Some((*f).into()), text, sub: i as i64 })
+            let agent_id = v.get("agentId").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
+            Some(FeedItem { seq: row.seq, at: row.at.clone(), card: row.card, agent: agent.into(), kind: "verdict".into(), verdict: Some(verdict), field: Some((*f).into()), text, agent_id, sub: i as i64 })
         })
         .collect()
 }
@@ -373,7 +378,7 @@ impl Store {
                 if cards.is_some_and(|c| !c.contains(&card)) {
                     continue;
                 }
-                let item = FeedItem { seq, at, card, agent: router_log_agent(&by), kind: "log".into(), verdict: None, field: None, text: mask_secrets(&text), sub: ROUTER_SUB };
+                let item = FeedItem { seq, at, card, agent: router_log_agent(&by), kind: "log".into(), verdict: None, field: None, text: mask_secrets(&text), agent_id: None, sub: ROUTER_SUB };
                 if before.map_or(true, |b| key_of(&item).cmp(b) == Ordering::Less) && keep(&item) {
                     out.push(item);
                     if out.len() >= want {

@@ -751,6 +751,13 @@ fn card_transcript(board: &State<Board>, card_id: &str) -> CmdResult<Option<std:
         drop(store);
         return Ok(transcript::find(&account, &id));
     }
+    // A merge lane (cards #160, #162) is not a card either: its latest session, read only in the
+    // session pane (card #129).
+    if let Some(repo) = kanban_store::lane_repo(card_id) {
+        let Some(row) = store.latest_lane_session(repo, routersession::channel()).ok().flatten() else { return Ok(None) };
+        drop(store);
+        return Ok(transcript::find(&row.account, &row.claude_session_id));
+    }
     let card = store.get(card_id).map_err(CmdError::other)?;
     let Some((id, account, _)) = conversation(&store, &card) else { return Ok(None) };
     drop(store);

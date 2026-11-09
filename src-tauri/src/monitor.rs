@@ -484,6 +484,11 @@ fn parse_at(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(s).ok().map(|t| t.with_timezone(&chrono::Utc))
 }
 
+/// An RFC 3339 time, for the running list (card #129) to judge subagents as the monitor does.
+pub fn parse_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    parse_at(s)
+}
+
 fn modified(path: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok().map(chrono::DateTime::<chrono::Utc>::from)
 }

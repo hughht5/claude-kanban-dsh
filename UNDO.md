@@ -1022,3 +1022,16 @@ PowerShell 5.1 commands. No data changes: no migration, no new setting.
 | `src-tauri\src\proof.rs`, its commands in `main.rs`, `in_settings_folder` in `src-tauri\src\platform\windows.rs` and `macos.rs` | Same revert |
 | `ui\proof.js`, `ui\proof.css`, their tags in `ui\index.html`, the hooks in `ui\review.js`, file-name captions in `ui\panel.js` | Same revert. The steps then show paths again |
 | The `proof` lines in `prompts\kanban-app.md` and `prompts\in-progress.md` (and the private copies) | Same revert here; in the private repo, `git revert --no-edit` its card #125 commit |
+
+## Card #129: open any running session the way the Router opens (9 Nov 2026, branch `card-129`)
+
+PowerShell 5.1 commands. No data changes: no migration, no new setting, nothing written to the board.
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\running.rs` (`sessions_running`, `outside_transcript_read`, `subagent_find`, `subagent_read`), its commands in `main.rs`, `monitor::parse_time`, the lane case in `session_cmds.rs` `card_transcript` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #129 commits>` |
+| `X-Claude-Session` from `kb` (`crates\kb\src\api.rs`) and its note in `src-tauri\src\api.rs` | Same revert. An older `kb.exe` sends no header; the app ignores the header if it's back to an older build |
+| `agent_id` on verdict feed items (`crates\store\src\feed.rs`) | Same revert |
+| Two read-only store queries, `card_sessions` and `own_claude_ids` (`crates\store\src\sessions.rs`, tests in `crates\store\tests\running.rs`) | Same revert. They read; nothing is written |
+| `ui\router.js` (the session pane), `ui\agents-feed.js` (Running now, the count, agent buttons), `ui\router.css`, `ui\agents-feed.css` | Same revert |
+| Docs: `docs\GUIDE.md`, `HANDOVER.md`, this section; tests in `tools\ui-tests\feed.test.mjs`, `crates\store\tests\feed.rs` | Same revert |

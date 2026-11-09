@@ -187,3 +187,62 @@ test("a verdict row names its check only when it is not its own agent's; card #0
   assert.doesNotMatch(r, /#0|data-card="0"/);
   assert.match(r, /data-card="129"/);
 });
+
+// Card #129: what a row's agent opens, and the Running now list.
+test("a row's agent opens the Router or the subagent that wrote it", () => {
+  const F = load().AgentsFeed;
+  assert.deepEqual({ ...F.sessionTarget({ card: 0, agent: "the router", kind: "log", text: "x" }) }, { kind: "router" });
+  assert.deepEqual({ ...F.sessionTarget({ card: 12, agent: "the router", kind: "log", text: "moved" }) }, { kind: "router" }, "the Router's move on a card is the Router's");
+  const route = F.sessionTarget({ card: 12, agent: "router", kind: "verdict", field: "route", agent_id: "abc", at: "2026-11-06T10:00:00Z" });
+  assert.equal(route.kind, "sub"); assert.equal(route.type, "card-router"); assert.equal(route.agentId, "abc"); assert.equal(route.card, 12);
+  const critic = F.sessionTarget({ card: 129, agent: "critic", kind: "verdict", field: "critique", agent_id: "a2028e5c88100b872", at: "t" });
+  assert.equal(critic.type, "card-critic"); assert.equal(critic.agentId, "a2028e5c88100b872");
+  const log = F.sessionTarget({ card: 5, agent: "card-tester", kind: "log", agent_id: "ignored", at: "t2" });
+  assert.equal(log.type, "card-tester"); assert.equal(log.agentId, null, "a log row is matched by type and time"); assert.equal(log.before, "t2");
+  assert.equal(F.sessionTarget({ card: 5, agent: "the merge lane", kind: "log" }), null, "the merge lane is opened from Running now");
+  assert.equal(F.sessionTarget({ card: 5, agent: "monitor", kind: "log" }), null);
+  assert.equal(F.sessionTarget({ card: 0, agent: "card-critic", kind: "verdict" }), null, "no card, no subagent");
+});
+
+test("only a feed with onSession draws the agent as a button", () => {
+  const F = load().AgentsFeed;
+  const item = { seq: 1, at: at(1, 0), card: 3, agent: "card-critic", kind: "log", text: "x" };
+  assert.match(F.rowHtml(item, { now, open: true }), /<button type="button" class="ag critic ag-open" data-open/);
+  assert.match(F.rowHtml(item, { now }), /<span class="ag critic">/);
+  assert.match(F.rowHtml({ ...item, agent: "monitor" }, { now, open: true }), /<span class="ag monitor">/, "nothing to open: plain");
+});
+
+const RUN = {
+  router: { state: "idle" },
+  lanes: [{ key: "lane:owner/repo", repo: "owner/repo", state: "working" }],
+  cards: [{ cardId: "card-12", number: 12, title: "Fix <it>", column: "In progress", state: "permission", session: "s-12",
+    subagents: [{ id: "a1", agentType: "card-tester", description: "Test card 12" }] }],
+  outside: [{ id: "o-1", account: "main", cwd: "C:/work/repo", title: null, lastAt: new Date(now - 3 * 60000).toISOString(), cards: [7, 9], readable: true }],
+  count: 5,
+};
+
+test("Running now lists the Router, lanes, card sessions with their subagents, and outside sessions", () => {
+  const F = load().AgentsFeed;
+  const h = F.runningHtml(RUN, { now });
+  const opens = [...h.matchAll(/data-open="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(opens, ["router", "lane:0", "card:0", "sub:0:0", "out:0"]);
+  assert.match(h, /<span class="rn-n">5<\/span>/);
+  assert.match(h, /Fix &lt;it&gt;/, "titles are escaped");
+  assert.match(h, /r-asks/, "a session at a question shows the asks dot");
+  assert.match(h, /<b>Outside<\/b><span class="rn-t">repo<\/span>/, "no title: the folder's name");
+  assert.match(h, /#7 #9 · 3 min ago/);
+  assert.match(F.runningHtml({ count: 0 }), /Nothing is running\./);
+});
+
+test("a Running now row turns back into the session it opens", () => {
+  const F = load().AgentsFeed;
+  assert.deepEqual({ ...F.runningSource(RUN, "router") }, { kind: "router" });
+  assert.deepEqual({ ...F.runningSource(RUN, "lane:0") }, { kind: "lane", key: "lane:owner/repo", repo: "owner/repo", state: "working" });
+  assert.deepEqual({ ...F.runningSource(RUN, "card:0") }, { kind: "card", cardId: "card-12", num: 12, title: "Fix <it>" });
+  const sub = F.runningSource(RUN, "sub:0:0");
+  assert.equal(sub.kind, "sub"); assert.equal(sub.session, "s-12"); assert.equal(sub.id, "a1"); assert.equal(sub.cardId, "card-12");
+  const out = F.runningSource(RUN, "out:0");
+  assert.equal(out.kind, "outside"); assert.equal(out.id, "o-1"); assert.deepEqual([...out.cards], [7, 9]);
+  assert.equal(F.runningSource(RUN, "card:4"), null, "gone");
+  assert.equal(F.runningSource({ router: null }, "router"), null);
+});

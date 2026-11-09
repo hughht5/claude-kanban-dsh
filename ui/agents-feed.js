@@ -11,6 +11,8 @@
 //   given. kind "verdict" rows name the check from field ("TESTER passed"); card #0 is "Router".
 // - onCard(n): a click on a "#n" in a row.
 // - compact: narrow rows for a 360 px pane (the agent above the text).
+// - onSession(item): a click on a row's agent, when it names a session (card #129,
+//   sessionTarget): the Router, or the subagent that wrote it. router.js opens it.
 // It refreshes on mount, on refresh(), and on the app's "cards-changed" event at most once every
 // 2 s; never on a board render. A refresh keeps the scroll position.
 // The pure helpers are on window.AgentsFeed, for tools/ui-tests/feed.test.mjs.
@@ -71,10 +73,29 @@
   }
   // A key that is the same for the same event on every page: the app's own cursor fields.
   const itemKey=i=>[i&&i.kind,i&&i.seq,i&&i.field,i&&i.at,i&&i.card].map(x=>x??"").join("|");
+  // What a row's agent opens (card #129): {kind:"router"} for the Router's rows (card #0, or its
+  // moves on a card); for a subagent's row {kind:"sub", card, type, agentId, before}: a verdict
+  // names its subagent's id, a log row is matched by type and time. The card-router is a
+  // "router" row too, but only its route verdict. The merge lane (merger rows), the monitor and
+  // Hugh have no conversation to open from a row (the lane is in Running now).
+  const SUB_AGENTS=["critic","tester","reviewer","reproducer"];
+  function sessionTarget(item){
+    if(!item)return null;
+    const k=itemAgent(item),n=Number(item.card),on=Number.isInteger(n)&&n>0;
+    const id=item.kind==="verdict"&&item.agent_id?String(item.agent_id):null;
+    if(k==="router"){
+      if(on&&item.kind==="verdict"&&item.field==="route")return{kind:"sub",card:n,type:"card-router",agentId:id,before:item.at||null};
+      return{kind:"router"};
+    }
+    if(on&&SUB_AGENTS.includes(k))return{kind:"sub",card:n,type:"card-"+k,agentId:id,before:item.at||null};
+    return null;
+  }
   function rowHtml(item,opts){
     const k=itemAgent(item),tp=timeParts(item&&item.at,opts&&opts.now);
+    const word=esc(k==="other"?agentWord(item&&item.agent):WORD[k]),t=opts&&opts.open?sessionTarget(item):null;
+    const ag=t?`<button type="button" class="ag ${k} ag-open" data-open title="${t.kind==="router"?"Open the Router":`Open this ${esc(t.type)}'s own conversation`}">${word}</button>`:`<span class="ag ${k}">${word}</span>`;
     return`<li class="fe ag-${k}" data-key="${esc(itemKey(item))}"><time${item&&item.at?` datetime="${esc(item.at)}"`:""} title="${esc(tp.title)}">${esc(tp.text)}</time>`
-      +`<span class="ag ${k}">${esc(k==="other"?agentWord(item&&item.agent):WORD[k])}</span><span class="fe-t">${verdictHtml(item)}${textHtml(item)}</span></li>`;
+      +`${ag}<span class="fe-t">${verdictHtml(item)}${textHtml(item)}</span></li>`;
   }
   function rowsHtml(items,opts){
     const list=Array.isArray(items)?items:[];
@@ -137,6 +158,8 @@
     const onClick=e=>{
       const t=e.target&&e.target.closest?e.target:null;if(!t)return;
       const b=t.closest(".fe-card");if(b&&el.contains(b)){e.preventDefault();const n=Number(b.dataset.card);if(typeof opts.onCard==="function"&&Number.isInteger(n))opts.onCard(n);return}
+      const g=t.closest("[data-open]");
+      if(g&&el.contains(g)&&typeof opts.onSession==="function"){e.preventDefault();const li=g.closest("li.fe[data-key]"),k=li&&li.getAttribute("data-key"),it=st.items.find(i=>itemKey(i)===k);if(it)opts.onSession(it);return}
       const o=t.closest("[data-older]");if(o&&el.contains(o)){e.preventDefault();older()}
     };
     if(el.addEventListener)el.addEventListener("click",onClick);
@@ -145,7 +168,7 @@
       if(!st.loaded&&!st.err)parts.push(`<p class="af-msg">Reading what the agents did…</p>`);
       else if(st.err&&!st.items.length)parts.push(`<p class="af-msg err">Couldn't read the feed: ${esc(st.err)}</p>`);
       else if(!st.items.length)parts.push(`<p class="af-msg">Nothing from the agents yet.</p>`);
-      if(st.items.length)parts.push(rowsHtml(st.items,{compact:!!opts.compact}));
+      if(st.items.length)parts.push(rowsHtml(st.items,{compact:!!opts.compact,open:typeof opts.onSession==="function"}));
       if(st.err&&st.items.length)parts.push(`<p class="af-msg err">Couldn't read more: ${esc(st.err)}</p>`);
       if(st.items.length&&st.next!=null)parts.push(`<button type="button" class="ibtn af-older" data-older${st.older?" disabled":""}>${st.older?"Reading…":"Show older"}</button>`);
       return parts.join("");
@@ -219,16 +242,51 @@
     };
   }
 
-  root.AgentsFeed={AGENTS,WORD,THROTTLE_MS,agentOf,agentWord,timeParts,textHtml,rowHtml,rowsHtml,itemKey,mergeOlder,mergeNewer,throttle,norm};
+  // ---------- Running now (card #129): what runs, from sessions_running ----------
+  // r: {router:{state}|null, lanes:[{key,repo,state}], cards:[{cardId,number,title,column,state,
+  // session,subagents:[{id,agentType,description,started,updated}]}], outside:[{id,account,cwd,
+  // title,lastAt,cards,readable}], count}. Each row is a button whose data-open names what it
+  // opens; runningSource turns that back into the session pane's src.
+  const DOT={idle:"idle",working:"working",starting:"starting",permission:"asks",asks:"asks",failed:"down",down:"down"};
+  const STATE_WORD={idle:"Ready",working:"Working",starting:"Starting",permission:"Asks you",asks:"Asks you",failed:"Turn failed",down:"Down"};
+  const dot=s=>`<span class="rdot r-${DOT[s]||"off"}" aria-hidden="true"></span>`;
+  const leaf=p=>{const parts=String(p||"").replace(/[\\/]+$/,"").split(/[\\/]/);return parts[parts.length-1]||""};
+  function ago(at,now){const d=at?new Date(at):null;if(!d||isNaN(d))return"";const m=Math.max(0,Math.round(((now instanceof Date?now:new Date())-d)/60000));return m<1?"just now":m+" min ago"}
+  function runningHtml(r,opts){
+    r=r||{};const now=opts&&opts.now,rows=[];
+    const btn=(open,body,title)=>`<li><button type="button" class="rn-row" data-open="${esc(open)}"${title?` title="${esc(title)}"`:""}>${body}</button></li>`;
+    if(r.router)rows.push(btn("router",`${dot(r.router.state)}<b>Router</b><span class="rn-m">${esc(STATE_WORD[r.router.state]||r.router.state||"")}</span>`,"Open the Router"));
+    (r.lanes||[]).forEach((l,i)=>rows.push(btn("lane:"+i,`${dot(l.state)}<b>Merge lane</b><span class="rn-t">${esc(l.repo)}</span><span class="rn-m">${esc(STATE_WORD[l.state]||l.state||"")}</span>`,`Open the merge lane for ${l.repo}`)));
+    (r.cards||[]).forEach((c,i)=>{
+      rows.push(btn("card:"+i,`${dot(c.state)}<b>#${esc(c.number)}</b><span class="rn-t">${esc(c.title)}</span><span class="rn-m">${esc(STATE_WORD[c.state]||c.state||"")}</span>`,`Open card #${c.number}'s session`));
+      (c.subagents||[]).forEach((s,j)=>{const a=agentOf(s.agentType);
+        rows.push(`<li class="rn-sub"><button type="button" class="rn-row" data-open="sub:${i}:${j}" title="Open ${esc(s.agentType)}'s own conversation"><span class="ag ${a}">${esc(a==="other"?s.agentType:WORD[a])}</span><span class="rn-t">${esc(s.description||s.agentType)}</span><span class="rn-m">running</span></button></li>`)});
+    });
+    (r.outside||[]).forEach((o,i)=>rows.push(btn("out:"+i,`<span class="rdot r-off" aria-hidden="true"></span><b>Outside</b><span class="rn-t">${esc(o.title||leaf(o.cwd)||"a session")}</span><span class="rn-m">${(o.cards||[]).slice(-3).map(n=>"#"+esc(n)).join(" ")}${(o.cards||[]).length?" · ":""}${esc(ago(o.lastAt,now))}</span>`,`Outside the app${o.cwd?": "+o.cwd:""} (read only)`)));
+    const n=r.count!=null?r.count:rows.length;
+    return`<div class="rn-head"><h3>Running now</h3><span class="rn-n">${esc(n)}</span></div>`+(rows.length?`<ul class="rn-list">${rows.join("")}</ul>`:`<p class="af-msg">Nothing is running.</p>`);
+  }
+  // A Running now row's data-open, back to the session pane's src (null if it's gone).
+  function runningSource(r,open){
+    if(!r||!open)return null;const p=String(open).split(":");
+    if(p[0]==="router")return r.router?{kind:"router"}:null;
+    if(p[0]==="lane"){const l=(r.lanes||[])[+p[1]];return l?{kind:"lane",key:l.key,repo:l.repo,state:l.state}:null}
+    if(p[0]==="card"){const c=(r.cards||[])[+p[1]];return c?{kind:"card",cardId:c.cardId,num:c.number,title:c.title}:null}
+    if(p[0]==="sub"){const c=(r.cards||[])[+p[1]],s=c&&(c.subagents||[])[+p[2]];return s?{kind:"sub",cardId:c.cardId,num:c.number,session:c.session,id:s.id,type:s.agentType,desc:s.description,running:true}:null}
+    if(p[0]==="out"){const o=(r.outside||[])[+p[1]];return o?{kind:"outside",id:o.id,cwd:o.cwd,title:o.title,account:o.account,cards:o.cards||[]}:null}
+    return null;
+  }
+
+  root.AgentsFeed={AGENTS,WORD,THROTTLE_MS,agentOf,agentWord,timeParts,textHtml,rowHtml,rowsHtml,itemKey,mergeOlder,mergeNewer,throttle,norm,sessionTarget,runningHtml,runningSource};
   root.mountAgentsFeed=mountAgentsFeed;
 
   // The header's "Agents" drawer: a right-docked pane (rpane.css), not a <dialog>, so Human test
   // review keys (P, F, U, arrows) still work with it open. Esc closes it when the focus is in it,
   // or on the board. Ctrl+Shift+A opens or closes it, over a card panel too.
   if(typeof document==="undefined"||!document.querySelector||!document.querySelector("header"))return;
-  let pane=null,feed=null,back=null;
+  let pane=null,feed=null,back=null,running=null;
   const btn=document.createElement("button");
-  btn.className="ibtn agentsbtn";btn.id="agentsBtn";btn.type="button";btn.textContent="Agents";
+  btn.className="ibtn agentsbtn";btn.id="agentsBtn";btn.type="button";btn.innerHTML=`Agents<span class="rn-count" hidden></span>`;
   btn.title="What the agents did, newest first (Ctrl+Shift+A)";btn.setAttribute("aria-pressed","false");btn.setAttribute("aria-controls","agentsPane");
   {const sb=document.getElementById("searchBtn"),hd=document.querySelector("header");if(sb)sb.after(btn);else hd.append(btn)}
   const isOpen=()=>!!pane&&!pane.hidden;
@@ -241,16 +299,24 @@
   function build(){
     pane=document.createElement("aside");pane.className="rpane solo";pane.id="agentsPane";pane.tabIndex=-1;pane.hidden=true;
     pane.setAttribute("aria-labelledby","ap-ttl");
-    pane.innerHTML=`<div class="rpane-head"><h2 id="ap-ttl">Agents</h2><span class="rpane-sub">What they did, newest first</span><button class="ibtn x" type="button" id="ap-x" aria-label="Close the Agents pane">✕</button></div><div class="rpane-feed" id="ap-feed"></div>`;
+    pane.innerHTML=`<div class="rpane-head"><h2 id="ap-ttl">Agents</h2><span class="rpane-sub">What runs now, and what they did</span><button class="ibtn x" type="button" id="ap-x" aria-label="Close the Agents pane">✕</button></div><div class="rn af" id="ap-run"></div><div class="rpane-feed" id="ap-feed"></div>`;
     document.body.append(pane);
     pane.querySelector("#ap-x").onclick=()=>closePane();
+    // A Running now row opens that session in the session pane (router.js), beside this drawer.
+    pane.querySelector("#ap-run").addEventListener("click",e=>{
+      const b=e.target.closest&&e.target.closest("[data-open]");if(!b)return;e.preventDefault();
+      const src=runningSource(running,b.getAttribute("data-open"));
+      if(!src){if(typeof status==="function")status("That session isn't running any more",true);pollRunning();return}
+      if(typeof window.openSessionPane==="function")window.openSessionPane(src);
+    });
     pane.addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();e.stopPropagation();closePane()}});
   }
   function openPane(){
     if(!pane)build();
     back=document.activeElement;
     pane.hidden=false;document.body.classList.add("rpane-open","agents-open");btn.setAttribute("aria-pressed","true");
-    if(feed)feed.refresh();else feed=mountAgentsFeed(pane.querySelector("#ap-feed"),{onCard:openCard,active:isOpen});
+    if(feed)feed.refresh();else feed=mountAgentsFeed(pane.querySelector("#ap-feed"),{onCard:openCard,active:isOpen,onSession:it=>window.openSessionFromFeed&&window.openSessionFromFeed(it)});
+    drawRunning();pollRunning();
     // The focus goes in only from the board; over a card in review it stays where it is, so the keys go on working.
     if(!(typeof panel!=="undefined"&&panel))pane.focus({preventScroll:true});
   }
@@ -264,6 +330,25 @@
     back=null;
   }
   btn.onclick=()=>isOpen()?closePane():openPane();
+  // Running now: read every 10 s, and every 5 s while the drawer is open, so the count on the
+  // button is right with the drawer closed too.
+  let runBusy=false;
+  async function pollRunning(){
+    if(runBusy||typeof invoke!=="function")return;runBusy=true;
+    try{running=await invoke("sessions_running")}catch(e){}
+    finally{runBusy=false}
+    drawRunning();
+    // The session pane (router.js) keeps a lane's or a subagent's state from the same list.
+    if(running&&typeof window.onRunningNow==="function")try{window.onRunningNow(running)}catch(e){}
+  }
+  function drawRunning(){
+    const c=btn.querySelector(".rn-count"),n=running&&running.count||0;
+    if(c){c.hidden=!n;c.textContent=String(n)}
+    btn.title=`What runs now, and what the agents did (Ctrl+Shift+A)${n?`: ${n} running now`:""}`;
+    if(pane){const box=pane.querySelector("#ap-run"),h=runningHtml(running||{});if(box&&box.dataset.h!==h){box.innerHTML=h;box.dataset.h=h}}
+  }
+  pollRunning();
+  let tick=0;setInterval(()=>{tick++;if(isOpen()||tick%2===0)pollRunning()},5000);
   window.addEventListener("keydown",e=>{
     if(e.key==="Escape"&&isOpen()&&!e.defaultPrevented){
       const a=document.activeElement,onBoard=!a||a===document.body||!!(a.closest&&a.closest("main.board,header"));

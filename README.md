@@ -142,6 +142,8 @@ kb move 12 "In progress"
 
 Add `kb mcp` to Claude Code as an MCP server, and every session gets the `kanban_*` tools.
 
+A session outside the app that uses the board this way shows under **Running now** in the Agents pane, with every card session, its running subagents, the merge lanes and the Router; any of them opens beside the board the way the Router does, its live log next to its chat (outside sessions read only). `kb` tells the app which Claude Code session is calling (its `CLAUDE_CODE_SESSION_ID`), and the app keeps that in memory only.
+
 On Windows, an update replaces `kb.exe` even while sessions are running it: the running copy is renamed to `kb.old-N.exe` beside it, and the next install deletes those copies once nothing uses them.
 
 ## Who it's for
