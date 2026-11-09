@@ -915,3 +915,13 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: Hugh's move into Human test from `kb` or his own session outside the app never skips it, as his drag doesn't (`dispatch::hughs_own`) | The same revert |
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
+
+## Card #174: the Router may move a card out of Backlog (9 Nov 2026)
+
+PowerShell 5.1 commands. No data changes: no migration, no new setting.
+
+| Change | Undo |
+|---|---|
+| `routersession::move_refused` lets the Router move Backlog to In progress, as well as to Planning, while "Router may start cards" is on; `routertools::start_column_refused` tells a start of a Backlog card to move it first | `git -C ~\claude-kanban-dsh revert --no-edit <the card #174 commit>`. A card the Router already moved stays where it is: drag it back to Backlog if you want |
+| The bundled `prompts\router.md` job 2, and the docs (docs\GUIDE.md, HANDOVER.md, PLAN.md decision 33, this section) | The same revert |
+| The owner's private `prompts\router.md` job 2 | Revert the card #174 commit in the private repo |

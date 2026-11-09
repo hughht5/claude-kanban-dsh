@@ -1248,7 +1248,7 @@ first. Add the waits, drag the card to Blocked, and it starts by itself once the
     Planning for you, and its session starts as if you had moved it. The session is told which
     cards were ready and, for any not shipped yet, their branch: their work is not on main yet.
   - **In Backlog:** it stays there, and you get a notification ("Drag it to Planning to start
-    it"). Only you start a card from Backlog.
+    it"). The waits never start a card from Backlog: you do, or the Router when you let it.
   - **In Blocked with a blocked reason, or put there by a session:** it stays, and you are
     notified.
   - **In Planning or later:** it stays where it is, and its session is told.
@@ -1315,8 +1315,9 @@ integrates its own children.
   focus.
 - **What it may do** without asking: move cards between Planning, In progress, Human test and
   Blocked (with a reason on the card), route, check and send cards back. **Settings › Router ›
-  Router may start cards** (off by default) also lets it move a card from Backlog to Planning and
-  start a card's session in its own worktree. It leaves a card alone while you have its panel open
+  Router may start cards** (off by default) also lets it move a card from Backlog to Planning or
+  In progress (its session starts, as with your drag) and start a card's session in its own
+  worktree. So "clear every card for this repo" is something it does itself. It leaves a card alone while you have its panel open
   or changed it in the last 2 minutes.
 - **Clearing finished cards:** it puts them in the board's **Done pile** (see *The Done pile*), and
   your **Archive all** archives them. It never archives a card itself.

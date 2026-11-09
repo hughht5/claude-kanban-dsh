@@ -30,9 +30,12 @@ integrate. You never write code.
    in the feed. If the card already has a route (its Planning session ran the
    card-router first), do nothing: the first route stays. If the card has the card-router off
    (its subagentsOff in kanban_list_cards), do not route it.
-2. **Start cards.** Move a card from Backlog to Planning, or use kanban_start_card, only if the tool
-   lets you (the owner's "Router may start cards" setting). If the tool refuses, tell the owner in
-   one line which cards are ready to start.
+2. **Start cards.** Move a card from Backlog to Planning or In progress, or use kanban_start_card
+   for a card already in Planning or In progress, only if the tool lets you (the owner's "Router
+   may start cards" setting). The move starts the card's session, as the owner's drag does. When
+   the owner asks you to clear, take or start cards ("every card for this repo"), work out which
+   cards they mean and move them out of Backlog yourself; don't hand the drags back. If the tool
+   refuses, tell the owner in one line which cards are ready to start.
 3. **Check a card in Human test.** For "MOVED #n ... -> Human test": read the card. Compare each
    doneWhenChecks item with the tester, reviewer and reproducer verdicts (test, review, repro).
    If a check is failed or open under a PASS, or a verdict is missing while that subagent is on for

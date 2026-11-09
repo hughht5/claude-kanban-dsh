@@ -2033,7 +2033,7 @@ or any session with `kanban_router`. The decisions below are the router's after 
   `by` = "the router" and the card sessions' gates. `if_version` is required on writes and moves;
   a card Hugh has open or changed in the last 2 minutes is refused (`hands_off`); moves follow
   `routersession::move_refused` (Planning, In progress, Human test, Blocked freely; Backlog to
-  Planning only with `router.may_start_cards`; never Ship it, never out of Ship it or Deploy
+  Planning or In progress only with `router.may_start_cards`, card #174; never Ship it, never out of Ship it or Deploy
   complete, never into Deploy complete or Done). `kanban_start_card` (setting on, the card's own
   `worktreePath`, through the cap and queue), `kanban_router_log`, a compact `kanban_list_cards`
   (no summaries), and `kanban_session_send/status/read` (a send that would resume a stopped
