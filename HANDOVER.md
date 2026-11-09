@@ -28,6 +28,26 @@ For a fresh session carrying on this build. Updated 3 Nov 2026, after Phase 4 an
 - **Requests the API received** are logged in the data folder's `api.log`, with the token hidden. Its port and token are in `api.json`.
 - **Use subagents** for heavy pieces (Hugh, 3 Nov). Keep the main session for deciding, integrating, committing and reporting to the manager session after each phase, in five lines or fewer.
 
+## Queued messages go in mid-turn (9 Nov 2026, card #154)
+
+Hugh: "queued messagse take forever - they should come in sooner". A message that went into a
+card's queue (the Router's second `kanban_session_send` while its first still waited, or one
+sent just after the app typed into the session) waited for the whole turn to end, often many
+minutes, though Claude Code takes typing mid-turn and reads it at its next step.
+
+- `dispatch.rs` `MID_TURN_OK`: in memory, a card's waiting text that may go in mid-turn.
+  `send_to_session` (Hugh's words, `kanban_session_send` from the Router or a session) records
+  it when nothing else waits or what waits was recorded too (`mid_turn_rule`). The app's own
+  text (column prompts, notices) joins the waiting message through `Store::queue`, which
+  changes the text, so the record no longer matches and the whole message waits for the turn
+  to end, as before.
+- `type_mid_turn`, each dispatcher tick: types a recorded waiting message with
+  `Sessions::type_now(.., true)` as soon as the session can take it, mid-turn included. A held
+  move goes first; nothing goes into a session being restarted onto its route (#98).
+- After an app restart the record is gone and a waiting message is typed at the prompt, as before.
+- Tests: `dispatch.rs` `a_message_goes_in_mid_turn_only_when_all_that_waits_may`,
+  `the_mid_turn_record_is_per_card_and_forgotten`.
+
 ## Updates (4 Nov 2026)
 
 - **Live default is `-Stage`:** `scripts\install.ps1` builds and copies the NSIS installer to `%USERPROFILE%\.claude-kanban-dsh\update\` (test: `.claude-kanban-dsh-test\update\`) with `update.json` (`version`, `commit`, `built_at`, `installer`, `install_dir`, `app_exe`, `channel`). It never quits the app. `-Now` is the old quit-install-restart; it is still the test channel's default, and `-Channel test -Stage` tries the staged flow on the test copy. A first install must use `-Now`.

@@ -827,3 +827,12 @@ PowerShell 5.1 commands. `<checkout>` is the checkout named in the merge-lane se
 
 ## Card #157
 Undo: `git revert <card-157 commit>`; the Router then hears of new Backlog cards again.
+## Queued messages go in mid-turn (9 Nov 2026, card #154)
+
+Revert the fix's commit, then reinstall (test first):
+
+```powershell
+cd $env:USERPROFILE\claude-kanban-dsh
+git revert --no-edit <the #154 commit>
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Channel test
+```

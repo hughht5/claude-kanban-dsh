@@ -388,21 +388,27 @@ fn send_to_session(app: &AppHandle, store: &mut Store, card_id: &str, text: &str
     // The chat's Send again: the message the session didn't take, sent as a new message.
     live.clear_untaken(card_id, text);
     if live.is_live(card_id).is_some() {
-        // Something already waiting goes in with it, and only at the prompt, never mid-turn:
-        // it may be the app's own text (a column prompt, a notice), which waits for `free`.
-        let alone = store.waiting(card_id, "message").ok().flatten().is_none();
+        // Something already waiting goes in with it. It may go in mid-turn only when all of it
+        // came this way (Hugh's words, the Router's or another session's `kanban_session_send`):
+        // the app's own text (a column prompt, a notice) waits for `free` (card #154).
+        let before = store.waiting(card_id, "message").ok().flatten().map(|m| m.payload);
+        let mid_ok = crate::dispatch::mid_turn_ok_after(card_id, before.as_deref());
         // Queued first, so it is on record and joins (after) anything already waiting.
         queue_msg(store, card_id, text, hugh)?;
+        if let (true, Ok(Some(m))) = (mid_ok, store.waiting(card_id, "message")) {
+            crate::dispatch::mark_mid_turn_ok(card_id, &m.payload);
+        }
         // A held move goes first, as the dispatcher does it: the message waits behind it.
         if store.waiting(card_id, "move").ok().flatten().is_some() {
             return Ok(false);
         }
         if let Ok(Some(m)) = store.waiting(card_id, "message") {
-            // A failed write leaves it queued: the dispatcher types it once the session is free.
-            // Not into a session being restarted onto its route (card #98): the dispatcher types
-            // it into the resumed one.
-            if !router::restarting(card_id) && live.type_now(card_id, &m.payload, alone).unwrap_or(false) {
+            // A failed write leaves it queued: the dispatcher types it once the session can take
+            // it (`dispatch::type_mid_turn`, or `free`). Not into a session being restarted onto
+            // its route (card #98): the dispatcher types it into the resumed one.
+            if !router::restarting(card_id) && live.type_now(card_id, &m.payload, mid_ok).unwrap_or(false) {
                 let _ = store.done(m.id, "sent");
+                crate::dispatch::forget_mid_turn_ok(card_id);
             }
         }
         return Ok(false);

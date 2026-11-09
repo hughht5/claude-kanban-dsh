@@ -1268,6 +1268,75 @@ fn pump_waits(app: &AppHandle) {
     }
 }
 
+/// Card #154: a card's waiting message that may be typed mid-turn, as its whole text. Only
+/// text sent with `send_to_session` (Hugh's words, the Router's or another session's
+/// `kanban_session_send`) gets here. The app's own text (a column prompt, a notice) is added to
+/// the same waiting message by `Store::queue`, which changes the text, so a recorded text that
+/// no longer matches the waiting one means "wait for the turn to end" as before. In memory only:
+/// after an app restart a waiting message is typed at the prompt, as it always was.
+static MID_TURN_OK: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether a message added to `before` (the card's waiting text, if any) may go in mid-turn:
+/// yes with nothing waiting, else only when what waits was itself all mid-turn text.
+pub fn mid_turn_rule(recorded: Option<&str>, before: Option<&str>) -> bool {
+    match before {
+        None => true,
+        Some(b) => recorded == Some(b),
+    }
+}
+
+/// `mid_turn_rule` for card `card_id`.
+pub fn mid_turn_ok_after(card_id: &str, before: Option<&str>) -> bool {
+    let recorded = MID_TURN_OK.lock().ok().and_then(|m| m.iter().find(|(c, _)| c == card_id).map(|(_, t)| t.clone()));
+    mid_turn_rule(recorded.as_deref(), before)
+}
+
+/// Records `payload` as the card's waiting text that may go in mid-turn.
+pub fn mark_mid_turn_ok(card_id: &str, payload: &str) {
+    if let Ok(mut m) = MID_TURN_OK.lock() {
+        m.retain(|(c, _)| c != card_id);
+        m.push((card_id.to_string(), payload.to_string()));
+    }
+}
+
+/// Forgets the card's mid-turn text (it was typed, or no longer waits).
+pub fn forget_mid_turn_ok(card_id: &str) {
+    if let Ok(mut m) = MID_TURN_OK.lock() {
+        m.retain(|(c, _)| c != card_id);
+    }
+}
+
+/// Types each waiting mid-turn message (card #154) into its session as soon as the session can
+/// take it, mid-turn included (`Sessions::type_now`), instead of waiting for the turn to end.
+/// Before, a message that couldn't go in at once (the session had just been typed into, or
+/// something already waited) sat until the turn ended, often many minutes. A held move still
+/// goes first, and a session being restarted onto its route gets nothing (card #98).
+fn type_mid_turn(app: &AppHandle, live: &Arc<Sessions>) {
+    let due: Vec<(String, String)> = match MID_TURN_OK.lock() {
+        Ok(m) if !m.is_empty() => m.clone(),
+        _ => return,
+    };
+    let board = app.state::<Board>();
+    for (card_id, text) in due {
+        let Ok(mut store) = board.0.lock() else { return };
+        let waiting = store.waiting(&card_id, "message").ok().flatten();
+        let Some(m) = waiting.filter(|m| m.payload == text) else {
+            // Typed at the prompt by `free`, or the app's text joined it: nothing to do here.
+            forget_mid_turn_ok(&card_id);
+            continue;
+        };
+        if store.waiting(&card_id, "move").ok().flatten().is_some() || crate::router::restarting(&card_id) {
+            continue;
+        }
+        if live.type_now(&card_id, &m.payload, true).unwrap_or(false) {
+            let _ = store.done(m.id, "sent");
+            forget_mid_turn_ok(&card_id);
+            drop(store);
+            let _ = app.emit("session-changed", card_id);
+        }
+    }
+}
+
 /// Types queued text into free sessions and applies held moves, every 400 ms.
 pub fn run(app: AppHandle) {
     // The stuck-session monitor (card #99) runs on its own thread: its file reads never hold up the typing.
@@ -1313,6 +1382,7 @@ pub fn run(app: AppHandle) {
             }
         }
         crate::drain_queue(&app);
+        type_mid_turn(&app, &live);
         let free = live.free();
         // The Router (card #119): its events, its crash, and what is due when it is free. It is
         // not a card, so the card steps below skip it.
@@ -1465,6 +1535,31 @@ fn pause_idle(app: &AppHandle, live: &Arc<Sessions>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_message_goes_in_mid_turn_only_when_all_that_waits_may() {
+        // Nothing waiting: it may go in mid-turn (Hugh's words, the Router's send).
+        assert!(mid_turn_rule(None, None));
+        // The Router's second message joins its first, which was recorded: still mid-turn.
+        assert!(mid_turn_rule(Some("From the Router: one"), Some("From the Router: one")));
+        // A column prompt or notice waits (not recorded): the whole message waits for the turn end.
+        assert!(!mid_turn_rule(None, Some("You are the session for card #7")));
+        // The app's text joined a recorded message, so the waiting text changed: it waits too.
+        assert!(!mid_turn_rule(Some("From the Router: one"), Some("From the Router: one\n\nA notice")));
+    }
+
+    #[test]
+    fn the_mid_turn_record_is_per_card_and_forgotten() {
+        mark_mid_turn_ok("c154a", "hello");
+        assert!(mid_turn_ok_after("c154a", Some("hello")));
+        assert!(!mid_turn_ok_after("c154b", Some("hello")));
+        mark_mid_turn_ok("c154a", "hello\n\nagain");
+        assert!(!mid_turn_ok_after("c154a", Some("hello")));
+        assert!(mid_turn_ok_after("c154a", Some("hello\n\nagain")));
+        forget_mid_turn_ok("c154a");
+        assert!(!mid_turn_ok_after("c154a", Some("hello\n\nagain")));
+        assert!(mid_turn_ok_after("c154a", None));
+    }
 
     fn card(fields: Value, column: &str) -> Card {
         Card {
