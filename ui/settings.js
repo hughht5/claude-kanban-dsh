@@ -217,7 +217,7 @@ async function sessions(m){
   await ruleBox(m,TODO_TOOLS_RULE); // card #106
   await smallReposBox(m);
   await ownWorktreeBox(m); // card #146
-  await mergeLaneBox(m); // card #160
+  await mergeLaneBox(m); // cards #160, #162
 }
 
 // Card #155: the repos a card can be for (Add card's Repo list), kept in the private folder's
@@ -266,8 +266,8 @@ const ownWorktreeBox=m=>repoListBox(m,{key:OWN_WT_KEY,cls:"st-ownwt",p:"w",title
   empty:"No repos: each card's session starts in its repo's folder."});
 
 // A list of {repo, checkout} rows saved as one setting, with its last 5 changes from the settings
-// log: the own-worktree list (card #146) and the merge-lane list (card #160). `p` makes its ids
-// and classes (st-<p>add, st-<p>row, ...); `help` is HTML; `after(b)` draws more below the list.
+// log: the own-worktree list (card #146). `p` makes its ids and classes (st-<p>add, st-<p>row,
+// ...); `help` is HTML; `after(b)` draws more below the list.
 async function repoListBox(m,o){
   const p=o.p;
   let g=null,err="";try{g=await invoke("get_setting",{key:o.key})}catch(e){err=errText(e)}
@@ -296,18 +296,20 @@ async function repoListBox(m,o){
   await draw();
 }
 
-// Card #160: the repos whose ships go through one merge lane each, an app-owned session that
-// merges that repo's ships one at a time in its own worktree and keeps what it learnt. Below the
-// list: the lanes' model and effort (saved at once), and each listed repo's lane with its state
-// and a Stop button, polled while this section is open and redrawn on `lanes-changed`.
-const LANE_KEY="sessions.merge_lane_repos";
+// Cards #160, #162: the merge lanes. Every repo ships through its own lane, an app-owned
+// session that merges that repo's ships one at a time in its own worktree and keeps what it
+// learnt; there is no list to fill in. The box holds the lanes' model and effort (saved at once),
+// and each lane that has run here or has a job, with its state and a Stop button, polled while
+// this section is open and redrawn on `lanes-changed`.
 const LANE_WORD={off:"Off",starting:"Starting",idle:"Idle",merging:"Merging",down:"Down"};
 let laneTimer=0,laneOff=null,laneGen=0;
 function laneUnwatch(){laneGen++;if(laneTimer)clearInterval(laneTimer);laneTimer=0;if(laneOff){try{laneOff()}catch(e){}laneOff=null}}
 const laneWord=s=>{const w=LANE_WORD[s.state]||String(s.state||"");return s.card&&(s.state==="merging"||s.state==="starting"||s.state==="down")?`${w} #${s.card}`:w};
-const mergeLaneBox=m=>repoListBox(m,{key:LANE_KEY,cls:"st-lanes",p:"l",title:"Ship through one merge lane per repo",
-  help:"Each repo listed here ships through one merge lane: a session the app owns that does the merge at ship for every card of the repo, one at a time, in its own worktree (.claude\\worktrees\\merge-lane), and keeps what it learnt for the next. It starts when a card's Ship it asks it to merge, and stops after 15 minutes with nothing to do; its conversation is kept. It never pushes: the card's session still does. Repos not listed keep the card-merger subagent. Empty is off (the default).",
-  empty:"No repos: every ship uses the card-merger subagent.",after:laneStatus});
+async function mergeLaneBox(m){
+  const b=document.createElement("div");b.className="st-box st-lanes";m.appendChild(b);
+  b.innerHTML=`<p class="st-radio"><b>Merge lanes</b></p>
+  <p class="meta">Every card with a branch ships through its repo's merge lane: a session the app owns, one for each repo, that does the merge at ship for every card of that repo, one at a time, in its own worktree inside the repo's checkout (.claude\\worktrees\\merge-lane), and keeps what it learnt for the next. The app finds the checkout from the card's worktree. A lane starts when a card's Ship it asks it to merge, and stops after 15 minutes with nothing to do; its conversation is kept. It never pushes: the card's session still does.</p>`;
+  await laneStatus(b)}
 async function laneStatus(b){
   laneUnwatch();
   const get=async k=>{try{return await invoke("get_setting",{key:k})}catch(e){return null}};
@@ -328,7 +330,7 @@ async function laneStatus(b){
   const list=d.querySelector(".st-lanelist");
   const nameOf=v=>(MODELS.find(([k])=>k===v)||[v,v])[1];
   const drawLanes=lanes=>{
-    if(!Array.isArray(lanes)||!lanes.length){list.innerHTML="";return}
+    if(!Array.isArray(lanes)||!lanes.length){list.innerHTML=`<p class="meta st-lnone">No lane has run here yet. A repo's lane starts at its first ship.</p>`;return}
     list.innerHTML=lanes.map(s=>`<div class="row st-lane" data-repo="${esc(s.repo)}"><b class="st-lrepo">${esc(s.repo)}</b>
       <span class="tag chip lane-${esc(s.state)}" data-lane="${esc(s.state)}">${esc(laneWord(s))}</span>
       <span class="meta" title="${esc(s.worktree||"")}">${esc(nameOf(s.model))} · effort ${esc(s.effort)}</span>

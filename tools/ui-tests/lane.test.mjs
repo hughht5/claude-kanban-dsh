@@ -1,6 +1,7 @@
-// The merge lanes (card #160): the Merger chips for a lane job (waiting, merging, cancelled) and
-// Settings › Sessions' merge-lane list with each lane's state and Stop, on the real ui/*.js files
-// in a vm (harness.mjs). The own-worktree box shares the list editor, so it is checked here too.
+// The merge lanes (cards #160, #162): the Merger chips for a lane job (waiting, merging,
+// cancelled) and Settings › Sessions' lanes box with each lane's state and Stop (no repo list:
+// every repo ships through its lane), on the real ui/*.js files in a vm (harness.mjs). The
+// own-worktree box kept the list editor, so it is checked here too.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { boot, FILES } from "./harness.mjs";
@@ -40,8 +41,8 @@ const lanes = [
 
 function settings(extra = {}) {
   const sets = [], stops = [];
+  const asked = [];
   const values = {
-    "sessions.merge_lane_repos": JSON.stringify(lanes.map(({ repo, checkout }) => ({ repo, checkout }))),
     "sessions.own_worktree_repos": JSON.stringify([{ repo: "acme/web", checkout: "C:/co/web" }]),
     "lanes.model": "claude-sonnet-5-5", "lanes.effort": "medium",
     "sessions.small_goes_on_repos": "[]",
@@ -49,20 +50,20 @@ function settings(extra = {}) {
   const b = boot({
     files: [...FILES, "settings.js"],
     invoke: {
-      get_setting: ({ key }) => ({ key, value: values[key] ?? "3", default: key === "lanes.model" ? "claude-opus-5-5" : key === "lanes.effort" ? "high" : "3" }),
+      get_setting: ({ key }) => { asked.push(key); return { key, value: values[key] ?? "3", default: key === "lanes.model" ? "claude-opus-5-5" : key === "lanes.effort" ? "high" : "3" }; },
       set_setting: ({ key, value }) => { sets.push([key, value]); return value; },
-      get_setting_log: ({ key }) => key === "sessions.merge_lane_repos" ? [{ at, by: "Hugh (settings)", value: values[key] }] : [],
+      get_setting_log: () => [],
       lane_status: () => lanes,
       lane_stop: ({ repo }) => { stops.push(repo); return lanes.map((l) => l.repo === repo ? { ...l, state: "idle", live: false, card: null } : l); },
       ...extra,
     },
   });
   b.ctx.confirm = () => true;
-  return { b, sets, stops };
+  return { b, sets, stops, asked };
 }
 
-test("settings, Sessions: the merge-lane list, the lanes' model and effort, each lane's state and Stop", async () => {
-  const { b, sets, stops } = settings();
+test("settings, Sessions: the lanes box, with no repo list, the lanes' model and effort, each lane's state and Stop", async () => {
+  const { b, sets, stops, asked } = settings();
   b.run(`openSettings("sessions")`);
   await tick();
   const box = b.document.querySelector(".st-lanes");
@@ -70,10 +71,14 @@ test("settings, Sessions: the merge-lane list, the lanes' model and effort, each
   // Straight after the own-worktree box.
   const boxes = b.document.querySelectorAll(".st-box");
   assert.equal(boxes[boxes.indexOf(box) - 1], b.document.querySelector(".st-ownwt"));
-  assert.equal(box.querySelector("b").textContent, "Ship through one merge lane per repo");
-  assert.match(box.querySelector(".meta").textContent, /ships through one merge lane.*never pushes.*Repos not listed keep the card-merger subagent/);
-  assert.deepEqual(box.querySelectorAll(".st-lr").map((x) => x.value), ["acme/web", "acme/api"]);
-  assert.match(box.querySelector(".log").textContent, /Hugh \(settings\): acme\/web, acme\/api/);
+  assert.equal(box.querySelector("b").textContent, "Merge lanes");
+  assert.match(box.querySelector(".meta").textContent, /^Every card with a branch ships through its repo's merge lane.*never pushes/);
+  assert.doesNotMatch(box.textContent, /card-merger|Repos not listed/);
+  // Card #162: no list to fill in, and the old setting isn't read.
+  assert.equal(box.querySelector(".st-lr"), null);
+  assert.equal(box.querySelector("#st-ladd"), null);
+  assert.equal(box.querySelector("#st-lsave"), null);
+  assert.ok(!asked.includes("sessions.merge_lane_repos"), "the old list setting is never read");
   // The model and effort, as set.
   assert.equal(box.querySelector('#st-lmodel option[selected]').getAttribute("value"), "claude-sonnet-5-5");
   assert.equal(box.querySelector('#st-leffort option[selected]').getAttribute("value"), "medium");
@@ -96,14 +101,14 @@ test("settings, Sessions: the merge-lane list, the lanes' model and effort, each
   sel.onchange();
   await tick();
   assert.deepEqual(sets, [["lanes.model", "claude-opus-5-5"]]);
-  // Saving the list saves its rows, and the lanes are drawn again.
-  box.querySelector(".st-lx").click();
-  await tick();
-  box.querySelector("#st-lsave").click();
-  await tick();
-  assert.deepEqual(sets[1], ["sessions.merge_lane_repos", JSON.stringify([{ repo: "acme/api", checkout: "C:/co/api" }])]);
-  assert.equal(box.querySelector("#st-lmsg").textContent, "Saved");
   assert.ok(box.querySelector(".st-lanelist"));
+});
+
+test("settings, Sessions: with no lane yet, the box says a repo's lane starts at its first ship", async () => {
+  const { b } = settings({ lane_status: () => [] });
+  b.run(`openSettings("sessions")`);
+  await tick();
+  assert.match(b.document.querySelector(".st-lanelist").textContent, /No lane has run here yet\. A repo's lane starts at its first ship\./);
 });
 
 test("settings, Sessions: the own-worktree box works as before through the shared list editor", async () => {

@@ -1,5 +1,6 @@
-// Card #151: Hugh's choice of the app's six subagents for each card. The card keeps its own
-// (`subagents`: {router, critic, reproducer, reviewer, tester, merger}, each true or false), set
+// Card #151: Hugh's choice of the app's five subagents for each card (card #162 took the
+// card-merger off it: every ship merges in its repo's merge lane, and an old card's `merger` is
+// ignored). The card keeps its own (`subagents`: {router, critic, reproducer, reviewer, tester}, each true or false), set
 // from the Settings switches when it is made; a card made before #151 has none and follows the
 // switches as they are now. The Add card form's ticks, the card's details box (saved as soon as
 // one changes), and the Settings switches (settings.js) all use this one list. Only Hugh changes
@@ -17,8 +18,6 @@ window.NEW_CARD_SUBAGENTS=[
    help:"The session can move the card from In progress to Human test only after the card-reviewer has passed its diff: mistakes, risky changes, work the card didn't ask for, the repo's hard rules. Its third FAIL sends the card to Blocked. Off: the session skips it. Default on."},
   {card:"tester",name:"card-tester",key:"sessions.test_before_human_test",label:"card-tester: test the card before Human test",
    help:"The session can move the card from In progress to Human test only after the card-tester has tested the real thing and passed it. The app records each verdict on the card. Off: the session tests it itself. Default on."},
-  {card:"merger",name:"card-merger",key:"sessions.merger_at_ship",label:"card-merger: bring the branch up to date at ship",
-   help:"In Ship it, before the push, the card-merger rebases the card's branch onto the latest origin/main, resolves conflicts and reruns the tests. It holds nothing. Off: the Ship it session does that itself. A stack's lead still merges each child with it, whatever this says. Default on."},
 ];
 const SUBS=window.NEW_CARD_SUBAGENTS;
 // The Settings switches, as {router: true, ...}: read when the form opens and kept for the details.
@@ -36,7 +35,8 @@ const subsOf=c=>{const o={};for(const s of SUBS){const v=own(c)[s.card];o[s.card
 // default a card made before #151 follows.
 window.subagentOffText=(c,card)=>subsOf(c)[card]!==false?"":typeof own(c)[card]==="boolean"?"off for this card":"off by the default in Settings";
 // Which subagent a verdict field belongs to (board.js's CHECKS), for its "off" note.
-window.SUBAGENT_OF_CHECK={test:"tester",review:"reviewer",critique:"critic",repro:"reproducer",merge:"merger"};
+// (Card #162: the merge chip has none: a ship always merges in its lane.)
+window.SUBAGENT_OF_CHECK={test:"tester",review:"reviewer",critique:"critic",repro:"reproducer"};
 
 // The Add card form: six ticks, set from the defaults. `host` is an empty element in the form.
 window.subagentTicks=async function(host){
