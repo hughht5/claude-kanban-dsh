@@ -1113,7 +1113,7 @@ impl Sessions {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            let end = ring.lock().map(|mut r| r.push(&buf[..n])).unwrap_or(0);
+                            let end = ring.lock().unwrap_or_else(|e| e.into_inner()).push(&buf[..n]);
                             if let Ok(mut sc) = screen.lock() {
                                 sc.process(&buf[..n]);
                             }

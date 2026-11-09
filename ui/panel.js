@@ -3,7 +3,7 @@
 const SHOW=300; // render the newest entries; "Show earlier" brings back the rest
 let panel=null; // {id, entries, offset, shown, info, term, fit, timer, unlisten:[]}
 
-const b64bytes=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const b64bytes=termB64; // termlink.js
 // Markdown, made safe. A Markdown image of a local file (C:/..., C:\..., file:///C:/...) keeps
 // its path in data-local and loses its src, for showShots to draw through image_read: the
 // page's CSP takes images only from the app itself or data: URLs. Network paths are left alone.
@@ -153,7 +153,7 @@ async function refreshInfo(){
   foot(`<span>${run?(STATE_LABEL[info.state]||"starting").toLowerCase():"not running"}</span>${info.waiting?`<span>${esc(waitingWhy(info))}</span>`:""}${panel.midTurn&&info.state==="working"&&!pendingQueued().length?`<span>message sent mid-turn: Claude reads it at its next step</span>`:""}<span>${info.account==="account2"?"Account 2":"main account"}</span><span>${esc((row&&row.model)||info.model)}</span><span>effort ${esc((row&&row.effort)||info.effort)}</span>${info.claudeVersion?`<span>Claude Code ${esc(info.claudeVersion)}</span>`:""}${row?`<span title="Folder">${esc(row.cwd)}</span>`:""}${info.conversation?`<span title="Conversation">${esc(info.conversation.id.slice(0,8))}</span>`:""}`);
   compose(info);
   if(typeof liveSwitch==="function")liveSwitch(info); // live-switch.js: model/effort switch, queued badge
-  if(panel.term)attachTerm(); // cheap unless the session is a new run or has stopped (card #95)
+  if(panel.term&&(run||(panel.link&&panel.link.run)))attachTerm(); // replays only for a new run; shows the idle line once it stops (card #95)
   refreshStatus();
 }
 // Why a message from the box hasn't been typed yet.

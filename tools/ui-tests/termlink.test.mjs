@@ -81,10 +81,35 @@ test("xterm's answers to old output during a replay are not typed into the sessi
   const { ctx, term, L, app } = boot({ ring: "\x1b[6n" });
   await ctx.termAttach(L);
   term.key("\x1b[24;1R"); // xterm answering the replayed cursor-position query
+  term.key("\x1b]11;rgb:0f0f/1111/1717\x1b\\"); // and a colour query
   assert.deepEqual(app.inputs, []);
-  term.doneF(); // the replay has drawn
-  term.key("h");
+  term.key("h"); // Hugh's own key, while the replay still draws
+  await flush();
   assert.deepEqual(app.inputs, ["h"]);
+  term.doneF(); // the replay has drawn: now a report is a real answer to the live session
+  term.key("\x1b[5;1R");
+  await flush();
+  assert.deepEqual(app.inputs, ["h", "\x1b[5;1R"]);
+});
+
+test("keys typed as the terminal opens wait for it to attach, then go in, in order", async () => {
+  const { ctx, term, L, app } = boot({ ring: "" });
+  const p = ctx.termAttach(L);
+  term.key("a"); term.key("b");
+  assert.deepEqual(app.inputs, []);
+  assert.doesNotMatch(term.text, /No session is running/);
+  await p; await flush();
+  assert.deepEqual(app.inputs, ["a", "b"]);
+});
+
+test("a new run's first output during an attach that found no session is not lost", async () => {
+  const { ctx, term, L, app, pty } = boot({ run: null });
+  const p = ctx.termAttach(L);
+  await flush(); // session_run said: no session
+  app.run = "row9"; app.ring = "hello"; app.end = 5;
+  pty("hello", 5, "row9");
+  await p; await flush(); await flush(); await flush();
+  assert.equal(term.text, "hello");
 });
 
 test("a key with no running session, or one the app refuses, shows a note", async () => {
