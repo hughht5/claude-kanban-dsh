@@ -622,15 +622,34 @@ pub fn card_account(card: &Card) -> String {
     }
 }
 
-struct Ring(VecDeque<u8>);
+/// The session's last `RING_BYTES` of output, and how many bytes it has put out in all (card
+/// #95). Each `pty` event carries that count after its chunk, and the snapshot the count at its
+/// end, so a terminal that opens mid-stream skips what its snapshot already holds and loses
+/// nothing that came after.
+struct Ring {
+    buf: VecDeque<u8>,
+    total: u64,
+}
 
 impl Ring {
-    fn push(&mut self, b: &[u8]) {
-        self.0.extend(b);
-        let over = self.0.len().saturating_sub(RING_BYTES);
+    fn new() -> Ring {
+        Ring { buf: VecDeque::new(), total: 0 }
+    }
+
+    /// Adds a chunk; returns the output's length in all after it.
+    fn push(&mut self, b: &[u8]) -> u64 {
+        self.buf.extend(b);
+        self.total += b.len() as u64;
+        let over = self.buf.len().saturating_sub(RING_BYTES);
         if over > 0 {
-            self.0.drain(..over);
+            self.buf.drain(..over);
         }
+        self.total
+    }
+
+    /// What the ring holds, and the output's length in all at its end.
+    fn snapshot(&self) -> (Vec<u8>, u64) {
+        (self.buf.iter().copied().collect(), self.total)
     }
 }
 
@@ -746,7 +765,20 @@ pub fn prompt_showing(screen: &str) -> bool {
 #[derive(Serialize, Clone)]
 struct PtyOut {
     card: String,
+    /// The session row this output is from, so a terminal never mixes two runs.
+    run: String,
+    /// The session's output length in all after this chunk (`Ring::push`).
+    end: u64,
     data: String,
+}
+
+/// What a terminal replays when it opens: the ring's bytes (base64), where they end in the
+/// session's output, and which run of the session they are from.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Snapshot {
+    pub run: String,
+    pub end: u64,
+    pub data: String,
 }
 
 /// One live card session, as the stuck monitor sees it (`Sessions::watch`).
@@ -1039,7 +1071,7 @@ impl Sessions {
         };
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-        let ring = Arc::new(Mutex::new(Ring(VecDeque::new())));
+        let ring = Arc::new(Mutex::new(Ring::new()));
         let screen = Arc::new(Mutex::new(vt100::Parser::new(40, 140, 0)));
         let alive = Arc::new(AtomicBool::new(true));
         let last_out = Arc::new(Mutex::new(Instant::now()));
@@ -1073,7 +1105,7 @@ impl Sessions {
             });
         }
         {
-            let (ring, screen, app, card_id) = (ring.clone(), screen.clone(), app.clone(), key.to_string());
+            let (ring, screen, app, card_id, run) = (ring.clone(), screen.clone(), app.clone(), key.to_string(), row.id.clone());
             let (last_out, ended) = (last_out.clone(), ended.clone());
             std::thread::spawn(move || {
                 let mut buf = [0u8; 16384];
@@ -1081,9 +1113,7 @@ impl Sessions {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            if let Ok(mut r) = ring.lock() {
-                                r.push(&buf[..n]);
-                            }
+                            let end = ring.lock().map(|mut r| r.push(&buf[..n])).unwrap_or(0);
                             if let Ok(mut sc) = screen.lock() {
                                 sc.process(&buf[..n]);
                             }
@@ -1091,7 +1121,7 @@ impl Sessions {
                                 *t = Instant::now();
                             }
                             let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
-                            let _ = app.emit("pty", PtyOut { card: card_id.clone(), data });
+                            let _ = app.emit("pty", PtyOut { card: card_id.clone(), run: run.clone(), end, data });
                         }
                     }
                 }
@@ -1502,12 +1532,18 @@ impl Sessions {
         Some(rows_text(&sc))
     }
 
-    pub fn snapshot(&self, card_id: &str) -> Option<String> {
+    pub fn snapshot(&self, card_id: &str) -> Option<Snapshot> {
         let live = self.live.lock().ok()?;
-        let l = live.get(card_id)?;
-        let r = l.ring.lock().ok()?;
-        let bytes: Vec<u8> = r.0.iter().copied().collect();
-        Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+        let l = live.get(card_id).filter(|l| l.alive.load(Ordering::SeqCst))?;
+        let (bytes, end) = l.ring.lock().ok()?.snapshot();
+        Some(Snapshot { run: l.row.id.clone(), end, data: base64::engine::general_purpose::STANDARD.encode(bytes) })
+    }
+
+    /// The running session's row id, or None: a cheap check a terminal makes before it replays
+    /// a snapshot, so it replays only for a new run (card #95).
+    pub fn run_id(&self, card_id: &str) -> Option<String> {
+        let live = self.live.lock().ok()?;
+        live.get(card_id).filter(|l| l.alive.load(Ordering::SeqCst)).map(|l| l.row.id.clone())
     }
 
     /// The `tool_use_id` of the question dialog on screen, if the session is asking one (an
@@ -1861,6 +1897,30 @@ fn chrono_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Card #95: the ring counts every byte the session has put out, also after it wraps, so a
+    /// terminal can tell which live chunks its snapshot already holds.
+    #[test]
+    fn ring_counts_output_and_snapshot_ends_where_events_do() {
+        let mut r = Ring::new();
+        assert_eq!(r.snapshot(), (vec![], 0));
+        assert_eq!(r.push(b"hello "), 6);
+        assert_eq!(r.push(b"world"), 11);
+        let (bytes, end) = r.snapshot();
+        assert_eq!(bytes, b"hello world");
+        assert_eq!(end, 11);
+        // A chunk after the snapshot ends past it, so the terminal draws it; the earlier ones
+        // end at or before it, so it skips them.
+        assert!(r.push(b"!") > end);
+        // Past the cap the ring keeps only the newest bytes, but the count keeps going.
+        let big = vec![b'x'; RING_BYTES];
+        let after = r.push(&big);
+        assert_eq!(after, 12 + RING_BYTES as u64);
+        let (bytes, end) = r.snapshot();
+        assert_eq!(bytes.len(), RING_BYTES);
+        assert!(bytes.iter().all(|b| *b == b'x'));
+        assert_eq!(end, after);
+    }
 
     fn plan(resume: Option<&str>) -> Plan {
         Plan {

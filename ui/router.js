@@ -132,7 +132,7 @@ function closePane(){
   clearInterval(pane.timer);clearInterval(pane.busyTick);
   invoke("router_panel_opened",{open:false}).catch(()=>{});
   pane.unlisten.forEach(u=>{try{u()}catch(e){}});
-  if(pane.term){try{pane.term.dispose()}catch(e){}}
+  if(pane.term){termUnlink(pane.link);try{pane.term.dispose()}catch(e){}}
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
   document.body.classList.remove("rpane-open");
@@ -279,30 +279,25 @@ function showTab(t){
   pane.el.querySelectorAll(".rpane-tabs [data-tab]").forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on))});
   pane.el.querySelector("#r-chat").hidden=t!=="chat";
   const host=pane.el.querySelector("#r-termhost");host.hidden=t!=="term";
-  if(t==="term"){if(!pane.term)openTerm();else{try{pane.fit.fit()}catch(e){}}}
+  if(t==="term"){if(!pane.term)openTerm();else{try{pane.fit.fit()}catch(e){}}pane.term.focus()}
   else pollTranscript();
 }
 
 // ---------- the terminal: xterm on the "router" session, as the card panel's ----------
-let ptyOn=false;
 function openTerm(){
   const host=pane.el.querySelector("#r-termhost");
   const term=new Terminal({fontFamily:'"IBM Plex Mono", Consolas, monospace',fontSize:13,cursorBlink:true,scrollback:5000,
     macOptionIsMeta:typeof IS_MAC!=="undefined"&&IS_MAC,theme:{background:"#0f1117",foreground:"#e6e8ef"}});
   const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(host);pane.term=term;pane.fit=fit;
-  term.onData(d=>{if(st.live)invoke("session_input",{cardId:RID,data:d}).catch(()=>{})});
-  new ResizeObserver(()=>{if(pane&&pane.term===term&&!host.hidden){try{fit.fit()}catch(e){}if(st.live)invoke("session_resize",{cardId:RID,cols:term.cols,rows:term.rows}).catch(()=>{})}}).observe(host);
-  if(!ptyOn){ptyOn=true;ev().listen("pty",e=>{if(pane&&pane.term&&e.payload&&e.payload.card===RID)pane.term.write(b64bytes(e.payload.data))})}
+  pane.link=termLink(term,RID,"The Router isn't running. Start it with the Start button above.");
+  new ResizeObserver(()=>{if(pane&&pane.term===term&&!host.hidden){try{fit.fit()}catch(e){}if(pane.link&&pane.link.run)invoke("session_resize",{cardId:RID,cols:term.cols,rows:term.rows}).catch(()=>{})}}).observe(host);
   attachTerm();
 }
-async function attachTerm(){
-  if(!pane||!pane.term)return;const term=pane.term;
+// termlink.js (card #95): replays once per open or new run, so a refresh never wipes the screen.
+function attachTerm(){
+  if(!pane||!pane.term||!pane.link)return;
   try{pane.fit.fit()}catch(e){}
-  if(!st.live){term.reset();term.write("The Router isn't running. Start it with the Start button above.\r\n");return}
-  await invoke("session_resize",{cardId:RID,cols:term.cols,rows:term.rows}).catch(()=>{});
-  const snap=await invoke("session_snapshot",{cardId:RID}).catch(()=>null);
-  if(!pane||pane.term!==term)return;
-  term.reset();if(snap)term.write(b64bytes(snap));
+  termAttach(pane.link);
 }
 
 // ---------- the chat: the Router's transcript, its questions and the message box ----------

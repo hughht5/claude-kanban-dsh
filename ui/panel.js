@@ -124,7 +124,7 @@ function closePanel(step){
   if(!panel)return;
   clearInterval(panel.timer);clearInterval(panel.statusTick);clearTimeout(panel.statusSoon);clearTimeout(panel.findTimer);
   panel.unlisten.forEach(u=>{try{u()}catch(e){}});
-  if(panel.term)panel.term.dispose();
+  if(panel.term){termUnlink(panel.link);panel.term.dispose()}
   panel.el.remove();panel.back.remove();panel=null;
   invoke("panel_opened",{cardId:null}).catch(()=>{});
   document.removeEventListener("keydown",panelKeys);
@@ -153,7 +153,7 @@ async function refreshInfo(){
   foot(`<span>${run?(STATE_LABEL[info.state]||"starting").toLowerCase():"not running"}</span>${info.waiting?`<span>${esc(waitingWhy(info))}</span>`:""}${panel.midTurn&&info.state==="working"&&!pendingQueued().length?`<span>message sent mid-turn: Claude reads it at its next step</span>`:""}<span>${info.account==="account2"?"Account 2":"main account"}</span><span>${esc((row&&row.model)||info.model)}</span><span>effort ${esc((row&&row.effort)||info.effort)}</span>${info.claudeVersion?`<span>Claude Code ${esc(info.claudeVersion)}</span>`:""}${row?`<span title="Folder">${esc(row.cwd)}</span>`:""}${info.conversation?`<span title="Conversation">${esc(info.conversation.id.slice(0,8))}</span>`:""}`);
   compose(info);
   if(typeof liveSwitch==="function")liveSwitch(info); // live-switch.js: model/effort switch, queued badge
-  if(run&&panel.term)attachTerm();
+  if(panel.term)attachTerm(); // cheap unless the session is a new run or has stopped (card #95)
   refreshStatus();
 }
 // Why a message from the box hasn't been typed yet.
@@ -842,26 +842,22 @@ function renderStatus(){
 // The terminal: xterm.js on the session's PTY. Opening it replays what the session has drawn so far.
 function toggleTerm(){
   const btn=panel.el.querySelector("#p-term"),body=panel.el.querySelector("#p-work");
-  if(panel.term){panel.term.dispose();panel.term=null;panel.el.querySelector(".term").remove();const sp=body.querySelector(".split");if(sp)sp.remove();body.classList.remove("with-term");btn.setAttribute("aria-pressed","false");return}
+  if(panel.term){termUnlink(panel.link);panel.link=null;panel.term.dispose();panel.term=null;panel.el.querySelector(".term").remove();const sp=body.querySelector(".split");if(sp)sp.remove();body.classList.remove("with-term");btn.setAttribute("aria-pressed","false");return}
   body.classList.add("with-term");btn.setAttribute("aria-pressed","true");
   const host=document.createElement("div");host.className="term";body.appendChild(host);addSplit(body);
   const term=new Terminal({fontFamily:'"IBM Plex Mono", Consolas, monospace',fontSize:13,cursorBlink:true,scrollback:5000,macOptionIsMeta:IS_MAC,
     theme:{background:"#0f1117",foreground:"#e6e8ef"}});
   const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(host);panel.term=term;panel.fit=fit;
-  term.onData(d=>{if(panel&&panel.info&&panel.info.running)invoke("session_input",{cardId:panel.id,data:d}).catch(()=>{})});
-  new ResizeObserver(()=>{if(panel&&panel.term===term){try{fit.fit()}catch(e){}if(panel.info&&panel.info.running)invoke("session_resize",{cardId:panel.id,cols:term.cols,rows:term.rows}).catch(()=>{})}}).observe(host);
+  panel.link=termLink(term,panel.id,"No session is running for this card. Start or resume one below.");
+  new ResizeObserver(()=>{if(panel&&panel.term===term){try{fit.fit()}catch(e){}if(panel.link&&panel.link.run)invoke("session_resize",{cardId:panel.id,cols:term.cols,rows:term.rows}).catch(()=>{})}}).observe(host);
+  term.focus(); // so typing goes straight into it (card #95)
   attachTerm();
 }
-let ptyListen=null;
-async function attachTerm(){
-  if(!panel||!panel.term)return;const id=panel.id,term=panel.term;
+// termlink.js: replays the session once per open (or per new run), then follows its live output.
+function attachTerm(){
+  if(!panel||!panel.term||!panel.link)return;
   try{panel.fit.fit()}catch(e){}
-  if(!(panel.info&&panel.info.running)){term.reset();term.write("No session is running for this card. Start or resume one below.\r\n");return}
-  await invoke("session_resize",{cardId:id,cols:term.cols,rows:term.rows}).catch(()=>{});
-  const snap=await invoke("session_snapshot",{cardId:id}).catch(()=>null);
-  if(!panel||panel.term!==term)return;
-  term.reset();if(snap)term.write(b64bytes(snap));
-  if(!ptyListen)ptyListen=window.__TAURI__.event.listen("pty",e=>{if(panel&&panel.term&&e.payload.card===panel.id)panel.term.write(b64bytes(e.payload.data))});
+  termAttach(panel.link);
 }
 
 // Session state from the hooks, shown as a dot on each card and in the panel's header.

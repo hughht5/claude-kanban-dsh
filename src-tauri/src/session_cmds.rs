@@ -214,8 +214,14 @@ fn session_resize(live: State<Arc<sessions::Sessions>>, card_id: String, cols: u
 }
 
 #[tauri::command]
-fn session_snapshot(live: State<Arc<sessions::Sessions>>, card_id: String) -> Option<String> {
+fn session_snapshot(live: State<Arc<sessions::Sessions>>, card_id: String) -> Option<sessions::Snapshot> {
     live.snapshot(&card_id)
+}
+
+/// The running session's row id for `card_id` (a card's id, or the Router's key), or null.
+#[tauri::command]
+fn session_run(live: State<Arc<sessions::Sessions>>, card_id: String) -> Option<String> {
+    live.run_id(&card_id)
 }
 
 /// A slash command from the chat never takes a Human test card back to work (`back_to_work`

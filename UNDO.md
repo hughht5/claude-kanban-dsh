@@ -715,3 +715,11 @@ Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <this commit
 | `ui\archive-ask.js`, `ui\archive-ask.css`, their tags in `ui\index.html`, the Done-pile filter in `ui\board.js` render | Same revert. Without it, cards with an ask show in their own columns again |
 | The Router prompt's job 6 and rule 1's sentence (`prompts\router.md`; the private copy in the private repo) | Same revert here; in your private repo, `git revert --no-edit` its card #131 commit |
 | A card archived from the Done pile | Open it in the Archive and press **Restore** |
+
+## Card #95: the terminal takes typing (9 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `Ring` counts the session's output (`total`), `pty` events carry `run` and `end`, `session_snapshot` returns `{run, end, data}`, and the new `session_run` (`sessions.rs`, `session_cmds.rs`, `main.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #95 commit>`. Nothing is stored: it is all in memory |
+| `ui\termlink.js` and its tag in `ui\index.html`; the card panel (`ui\panel.js`) and the Router pane (`ui\router.js`) use it | Same revert. The terminals go back to replaying the whole ring on every refresh |
+| `tools\ui-tests\termlink.test.mjs` | Same revert |

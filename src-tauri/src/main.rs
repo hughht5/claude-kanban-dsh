@@ -909,6 +909,7 @@ fn main() {
             session_input,
             session_resize,
             session_snapshot,
+            session_run,
             session_screen,
             session_btw,
             slash_commands,
