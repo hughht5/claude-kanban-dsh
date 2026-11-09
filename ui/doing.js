@@ -46,7 +46,7 @@ function subLine(s,now){
 // The session's own line for a tooltip: "Its session is working, since 10:42 (12m)."
 function sessionLine(d,now){
   if(!d)return"No session is running for it.";
-  const word={working:"on a turn",permission:"at a prompt",idle:"idle, waiting for a message",starting:"starting",failed:"stopped: its turn failed"}[d.state]||d.state;
+  const word={working:"on a turn",permission:"at a prompt",idle:"idle, waiting for a message",starting:"starting",failed:"stopped: its turn failed",ended:"ending"}[d.state]||"open";
   const t=d.state==="working"||d.state==="permission"?doingWhen(d.turnSince)||doingWhen(d.since):doingWhen(d.since);
   return`Its session is ${word}${t?", "+doingSince(t,now):""}.`;
 }
@@ -118,7 +118,7 @@ function doingBase(c,ctx){
   if(d&&typeof shipState==="function"&&shipState(c)==="shipped")return{k:"shipped",label:"Shipped, session open",tip:tip("Shipped. Its session is still open.",sess)};
   // 8. Idle.
   if(d&&d.state==="idle"){const t=doingWhen(d.since);return{k:"idle",label:t?`Idle ${doingDur(now-t)}`:"Idle",tip:tip(sess,stepT)}}
-  if(d)return{k:"idle",label:String(d.state||"Session open"),tip:sess};
+  if(d)return d.state==="ended"?{k:"idle",label:"Session ended",tip:"Its session has ended and is closing."}:{k:"idle",label:"Session open",tip:sess};
   // 9. An In progress card with no session (a start waiting under the cap has its own badge).
   if(col==="In progress"&&ctx.loaded!==false&&!ctx.queued&&!(Number(c.stackOf)>0))return{k:"none",label:"No session",tip:"No Claude session is running for this card. Open it to start or resume one."};
   return null;

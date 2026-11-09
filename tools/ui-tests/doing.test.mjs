@@ -26,6 +26,8 @@ test("each status, and the first that holds wins", () => {
   assert.equal(of(b, card({ number: 150, column: "Planning" }), {}), null, "only an In progress card says it has none");
   assert.equal(of(b, c, { queued: true }), null, "a start waiting under the cap has its own badge");
   assert.equal(of(b, c, { d: idle(25) }).label, "Idle 25m");
+  assert.equal(of(b, c, { d: { state: "ended", since: iso(0) } }).label, "Session ended", "after its SessionEnd, not the raw state");
+  assert.equal(of(b, c, { d: { state: "something-new", since: iso(0) } }).label, "Session open");
   assert.equal(of(b, card({ number: 150, column: "Deploy complete", ship: { state: "shipped" } }), { d: idle(3) }).label, "Shipped, session open");
   const un = [{ n: 12, tip: "#12 Store: Planning (ready from Human test)" }];
   assert.equal(of(b, c, { d: idle(3), unmet: un }).label, "Waiting on #12");
