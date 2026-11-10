@@ -1074,3 +1074,6 @@ UI only: no data, setting or migration.
 | Change | Undo |
 |---|---|
 | `ui\agents-feed.js` (`openMatch`, `runningHtml`'s `open`, the `session-pane` listener), `ui\router.js` (`paneChanged`), `ui\agents-feed.css` (`.rn-tab[aria-current]`), its test in `tools\ui-tests\feed.test.mjs`, notes in `HANDOVER.md` and `docs\GUIDE.md` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #173 commit>` |
+## A typed message left in the prompt gets Enter, not another copy (9 Nov 2026, card #175)
+
+No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #175 commit>`, then stage the live update. Files: `src-tauri\src\sessions.rs` (`retry_step`, `RetryCheck`, `prompt_text`, `prompt_holds`, `DRAW_WAIT`, `nudge`, `Typed::first`), `src-tauri\src\dispatch.rs` (the log line), `HANDOVER.md`.

@@ -186,38 +186,117 @@ pub fn takes_typing(c: TypeCheck) -> bool {
 pub const TYPE_TRIES: u8 = 3;
 /// How long a typed message may go untaken before it is typed again.
 pub const RETYPE_AFTER: Duration = Duration::from_secs(15);
+/// How long the app waits for a session that hasn't drawn anything since a message was typed
+/// into it (its TUI isn't reading its input yet, say just after a resume) before it gives the
+/// message up. The wait spends no tries: typing again would only queue more copies (card #175).
+pub const DRAW_WAIT: Duration = Duration::from_secs(180);
 
 /// A message typed at Claude's prompt that its `UserPromptSubmit` hasn't confirmed yet. At
 /// start-up the TUI can drop the paste as well as the Enter, so it stays on record until
-/// Claude takes it (`nudge` types it again).
+/// Claude takes it (`nudge` presses Enter again or types it again).
 #[derive(Clone)]
 struct Typed {
     text: String,
+    /// When this try was typed (or its Enter pressed again).
     at: Instant,
+    /// When it was first typed: the session should have drawn since.
+    first: Instant,
     tries: u8,
 }
 
-/// What `nudge` does about an unconfirmed message typed `since` ago, `tries` times so far.
-#[derive(Debug, PartialEq)]
+/// What `nudge` does about an unconfirmed message.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Retry {
     Wait,
+    /// The message shows in the prompt (`prompt_holds`): press Enter again, typing no new copy.
+    Enter,
     /// Type it again, first clearing any copy still in the prompt (`retype_bytes`).
     Retype,
-    /// It wasn't taken after `TYPE_TRIES` tries: show it in the chat as not taken.
+    /// It wasn't taken after `TYPE_TRIES` tries, or the session drew nothing for `DRAW_WAIT`:
+    /// show it in the chat as not taken.
     GiveUp,
 }
 
-/// The rule for an unconfirmed message: typed again once `RETYPE_AFTER` has passed with no
-/// `UserPromptSubmit` for it, but only at a quiet idle prompt (never into a question dialog,
-/// where Enter would answer it, nor mid-turn); given up after `TYPE_TRIES` tries.
-pub fn retry_step(since: Duration, tries: u8, idle_and_quiet: bool) -> Retry {
-    if since < RETYPE_AFTER || !idle_and_quiet {
+/// What `retry_step` knows about an unconfirmed message.
+#[derive(Debug, Clone, Copy)]
+pub struct RetryCheck {
+    /// Since this try was typed.
+    pub since: Duration,
+    /// Since it was first typed.
+    pub since_first: Duration,
+    pub tries: u8,
+    /// Ready, idle, not stopping, and nothing printed for a moment.
+    pub idle_and_quiet: bool,
+    /// The terminal printed something after the message was first typed, so the TUI is reading
+    /// its input. If it hasn't, the keys are still waiting for it, in order.
+    pub drawn: bool,
+    /// The prompt box shows the message (`prompt_holds`).
+    pub holds: bool,
+}
+
+/// The rule for an unconfirmed message, once `RETYPE_AFTER` has passed with no
+/// `UserPromptSubmit` for it, and only at a quiet idle prompt (never into a question dialog,
+/// where Enter would answer it, nor mid-turn). A session that has drawn nothing since the
+/// message was typed is waited for, up to `DRAW_WAIT`, spending no tries. One whose prompt
+/// shows the message gets Enter again; one whose prompt doesn't gets it typed again. Given up
+/// after `TYPE_TRIES` tries. Card #175: retyping into a session that hadn't read the first copy
+/// yet, or whose prompt already held it, left the text there two or three times over.
+pub fn retry_step(c: RetryCheck) -> Retry {
+    if c.since < RETYPE_AFTER || !c.idle_and_quiet {
         Retry::Wait
-    } else if tries >= TYPE_TRIES {
+    } else if !c.drawn {
+        if c.since_first >= DRAW_WAIT {
+            Retry::GiveUp
+        } else {
+            Retry::Wait
+        }
+    } else if c.tries >= TYPE_TRIES {
         Retry::GiveUp
+    } else if c.holds {
+        Retry::Enter
     } else {
         Retry::Retype
     }
+}
+
+/// What is typed in Claude Code's prompt box on `screen` (the last box `prompt_showing` would
+/// see): its lines' words joined with single spaces, without the "❯". None if no box shows.
+pub fn prompt_text(screen: &str) -> Option<String> {
+    let rule = |l: &str| l.trim().chars().count() >= 20 && l.trim().chars().all(|c| c == '─');
+    let lines: Vec<&str> = screen.lines().collect();
+    let start = (1..lines.len()).rev().find(|&i| rule(lines[i - 1]) && lines[i].trim_start().starts_with('❯'))?;
+    let end = (start + 1..lines.len()).find(|&i| rule(lines[i]))?;
+    let mut words = vec![];
+    for (k, l) in lines[start..end].iter().enumerate() {
+        let l = if k == 0 { l.trim_start().trim_start_matches('❯') } else { l };
+        words.extend(l.split_whitespace());
+    }
+    Some(words.join(" "))
+}
+
+/// The first 40 characters of `text`, with its whitespace evened out to single spaces.
+fn opening(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(40).collect()
+}
+
+/// Whether `a` and `b` open with the same 40 characters (whitespace evened out).
+fn same_start(a: &str, b: &str) -> bool {
+    let (a, b) = (opening(a), opening(b));
+    !a.is_empty() && a == b
+}
+
+/// Whether the prompt box on `screen` holds `text`, once, as Claude Code shows a paste: a long
+/// one (more than 2 lines, or 800 characters) as "[Pasted text #N +M lines]", a short one as
+/// itself, soft-wrapped (so it is compared by its first 40 characters, with whitespace evened
+/// out). Two copies count as not held: Enter would send both, so the retype clears them.
+pub fn prompt_holds(screen: &str, text: &str) -> bool {
+    let Some(typed) = prompt_text(screen) else { return false };
+    let long = text.lines().count() > 2 || text.chars().count() > 800;
+    let (want, pasted) = (opening(text), "[Pasted text #");
+    if long && typed.contains(pasted) {
+        return typed.matches(pasted).count() == 1 && !typed.contains(&want);
+    }
+    !want.is_empty() && typed.matches(want.as_str()).count() == 1
 }
 
 /// Whether a message typed at the prompt is kept until Claude takes it. Not a slash command:
@@ -1193,6 +1272,12 @@ impl Sessions {
                 // Any prompt taken counts as the typed message: typing it again after a prompt
                 // that was it, with its text changed on the way, would send it twice.
                 l.typed = None;
+                // A message given up on that Claude takes after all (a TUI that read its input
+                // late, card #175): no longer "Not sent", so Send again can't send it twice.
+                let prompt = body.get("prompt").and_then(Value::as_str).unwrap_or("");
+                if l.untaken.as_deref().is_some_and(|u| same_start(prompt, u)) {
+                    l.untaken = None;
+                }
                 // A new turn, even from "working" (a turn interrupted with no hook): an end
                 // the transcript recorded before now belongs to an earlier turn (`ended_by`).
                 l.state_at = chrono::Utc::now();
@@ -1315,12 +1400,13 @@ impl Sessions {
     }
 
     /// Presses Enter once more for a message typed 6 s ago that Claude hasn't taken yet.
-    /// A message typed at the prompt that still isn't taken `RETYPE_AFTER` later is typed again
-    /// (`retry_step`), and after `TYPE_TRIES` tries is kept for the chat as not taken. Returns
-    /// the cards whose message was typed again (false) or given up (true), for the panel.
-    /// The retype is written under the lock, so a `UserPromptSubmit` can't slip in between the
+    /// A message typed at the prompt that still isn't taken `RETYPE_AFTER` later gets Enter
+    /// again if its prompt shows it, else is typed again, and after `TYPE_TRIES` tries is kept
+    /// for the chat as not taken (`retry_step`). Returns the cards it did something for, and
+    /// what (`Enter`, `Retype` or `GiveUp`), for the panel.
+    /// The retry is written under the lock, so a `UserPromptSubmit` can't slip in between the
     /// check and the typing.
-    pub fn nudge(self: &Arc<Self>) -> Vec<(String, bool)> {
+    pub fn nudge(self: &Arc<Self>) -> Vec<(String, Retry)> {
         let mut changed = vec![];
         {
             let Ok(mut live) = self.live.lock() else { return changed };
@@ -1342,14 +1428,31 @@ impl Sessions {
                         l.sent_at = None;
                     }
                 }
-                let Some((since, tries)) = l.typed.as_ref().map(|t| (t.at.elapsed(), t.tries)) else { continue };
+                let Some((since, since_first, first, tries)) = l.typed.as_ref().map(|t| (t.at.elapsed(), t.first.elapsed(), t.first, t.tries)) else { continue };
+                let out = l.last_out.lock().map(|o| *o).ok();
                 let idle_and_quiet = l.alive.load(Ordering::SeqCst)
                     && !l.stopping
                     && l.ready
                     && l.state == "idle"
-                    && l.last_out.lock().map(|o| o.elapsed() > Duration::from_millis(1500)).unwrap_or(false);
-                match retry_step(since, tries, idle_and_quiet) {
+                    && out.is_some_and(|o| o.elapsed() > Duration::from_millis(1500));
+                let drawn = out.map_or(true, |o| o > first);
+                // Only read the screen when a retry is due and would use it.
+                let due = since >= RETYPE_AFTER && idle_and_quiet && drawn && tries < TYPE_TRIES;
+                let holds = due && l.typed.as_ref().is_some_and(|t| l.screen.lock().map(|s| prompt_holds(&rows_text(&s), &t.text)).unwrap_or(false));
+                let check = RetryCheck { since, since_first, tries, idle_and_quiet, drawn, holds };
+                match retry_step(check) {
                     Retry::Wait => {}
+                    Retry::Enter => {
+                        let Some(t) = l.typed.as_mut() else { continue };
+                        if l.writer.write_all(b"\r").and_then(|_| l.writer.flush()).is_ok() {
+                            t.at = Instant::now();
+                            t.tries += 1;
+                            l.sent_at = Some(Instant::now());
+                            // This was the Enter: no second one 6 s later.
+                            l.retried = true;
+                            changed.push((card_id.clone(), Retry::Enter));
+                        }
+                    }
                     Retry::Retype => {
                         let Some(t) = l.typed.as_mut() else { continue };
                         if l.writer.write_all(retype_bytes(&t.text).as_bytes()).and_then(|_| l.writer.flush()).is_ok() {
@@ -1357,19 +1460,19 @@ impl Sessions {
                             t.tries += 1;
                             l.sent_at = Some(Instant::now());
                             l.retried = false;
-                            changed.push((card_id.clone(), false));
+                            changed.push((card_id.clone(), Retry::Retype));
                         }
                     }
                     Retry::GiveUp => {
                         l.untaken = l.typed.take().map(|t| t.text);
                         l.sent_at = None;
-                        changed.push((card_id.clone(), true));
+                        changed.push((card_id.clone(), Retry::GiveUp));
                     }
                 }
             }
         }
         // Enter for each retype, as a separate write (`send_message`).
-        for (card_id, _) in changed.iter().filter(|(_, gave_up)| !gave_up) {
+        for (card_id, _) in changed.iter().filter(|(_, r)| *r == Retry::Retype) {
             let (me, id) = (self.clone(), card_id.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(300));
@@ -1705,20 +1808,20 @@ impl Sessions {
     /// as a separate write (the TUI misreads Enter that arrives with the text).
     /// It is kept as unconfirmed until its `UserPromptSubmit` (`nudge` types it again).
     pub fn send_message(self: &Arc<Self>, card_id: &str, text: &str) -> Result<(), String> {
-        self.type_at_prompt(card_id, text)?;
-        self.track(card_id, text);
+        let first = self.type_at_prompt(card_id, text)?;
+        self.track(card_id, text, first);
         Ok(())
     }
 
-    /// Records `text` as typed at the prompt and not yet taken (`Typed`), as its first try.
-    /// A slash command isn't kept (`confirms`).
-    fn track(&self, card_id: &str, text: &str) {
+    /// Records `text` as typed at the prompt at `first` and not yet taken (`Typed`), as its
+    /// first try. A slash command isn't kept (`confirms`).
+    fn track(&self, card_id: &str, text: &str, first: Instant) {
         if !confirms(text) {
             return;
         }
         if let Ok(mut live) = self.live.lock() {
             if let Some(l) = live.get_mut(card_id) {
-                l.typed = Some(Typed { text: text.to_string(), at: Instant::now(), tries: 1 });
+                l.typed = Some(Typed { text: text.to_string(), at: Instant::now(), first, tries: 1 });
             }
         }
     }
@@ -1726,7 +1829,10 @@ impl Sessions {
     /// The typing itself: the paste, then Enter 300 ms later. A slash command is typed as
     /// `send_command` types one: a local command sends no `UserPromptSubmit`, so no second Enter
     /// follows it (`nudge`), which would answer whatever it opened (a picker, the `/btw` answer).
-    fn type_at_prompt(self: &Arc<Self>, card_id: &str, text: &str) -> Result<(), String> {
+    /// Returns when the paste was written: anything the terminal prints after that shows the
+    /// TUI is reading its input (`RetryCheck::drawn`).
+    fn type_at_prompt(self: &Arc<Self>, card_id: &str, text: &str) -> Result<Instant, String> {
+        let at = Instant::now();
         self.input(card_id, paste_bytes(text).as_bytes())?;
         if let Ok(mut live) = self.live.lock() {
             if let Some(l) = live.get_mut(card_id) {
@@ -1747,7 +1853,7 @@ impl Sessions {
             std::thread::sleep(Duration::from_millis(300));
             let _ = me.input(&id, b"\r");
         });
-        Ok(())
+        Ok(at)
     }
 
     /// Types Hugh's message (the panel's box, `kb send`) into the session now, as typing in its
@@ -1776,12 +1882,12 @@ impl Sessions {
             }
             l.state == "working"
         };
-        self.type_at_prompt(card_id, text)?;
+        let first = self.type_at_prompt(card_id, text)?;
         // At the prompt it is kept until Claude takes it. Mid-turn the TUI only queues it, so
         // no UserPromptSubmit may come yet: no second Enter for it (`nudge`), which the busy
         // prompt might read as something else, and no retyping.
         if !working {
-            self.track(card_id, text);
+            self.track(card_id, text, first);
         } else {
             if let Ok(mut live) = self.live.lock() {
                 if let Some(l) = live.get_mut(card_id) {
@@ -2209,14 +2315,67 @@ mod tests {
     #[test]
     fn untaken_messages_are_typed_again_then_given_up() {
         let s = Duration::from_secs;
+        let c = RetryCheck { since: s(16), since_first: s(16), tries: 1, idle_and_quiet: true, drawn: true, holds: false };
         // Not before RETYPE_AFTER, and only at a quiet idle prompt.
-        assert_eq!(retry_step(s(5), 1, true), Retry::Wait);
-        assert_eq!(retry_step(s(16), 1, false), Retry::Wait);
-        assert_eq!(retry_step(s(16), 1, true), Retry::Retype);
-        assert_eq!(retry_step(s(16), TYPE_TRIES - 1, true), Retry::Retype);
+        assert_eq!(retry_step(RetryCheck { since: s(5), ..c }), Retry::Wait);
+        assert_eq!(retry_step(RetryCheck { idle_and_quiet: false, ..c }), Retry::Wait);
+        assert_eq!(retry_step(c), Retry::Retype);
+        assert_eq!(retry_step(RetryCheck { tries: TYPE_TRIES - 1, ..c }), Retry::Retype);
         // After TYPE_TRIES tries it is shown as not taken, never typed a fourth time.
-        assert_eq!(retry_step(s(16), TYPE_TRIES, true), Retry::GiveUp);
-        assert_eq!(retry_step(s(16), TYPE_TRIES, false), Retry::Wait);
+        assert_eq!(retry_step(RetryCheck { tries: TYPE_TRIES, ..c }), Retry::GiveUp);
+        assert_eq!(retry_step(RetryCheck { tries: TYPE_TRIES, idle_and_quiet: false, ..c }), Retry::Wait);
+    }
+
+    #[test]
+    fn a_message_left_in_the_prompt_gets_enter_not_another_copy() {
+        // Card #175: the text sat in the prompt and each retype added a copy. Enter alone now.
+        let s = Duration::from_secs;
+        let c = RetryCheck { since: s(16), since_first: s(16), tries: 1, idle_and_quiet: true, drawn: true, holds: true };
+        assert_eq!(retry_step(c), Retry::Enter);
+        assert_eq!(retry_step(RetryCheck { tries: TYPE_TRIES - 1, ..c }), Retry::Enter);
+        assert_eq!(retry_step(RetryCheck { tries: TYPE_TRIES, ..c }), Retry::GiveUp);
+        assert_eq!(retry_step(RetryCheck { since: s(5), ..c }), Retry::Wait);
+    }
+
+    #[test]
+    fn a_session_that_has_not_drawn_since_the_typing_is_waited_for() {
+        // Card #175: after a resume the TUI read its input a minute late, and took the message
+        // then; typing it again meanwhile only queued more copies. No tries are spent waiting.
+        let s = Duration::from_secs;
+        let c = RetryCheck { since: s(16), since_first: s(16), tries: 1, idle_and_quiet: true, drawn: false, holds: false };
+        assert_eq!(retry_step(c), Retry::Wait);
+        assert_eq!(retry_step(RetryCheck { tries: TYPE_TRIES, since_first: s(120), ..c }), Retry::Wait);
+        assert_eq!(retry_step(RetryCheck { since_first: DRAW_WAIT, ..c }), Retry::GiveUp);
+        // Once it draws, the usual rule.
+        assert_eq!(retry_step(RetryCheck { drawn: true, ..c }), Retry::Retype);
+    }
+
+    #[test]
+    fn reads_the_message_in_the_prompt_box() {
+        let rule = "─".repeat(60);
+        let screen = |typed: &str| format!("● OK\n\n✻ Churned for 1s\n{rule}\n{typed}\n{rule}\n  #174 · Opus 5.5\n");
+        // As Claude Code 2.1.321 showed them (card #175): a short paste as itself, soft-wrapped.
+        let short = screen("❯ Short one. Reply with just OK, and nothing\n  else at all.\n  Second line here.");
+        assert_eq!(prompt_text(&short).as_deref(), Some("Short one. Reply with just OK, and nothing else at all. Second line here."));
+        assert!(prompt_holds(&short, "Short one. Reply with just OK, and nothing else at all.\nSecond line here."));
+        assert!(!prompt_holds(&short, "Another message entirely"));
+        // A long one as a placeholder; but a placeholder isn't taken for a short message (Hugh's
+        // own paste, say), and two placeholders or two copies would send twice: not held.
+        assert!(prompt_holds(&screen("❯ [Pasted text #2 +60 lines]"), "Long one.\nline\nline"));
+        assert!(!prompt_holds(&screen("❯ [Pasted text #2 +60 lines]"), "Short one."));
+        assert!(!prompt_holds(&screen("❯ [Pasted text #2 +60 lines][Pasted text #3 +60 lines]"), "Long one.\nline\nline"));
+        assert!(!prompt_holds(&screen("❯ Short one. Short one."), "Short one."));
+        // Waiting text taken after the give-up clears "Not sent" (`hook`): same opening.
+        assert!(same_start("Short one.\n  more", "Short  one. more"));
+        assert!(!same_start("Short one.", "Other"));
+        assert!(!same_start("", ""));
+        // An empty prompt, or no prompt box at all, holds nothing.
+        assert_eq!(prompt_text(&screen("❯")).as_deref(), Some(""));
+        assert!(!prompt_holds(&screen("❯"), "Short one."));
+        assert!(!prompt_holds("no box here", "Short one."));
+        // The message in the transcript above the box doesn't count.
+        let above = format!("❯ Short one.\n\n● OK\n{rule}\n❯\n{rule}\n");
+        assert!(!prompt_holds(&above, "Short one."));
     }
 
     #[test]
