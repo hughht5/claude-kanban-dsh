@@ -289,7 +289,7 @@ fn ship_asks(asks: State<shipask::ShipAsks>) -> Vec<Value> {
 fn approve_ship_ask(app: AppHandle, board: State<Board>, asks: State<shipask::ShipAsks>, card: String, ask: String, version: i64) -> CmdResult<Value> {
     let store = board.0.lock().map_err(CmdError::other)?;
     let a = asks.take(&card, &ask, chrono::Utc::now().timestamp_millis()).map_err(CmdError::other)?;
-    let line = format!("Hugh approved {}'s request to ship this card (asked {})", a.by, chrono::DateTime::from_timestamp_millis(a.at).map(|t| t.to_rfc3339()).unwrap_or_default());
+    let line = format!("Hugh approved the request to ship this card from {} (asked {})", a.by, chrono::DateTime::from_timestamp_millis(a.at).map(|t| t.to_rfc3339()).unwrap_or_default());
     match hugh_move(&app, store, card.clone(), version, "Ship it", Patch::new()) {
         Ok(out) => {
             if let Ok(mut st) = board.0.lock() {
@@ -309,7 +309,7 @@ fn approve_ship_ask(app: AppHandle, board: State<Board>, asks: State<shipask::Sh
 fn dismiss_ship_ask(app: AppHandle, board: State<Board>, asks: State<shipask::ShipAsks>, card: String, ask: String) -> CmdResult<()> {
     if let Some(a) = asks.dismiss(&card, &ask) {
         let mut store = board.0.lock().map_err(CmdError::other)?;
-        let _ = store.add_log(&card, &format!("Hugh dismissed {}'s request to ship this card", a.by), HUGH);
+        let _ = store.add_log(&card, &format!("Hugh dismissed the request to ship this card from {}", a.by), HUGH);
         drop(store);
         changed(&app);
     }

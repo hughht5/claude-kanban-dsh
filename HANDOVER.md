@@ -2429,8 +2429,8 @@ The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate 
   and `as_router` here).
 - **Hugh's click:** the banner's Ship calls `approve_ship_ask {card, ask, version}`: `ShipAsks::take`
   refuses a used, dismissed, replaced, expired (10 min, `TTL_MS`) or other card's request, then
-  `hugh_move` moves it as his drag, and the log gets "Hugh approved <who>'s request to ship this
-  card (asked <time>)". A refused move (conflict) puts the request back. Dismiss calls
+  `hugh_move` moves it as his drag, and the log gets "Hugh approved the request to ship this
+  card from <who> (asked <time>)". A refused move (conflict) puts the request back. Dismiss calls
   `dismiss_ship_ask` and logs it. `ship_asks` lists the open ones so the banners come back after a
   page reload. One request per card (a new one replaces the old); memory only, so a restart drops them.
 - **Tests:** `shipask::tests` (none, once, expired, other card, replaced, restore and dismiss, the
