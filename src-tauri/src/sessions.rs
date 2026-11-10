@@ -40,6 +40,10 @@ pub struct Plan {
     /// has no subagents and can't ask Hugh a question, and its guard (`guard::lane_refusal`) also
     /// sees Edit and Write.
     pub lane: bool,
+    /// A card of a repo in `nobrowser::REPOS` (card #172): its settings deny computer use and
+    /// every browser server, to it and its subagents, and its `mcp.json` adds no headless
+    /// chrome-devtools.
+    pub no_browser: bool,
 }
 
 /// Whether a live-map key is one of the app's own sessions, not a card's: the Router (card
@@ -369,6 +373,11 @@ pub fn settings_json(p: &Plan) -> Value {
         }
         v["permissions"] = serde_json::json!({ "allow": ["mcp__kanban"] });
     }
+    if p.no_browser {
+        // A deny rule here holds the session and every subagent it runs (card #172), with or
+        // without the app's API.
+        v["permissions"]["deny"] = serde_json::json!(crate::nobrowser::deny_rules());
+    }
     v
 }
 
@@ -378,7 +387,9 @@ pub fn mcp_json(p: &Plan) -> Option<Value> {
         "type": "http",
         "url": format!("http://127.0.0.1:{}/mcp/{}/{}", api.port, api.token, p.row_id)
     } } });
-    if let Some(dt) = account_config(&p.account).and_then(|c| headless_devtools(&c, &p.cwd)) {
+    // A card that tests without a browser (card #172) gets no headless Chrome either.
+    let devtools = if p.no_browser { None } else { account_config(&p.account).and_then(|c| headless_devtools(&c, &p.cwd)) };
+    if let Some(dt) = devtools {
         v["mcpServers"][DEVTOOLS] = dt;
     }
     Some(v)
@@ -1973,7 +1984,35 @@ mod tests {
             todo_tools: false,
             router: false,
             lane: false,
+            no_browser: false,
         }
+    }
+
+    fn api_plan(no_browser: bool) -> Plan {
+        let api = crate::api::ApiInfo { port: 1, token: "t".into(), kb_exe: None };
+        Plan { api: Some(api), no_browser, ..plan(None) }
+    }
+
+    #[test]
+    fn a_no_browser_card_denies_computer_use_and_every_browser() {
+        let s = settings_json(&api_plan(true));
+        let deny: Vec<&str> = s["permissions"]["deny"].as_array().expect("a deny list").iter().filter_map(Value::as_str).collect();
+        for server in ["mcp__computer-use", "mcp__claude-in-chrome", "mcp__Claude_Browser", "mcp__chrome-devtools"] {
+            assert!(deny.contains(&server), "denies {server}: {deny:?}");
+        }
+        assert_eq!(s["permissions"]["allow"], serde_json::json!(["mcp__kanban"]), "the board's tools stay allowed");
+        // Another repo's card keeps its browser.
+        assert!(settings_json(&api_plan(false))["permissions"].get("deny").is_none());
+        // Without the app's API too.
+        let bare = settings_json(&Plan { no_browser: true, ..plan(None) });
+        assert!(bare["permissions"]["deny"].as_array().is_some_and(|d| d.len() == crate::nobrowser::SERVERS.len()), "{bare}");
+    }
+
+    #[test]
+    fn a_no_browser_card_gets_no_headless_chrome() {
+        let m = mcp_json(&api_plan(true)).unwrap();
+        assert!(m["mcpServers"].get(DEVTOOLS).is_none());
+        assert!(m["mcpServers"].get("kanban").is_some());
     }
 
     #[test]

@@ -79,6 +79,8 @@ Settled by the manager's review on 3 Nov 2026; 11 to 13 by Hugh on 5 Nov 2026 (c
 | 30 | Skip Planning (card #162; Hugh: "an option on a card to skip planning") | A per-card option with a Settings default (off). A move into Planning from Backlog or Blocked, by anyone, goes to In progress instead, with no plan request or critique; the choke points are the store's `move_as` and `dispatch::session_move_to`. Hugh's move into Planning from a later column still plans. A stack's child ignores it. |
 | 31 | Skip Human test (card #162; Hugh: "only applies if it hasn't been skipped ... overrideable per card") | A per-card option with a Settings default (off). A card a session (or the stack rules) puts in Human test goes on to Ship it for Hugh, as Take it to: Deploy complete does. Hugh's own drag never skips; Take it to: Human test wins; a child never goes on; it goes before small-change auto-ship. Turning it on for a card a session already put in Human test sends it on, as an autoTo edit does. |
 | 32 | Who sets a card's flow (card #162) | Only Hugh: the page, Add card, and his own sessions outside the app and `kb` (calls with no card session). A card's session and the Router are refused. A default changed in Settings is told to the following cards' sessions where it matters. |
+| 33 | The Router out of Backlog (card #174; Hugh: "clear every DSH card", then "ur meant to work this out not me") | With "Router may start cards" on, the Router may move a card from Backlog to Planning or In progress; the move starts its session as Hugh's drag does (skip Planning applies). Off, both are refused. Backlog to any other column, and everything into Ship it, Deploy complete or Done, stays refused. `kanban_start_card` still starts only a card in Planning or In progress, and tells a Backlog card to move first. |
+| 34 | Proof in Human test (card #125; Hugh: "show docs or images but not paths", the router: Windows paths only, keep it small) | A new card field `proof` (`{path, label}` like `changesOutputs`, which stays for deliverables). Old cards work unchanged: pictures, md/txt reports and PDFs their hand-over names count as proof. The app reads only files the card names, inside home or temp, never a dot folder (bar a repo's card worktrees) or AppData outside Temp, and masks tokens with the search mask before a report reaches the page. Reports show as plain Markdown with a short tag list; only http and https links work. Out: the stack overlay, the verdict details, Mac paths, globs. |
 
 ## Stack
 
@@ -585,6 +587,18 @@ its own test app, ship one by one or together if stacked):
   its checkout, so editing its `main` would change every live session before the code ships. The
   private branch ships with the stack.
 
+## Card #172: no computer use and no browser for this app's cards (9 Nov 2026)
+
+- **What is out** (Hugh): computer use (desktop screenshots, clicks) and any browser (Claude in
+  Chrome, the built-in browser, chrome-devtools). **What stays**: `tools/cdp.mjs` into the
+  card's own test app, and its shots as the card's evidence.
+- **Scope**: this repo's cards only (the Router, for Hugh): other repos keep their browser checks
+  until he says. One list, `nobrowser::REPOS`, widens it.
+- **How**: deny rules for the whole servers in the card session's own settings, which hold its
+  subagents too (live trial), rather than each agent's `disallowedTools` (which would miss
+  the session itself and non-app subagents). The prompts say it as well, so a session doesn't
+  plan a browser check it can't run.
+
 ## Card #162: the reviewer and the tester run together (9 Nov 2026)
 
 - **Both run at once, after the install, and a pass counts only if it started after the other's
@@ -628,6 +642,26 @@ cards. Decisions (the card session's, for Hugh to overturn):
   it keeps a stack's children). The app finds the checkout at `kanban_merge` (the card's
   worktree's main checkout, else the own-worktree list, else `repos.json`) and keys the lane by
   the checkout's GitHub `origin`, so an old repo name shares its lane; none found is needs-hugh.
+
+## Card #168: a stopped card's session starts when its test-app turn comes (9 Nov 2026)
+
+Hugh's ask: "When it's their turn, their session should be started again." Decisions (the card
+session's, for Hugh to overturn):
+
+- **A third exception to "sessions start only by Hugh's click or auto-spawn"** (AGENTS.md), like
+  the merge lane's: only a card in In progress or Human test whose own turn has come, never a
+  desktop-only conversation, through `begin_session` so the cap applies.
+- **5 minutes' grace** (`WAKE_GRACE_MINUTES`): a woken card keeps the turn's place while its
+  session starts, so the card behind can't jump it; after that the line moves on, so a start
+  waiting under the cap, or one that hangs, never stalls the line. It keeps its place.
+- **Once per stop**, never retried: a start that fails ends a held turn and passes a place over
+  at once, logged. Seeing its session run again (a live holder, its own take) clears the mark.
+  A woken holder gets the same grace, then loses the turn. A holder that heard its turn and then
+  stopped (paused when idle) isn't woken: it has nothing new, and its turn times out as before.
+- **A card Hugh stopped is woken too.** To stop a card testing, move it out of In progress or
+  Human test.
+- **Card #149 folded in.** Its unshipped fix (d4d4b42) was cherry-picked onto this branch, its
+  conflicts resolved for card #147's test app per card; it ships with this card.
 
 ## Platforms (6 Nov 2026, cards #114 and #117)
 

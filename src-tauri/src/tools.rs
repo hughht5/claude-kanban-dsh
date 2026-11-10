@@ -12,6 +12,7 @@ pub(crate) const UPDATABLE: &[&str] = &[
     "title", "summary", "nextStep", "blockedReason", "repo", "issue", "pr", "branch", "worktreePath",
     "devStack", "persona", "logins", "links", "dryRun", "choices", "labels",
     "changesOutputs",
+    "proof", // card #125: the screenshots and reports that prove it, shown in Human test
     "doneWhen", // card #105: one line, the card is done when ...
     "doneWhenChecks", // card #105: its acceptance checks
     "blockedBy",
@@ -59,14 +60,14 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card } } },
         { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, blockedBy and waitedOn, and for stacks: stack, stackOf, passed).",
           "inputSchema": { "type": "object", "properties": { "column": { "type": "string" }, "include_archived": { "type": "boolean" } } } },
-        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning and skipHumanTest (true, false, or null for the default in Settings) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
+        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} proof is a list of {{path, label}} by full Windows path: the screenshots and reports that prove the change, shown in Human test. blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning and skipHumanTest (true, false, or null for the default in Settings) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
         { "name": "kanban_add_log", "description": "Add a line to a card's log.",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
         { "name": "kanban_move_card", "description": "Move a card to another column, with a one-line reason. A move of your own card waits until your turn ends. Never Ship it. A stack's lead goes to Human test only when its children are ready; the app moves it then. A card that waits on cards not ready yet (blockedBy) goes into Planning or later only once they are.",
           "inputSchema": { "type": "object", "properties": { "card": card, "column": { "type": "string", "enum": kanban_store::COLUMNS }, "reason": { "type": "string" } }, "required": ["column"] } },
         { "name": "kanban_create_card", "description": "Add a card. It gets the next number. Pass `stack` (a lead card's number) to create it straight into that stack.",
-          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "column": { "type": "string" }, "repo": { "type": "string" }, "summary": { "type": "string" }, "issue": { "type": "object" }, "labels": { "type": "array", "items": { "type": "string" }, "description": "Short labels, like [\"BUG\", \"RCS\"]." }, "dryRun": { "type": "boolean", "description": "A test card: its sessions change nothing real." }, "stack": { "type": "integer", "description": "The lead card's number: the new card joins its stack, at the end." }, "template": { "type": "string", "description": "A card template's id (e.g. kanban-app, bug): its starting prompt opens the card's first session." }, "to": { "type": "string", "enum": ["Planning", "Human test"], "description": "Only for Hugh's own sessions, when he asked: start the card now (it goes into Planning and its session starts). \"Human test\" also sets it to go on by itself to Human test. A card's own session can't use it." } }, "required": ["title"] } },
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "column": { "type": "string" }, "repo": { "type": "string" }, "summary": { "type": "string" }, "issue": { "type": "object" }, "labels": { "type": "array", "items": { "type": "string" }, "description": "Short labels, like [\"BUG\", \"RCS\"]." }, "dryRun": { "type": "boolean", "description": "A test card: its sessions change nothing real." }, "stack": { "type": "integer", "description": "The lead card's number: the new card joins its stack, at the end." }, "template": { "type": "string", "description": "A card template's id (e.g. kanban-app, bug): its starting prompt opens the card's first session." }, "to": { "type": "string", "enum": ["Planning", "Human test"], "description": "Only for Hugh's own sessions, when he asked: start the card now (it goes into Planning and its session starts). \"Human test\" also sets it to go on by itself to Human test. A card's own session can't use it." }, "skipPlanning": { "type": "boolean", "description": "Only for Hugh's own sessions, when he asked: the card's flow skips Planning, so it starts now straight in In progress (with `to` \"Human test\", it also goes on by itself to Human test). Not with `stack`." } }, "required": ["title"] } },
         { "name": "kanban_stack_list", "description": "A stack: its lead card (number, title, column, branch, pr, devStack, logins) and its children in order (number, title, column, passed, nextStep, blockedReason, choices), plus the board's rule for when the stack goes to Human test (\"all\" or \"first\") and whether it is ready.",
           "inputSchema": { "type": "object", "properties": { "stack": { "type": "integer", "description": "The lead card's number. Leave it out for your own card's stack (the one it leads or is in)." } } } },
         { "name": "kanban_stack_add", "description": "Put a card into a stack (at the end), making the lead a stack if it isn't one. A card is in at most one stack, and a stack is one repo; a lead can't be a child; a card in Ship it or archived can't join, and nothing joins a stack in Ship it (only Hugh does that, by dropping a card on it in the app).",
@@ -408,6 +409,18 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             // Starting it (card #76): `to`, or a column that starts a session, from Hugh's own
             // session only; a card's session only places cards.
             let to = args.get("to").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty());
+            // Card #169: skipPlanning sets the new card's flow (card #162, Hugh's alone) and starts
+            // it: the move into Planning goes straight to In progress.
+            let skip = args.get(kanban_store::SKIP_PLANNING_KEY).and_then(Value::as_bool).unwrap_or(false);
+            if skip {
+                if !hugh || own.is_some() {
+                    return Err("the card's flow (skipPlanning) is Hugh's alone: ask him".into());
+                }
+                if args.get("stack").map_or(false, |v| !v.is_null()) {
+                    return Err("a stack's card never skips Planning: its lead's flow covers it; leave out `skipPlanning`".into());
+                }
+                fields.insert(kanban_store::SKIP_PLANNING_KEY.into(), json!(true));
+            }
             let start = match to {
                 Some(_) if own.is_some() => return Err("a card's session can't start a card; leave out `to`".into()),
                 Some("Deploy complete") => return Err("only Hugh sets a card to ship by itself, in the app (Add card's Take it to)".into()),
@@ -421,6 +434,7 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
                     .map(|c| (c.to_string(), None)),
                 None => None,
             };
+            let start = if skip && start.is_none() { Some(("Planning".to_string(), None)) } else { start };
             if let Some((_, auto)) = &start {
                 fields.remove("column");
                 if let Some(t) = auto {
@@ -605,6 +619,7 @@ mod tests {
         assert!(!UPDATABLE.contains(&"waitedOn"), "the app writes waitedOn");
         let create = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_create_card").cloned().unwrap();
         assert!(create["inputSchema"]["properties"].get("stack").is_some());
+        assert!(create["inputSchema"]["properties"].get(kanban_store::SKIP_PLANNING_KEY).is_some(), "card #169");
     }
 
     /// Card #162: a card's session and the Router (held) can't set the card's flow; Hugh's own

@@ -245,6 +245,14 @@ The word is picked at random each turn, as the terminal's is.
 
 ## Claude's questions in the chat
 
+**The folder-trust question (card #143).** When a card's session starts in a folder Claude Code
+hasn't trusted yet, it stops at "Do you trust the files in this folder?" before its prompt. The
+chat shows that question under the conversation, naming the folder, with **Yes, I trust this
+folder** and **No, exit**. A click presses the arrow keys to that option and Enter in the
+session's terminal (never a number key); the card's log records your answer. It shows only while
+the session is starting and the question is on its screen, and you can still answer in the
+Terminal tab. No exits the session, as in the terminal.
+
 When a card's session asks you something with `AskUserQuestion`, the question shows in the chat as
 its own card, not folded into "Ran 1 tool": each question's header, its text, and its options with
 their descriptions ("pick any" on a multi-select one). While that dialog is on screen you answer
@@ -496,6 +504,29 @@ Cards outside Backlog and Planning show what their work changed, read from git b
 - **Limits:** WSL and network checkouts aren't read. Each git call stops after 10 s. Lists stop at
   300 files and 20 commits (the totals count everything); saved figures keep 100 files.
 
+## Proof in Human test
+
+A card's proof is the screenshots and reports that show its change works (card #125). The Human
+test panel shows them as pictures and readable reports, never as file paths.
+
+- **Where a session puts it:** `proof`, a list of `{"path": "C:\full\path", "label": "..."}` (the
+  same rules as `changesOutputs`: up to 20, full local paths, a label up to 80 characters, `null`
+  clears it), through `kanban_update_card` or `kb update <n> --proof '[...]'`. Old cards need
+  nothing: pictures, md and txt reports and PDFs named in the hand-over steps count too. A bare
+  file name after a full path on the same line takes that path's folder.
+- **What shows:** in the review view, proof pictures join the shot strip after the agents' shots,
+  and a Proof section under it holds the reports (each a fold) and other files. The Chat view's
+  Human test box has the same section, pictures too. In the steps, each path is its file name: a
+  chip that shows the picture or opens the report. Other paths (source files, folders) show their
+  last part, the full path in the tooltip. The full-size viewer's caption is the file name.
+- **What the app reads:** only files the card names, inside your home or temp folder, never in a
+  dot folder (the app's data, `.claude`, `.ssh` and the like; a repo's `.claude\worktrees` card
+  worktrees are fine) or AppData outside its Temp. A refused file says why ("Can't show r.md: in
+  the app's data folder"); a gone one says "Not there any more".
+- **Reports:** md or txt, read up to 1 MB (UTF-8 or UTF-16), tokens and keys shown as `[hidden]`.
+  A report shows only plain Markdown (no forms, styles or pictures); only http and https links
+  work. Open and Show in folder are on each, for you to click.
+
 ## One ship at a time per repo
 
 Move several cards into Ship it and they ship one at a time per repo: the first goes to its session
@@ -610,6 +641,8 @@ the same box, every option at Default.
   follows it at once; a card whose session is in the column where it matters is told.
 - **From your own Claude session:** `kb update <n> --skip-planning on|off|default`,
   `--skip-human-test on|off|default`, `--subagent critic=on|off|default` (once per agent).
+  `kb create --title ... --skip-planning` (card #169) makes a card that skips Planning and starts
+  it now, straight in In progress.
   `kb card <n>` shows a `flow` object: each option's value and whether it is the card's own or the
   default. A card's session and the Router can't set them.
 
@@ -1248,7 +1281,7 @@ first. Add the waits, drag the card to Blocked, and it starts by itself once the
     Planning for you, and its session starts as if you had moved it. The session is told which
     cards were ready and, for any not shipped yet, their branch: their work is not on main yet.
   - **In Backlog:** it stays there, and you get a notification ("Drag it to Planning to start
-    it"). Only you start a card from Backlog.
+    it"). The waits never start a card from Backlog: you do, or the Router when you let it.
   - **In Blocked with a blocked reason, or put there by a session:** it stays, and you are
     notified.
   - **In Planning or later:** it stays where it is, and its session is told.
@@ -1315,8 +1348,9 @@ integrates its own children.
   focus.
 - **What it may do** without asking: move cards between Planning, In progress, Human test and
   Blocked (with a reason on the card), route, check and send cards back. **Settings › Router ›
-  Router may start cards** (off by default) also lets it move a card from Backlog to Planning and
-  start a card's session in its own worktree. It leaves a card alone while you have its panel open
+  Router may start cards** (off by default) also lets it move a card from Backlog to Planning or
+  In progress (its session starts, as with your drag) and start a card's session in its own
+  worktree. So "clear every card for this repo" is something it does itself. It leaves a card alone while you have its panel open
   or changed it in the last 2 minutes.
 - **Clearing finished cards:** it puts them in the board's **Done pile** (see *The Done pile*), and
   your **Archive all** archives them. It never archives a card itself.

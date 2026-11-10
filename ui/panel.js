@@ -35,7 +35,9 @@ const shotCache=new Map(); // key -> data URL, or a Promise while it loads
 const SHOT_BYTES=150*1024*1024;
 let shotBytes=0;
 const shotKey=(path,at)=>path+"|"+(at||"");
-function shotImg(path,at){return`<img class="shot" data-local="${esc(path)}" data-at="${esc(at||"")}" alt="${esc(path.split(/[\\/]/).pop())}" title="${esc(path)}">`}
+// A picture's name for its tooltip and the viewer's caption: the file name, never the full path (card #125).
+const shotName=p=>String(p||"").split(/[\\/]/).filter(Boolean).pop()||"";
+function shotImg(path,at){return`<img class="shot" data-local="${esc(path)}" data-at="${esc(at||"")}" alt="${esc(shotName(path))}" title="${esc(shotName(path))}">`}
 function loadShot(path,at){
   const k=shotKey(path,at);
   if(shotCache.has(k))return Promise.resolve(shotCache.get(k));
@@ -53,7 +55,7 @@ function showShots(box){
     if(img.closest("details:not([open])"))return;
     const path=img.dataset.local,got=shotCache.get(shotKey(path,img.dataset.at));
     if(typeof got==="string"){img.src=got;return}
-    loadShot(path,img.dataset.at).then(u=>{img.src=u},err=>{img.classList.add("gone");img.alt=`Can't show ${path}: ${errText(err)}`});
+    loadShot(path,img.dataset.at).then(u=>{img.src=u},err=>{img.classList.add("gone");img.alt=`Can't show ${shotName(path)}: ${errText(err)}`});
   });
 }
 // A user message's "[Attached: <path>]" / "[Image: <path>]" lines, when the path is an image.
@@ -65,7 +67,8 @@ function attachedImages(text){
 // Clicking a screenshot shows it full size over the panel; a click or Esc closes it.
 function openShot(img){
   const v=document.createElement("div");v.className="shotview";v.setAttribute("role","dialog");v.setAttribute("aria-label","Screenshot");v.tabIndex=-1;
-  v.innerHTML=`<img alt="${esc(img.alt||"")}"><div class="cap">${esc(img.dataset.local||"")}</div>`;v.querySelector("img").src=img.src;
+  // The caption is the picture's name (a proof label, else its file name), never its path (card #125).
+  v.innerHTML=`<img alt="${esc(img.alt||"")}"><div class="cap">${esc(img.dataset.cap||shotName(img.dataset.local)||img.alt||"")}</div>`;v.querySelector("img").src=img.src;
   const was=document.activeElement,close=()=>{v.remove();if(was&&was.isConnected&&was!==document.body)was.focus({preventScroll:true})};
   v.onclick=close;v.addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();e.stopPropagation();close()}});
   // In a modal dialog (the stack overlay, card #116) the view goes inside it, or it would be behind.
@@ -90,7 +93,7 @@ function openPanel(id,opts){
   <div class="pb" id="p-body"><aside class="det" id="p-det" aria-label="Card details"></aside><div class="dsplit" title="Drag to change the details' width. Double-click to reset."></div>
     <div class="work" id="p-work"><div class="chat">
       <div class="find" role="search"><input type="search" id="p-q" placeholder="Search the conversation (Ctrl+F)" aria-label="Search the conversation" autocomplete="off" spellcheck="false"><span class="cnt" id="p-cnt" aria-live="polite"></span><button class="ibtn" id="p-prev" type="button" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>↑</button><button class="ibtn" id="p-next" type="button" aria-label="Next match" title="Next match (Enter)" disabled>↓</button></div>
-      <div class="subs" id="p-subs" role="tablist" aria-label="Main conversation and its subagents"></div><div class="msgs" id="p-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="p-busy" hidden></div><div class="todo" id="p-todo" hidden></div><div class="compose" id="p-compose"></div><div class="sfoot" id="p-sfoot" hidden></div></div></div></div>
+      <div class="subs" id="p-subs" role="tablist" aria-label="Main conversation and its subagents"></div><div class="msgs" id="p-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="p-busy" hidden></div><div class="rtrust ptrust" id="p-trust" role="alert" hidden></div><div class="todo" id="p-todo" hidden></div><div class="compose" id="p-compose"></div><div class="sfoot" id="p-sfoot" hidden></div></div></div></div>
   <div class="pf" id="p-foot"></div>`;
   document.body.append(back,el);
   addPanelEdge(el);
@@ -357,8 +360,30 @@ async function stopSession(){
   b.disabled=false;b.textContent="Stop session";refreshInfo();
 }
 
+// Claude Code's folder-trust question at a card session's start (card #143), as the Router's
+// (router.js checkTrust): shown under the chat with Yes and No buttons, so Hugh needn't find it
+// in the Terminal tab. Asked only while the session is starting; the app checks the screen again
+// before it presses the keys.
+async function checkTrust(){
+  if(!panel)return;const id=panel.id,box=panel.el.querySelector("#p-trust");if(!box)return;
+  const info=panel.info,starting=info&&info.running&&(!info.state||info.state==="starting");
+  let q=null;
+  if(starting)try{q=await invoke("session_trust",{cardId:id})}catch(e){q=null}
+  if(!panel||panel.id!==id)return;
+  if(!q){if(!box.hidden){box.hidden=true;box.innerHTML="";delete box.dataset.q}return}
+  if(!box.hidden&&box.dataset.q===q)return;
+  box.dataset.q=q;box.hidden=false;
+  box.innerHTML=`<div class="ask-head">The session is asking you</div><p>${esc(q)}</p><div class="rtrust-acts"><button class="btn" type="button" data-yes="1">Yes, I trust this folder</button><button class="btn ghost" type="button" data-yes="0">No, exit</button><span class="rtrust-or">or answer in the terminal</span></div>`;
+  box.querySelectorAll("button").forEach(b=>b.onclick=async()=>{
+    box.querySelectorAll("button").forEach(x=>x.disabled=true);
+    try{await invoke("session_trust_answer",{cardId:id,yes:b.dataset.yes==="1"})}
+    catch(e){if(panel&&panel.id===id){foot(`<span class="err">${esc(errText(e))}</span>`);box.querySelectorAll("button").forEach(x=>x.disabled=false)}}
+    setTimeout(()=>{if(panel&&panel.id===id){delete box.dataset.q;checkTrust()}},1500);
+  });
+}
 async function pollTranscript(){
   if(!panel)return;const id=panel.id,view=panel.view,gen=panel.gen;
+  checkTrust();
   if(panel.subsTick++%2===0)refreshSubs();
   // One read at a time, so two reads from the same offset can't both add their entries.
   if(panel.reading===gen)return;panel.reading=gen;

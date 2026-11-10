@@ -157,6 +157,7 @@ pub fn plan(store: &Store, api: Option<crate::api::ApiInfo>, base: &std::path::P
         todo_tools: false,
         router: true,
         lane: false,
+        no_browser: false,
     }
 }
 
@@ -654,9 +655,10 @@ pub fn hugh_changed_recently(store: &Store, card: &Card, now: chrono::DateTime<c
 }
 
 /// Why the Router may not move `card` (column `from`) to `to`, if it may not (decision 3):
-/// between Planning, In progress, Human test and Blocked always; Backlog to Planning only with
-/// "Router may start cards"; never into Ship it, Deploy complete or Done, and never out of Ship
-/// it or Deploy complete.
+/// between Planning, In progress, Human test and Blocked always; out of Backlog, to Planning or
+/// In progress, only with "Router may start cards" (card #174: the move starts the card, as
+/// Hugh's drag does); never into Ship it, Deploy complete or Done, and never out of Ship it or
+/// Deploy complete.
 pub fn move_refused(from: &str, to: &str, may_start: bool) -> Option<String> {
     const FREE: [&str; 4] = ["Planning", "In progress", "Human test", "Blocked"];
     if to == "Ship it" {
@@ -668,8 +670,8 @@ pub fn move_refused(from: &str, to: &str, may_start: bool) -> Option<String> {
     if ["Deploy complete", "Done"].contains(&to) {
         return Some(format!("the Router doesn't move cards into {to}"));
     }
-    if from == "Backlog" && to == "Planning" {
-        return (!may_start).then(|| "starting a card (Backlog to Planning) needs Hugh's \"Router may start cards\" setting, which is off".to_string());
+    if from == "Backlog" && ["Planning", "In progress"].contains(&to) {
+        return (!may_start).then(|| format!("starting a card (Backlog to {to}) needs Hugh's \"Router may start cards\" setting, which is off"));
     }
     if FREE.contains(&from) && FREE.contains(&to) {
         return None;
@@ -896,6 +898,12 @@ pub fn trust_answerable(starting: bool, screen: &str) -> bool {
     starting && trust_question_on(screen)
 }
 
+/// The trust menu to answer now, or None: `trust_menu` while the session is still starting.
+/// The Router and card sessions (card #143) both answer through this.
+pub fn trust_ask(starting: bool, screen: &str) -> Option<TrustMenu> {
+    trust_menu(screen).filter(|_| starting)
+}
+
 /// The trust question, if the Router's screen shows it now: its words, for the chat.
 #[tauri::command]
 pub fn router_trust(app: AppHandle) -> Option<String> {
@@ -911,7 +919,7 @@ pub fn router_trust_answer(app: AppHandle, yes: bool) -> Result<(), String> {
     let live = app.state::<Arc<Sessions>>();
     let w = live.watch_one(KEY).ok_or("the Router isn't running")?;
     let screen = live.screen_text(KEY).ok_or("the Router isn't running")?;
-    let menu = trust_menu(&screen).filter(|_| trust_answerable(w.state == "starting" || !w.ready, &screen)).ok_or("the trust question isn't on the Router's screen now")?;
+    let menu = trust_ask(w.state == "starting" || !w.ready, &screen).ok_or("the trust question isn't on the Router's screen now")?;
     live.input(KEY, &trust_keys(menu, yes))?;
     if let Ok(mut st) = app.state::<Board>().0.lock() {
         let _ = st.add_router_log("session", None, if yes { "Hugh trusted the Router's folder" } else { "Hugh refused the Router's folder: it exits" }, "Hugh (panel)");
@@ -1006,9 +1014,13 @@ mod tests {
         for (from, to) in [("Planning", "In progress"), ("Human test", "In progress"), ("In progress", "Blocked"), ("Blocked", "Planning"), ("In progress", "Human test")] {
             assert_eq!(move_refused(from, to, false), None, "{from} -> {to}");
         }
-        assert!(move_refused("Backlog", "Planning", false).is_some());
-        assert_eq!(move_refused("Backlog", "Planning", true), None);
-        for (from, to) in [("Human test", "Ship it"), ("Ship it", "In progress"), ("Deploy complete", "Human test"), ("Human test", "Done"), ("In progress", "Deploy complete"), ("Planning", "Backlog"), ("Backlog", "In progress")] {
+        // Out of Backlog, to Planning or In progress, only with "Router may start cards" (card #174).
+        for to in ["Planning", "In progress"] {
+            let off = move_refused("Backlog", to, false).expect("refused with the setting off");
+            assert!(off.contains("Router may start cards") && off.contains(to), "{off}");
+            assert_eq!(move_refused("Backlog", to, true), None, "Backlog -> {to}");
+        }
+        for (from, to) in [("Human test", "Ship it"), ("Ship it", "In progress"), ("Deploy complete", "Human test"), ("Human test", "Done"), ("In progress", "Deploy complete"), ("Planning", "Backlog"), ("Backlog", "Human test"), ("Backlog", "Blocked"), ("Backlog", "Ship it"), ("Backlog", "Done"), ("Backlog", "Deploy complete")] {
             assert!(move_refused(from, to, true).is_some(), "{from} -> {to}");
         }
     }

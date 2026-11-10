@@ -22,12 +22,14 @@ mod launch;
 mod lane;
 mod lanetools;
 mod lockwatch;
+mod nobrowser;
 mod monitor;
 mod merger;
 mod needs;
 mod notify;
 mod place;
 mod presize;
+mod proof;
 mod repro;
 mod reviewer;
 mod router;
@@ -943,6 +945,8 @@ fn main() {
             session_dismiss_untaken,
             session_answer,
             session_stop,
+            session_trust,
+            session_trust_answer,
             transcript_read,
             subagent_list,
             search_sessions,
@@ -968,6 +972,9 @@ fn main() {
             // The agents' feed (card #120).
             feed::agents_feed,
             changes::changes_open,
+            proof::proof_list,
+            proof::proof_read,
+            proof::proof_open,
             update::update_status,
             update::update_later,
             update::update_restart,

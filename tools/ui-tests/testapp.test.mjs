@@ -91,6 +91,12 @@ test("tileChip: a card in its own test app's line says its place", () => {
   assert.match(w.title, /^This card's build goes in Claude Kanban DSH Test 3 \(CDP port 9336\)\. Its session is 1st in line for a turn\.$/);
   s.slots[2].line[0].live = false;
   assert.equal(K.tileChip(all[1], all, s).c, "tap-paused");
+  // Card #168: its turn came while its session was stopped, and the app is starting it.
+  s.slots[2].line[0].waking = true;
+  const k = K.tileChip(all[1], all, s);
+  assert.equal(k.t, "Test 3 · starting");
+  assert.equal(k.c, "tap-wait");
+  assert.match(k.title, /its turn has come, and the app is starting its stopped session\.$/);
 });
 
 test("tileChip: a card waiting for a free test app says its place in that line", () => {

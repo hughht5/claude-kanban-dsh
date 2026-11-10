@@ -28,6 +28,36 @@ For a fresh session carrying on this build. Updated 3 Nov 2026, after Phase 4 an
 - **Requests the API received** are logged in the data folder's `api.log`, with the token hidden. Its port and token are in `api.json`.
 - **Use subagents** for heavy pieces (Hugh, 3 Nov). Keep the main session for deciding, integrating, committing and reporting to the manager session after each phase, in five lines or fewer.
 
+## No computer use and no browser for this app's cards (9 Nov 2026, card #172)
+
+Hugh: "for testing i want no computer use or browser use". His answers: `tools/cdp.mjs` into
+the card's own test app is fine, and so are its shots (the card's evidence). Not allowed:
+computer use (desktop screenshots, clicks) and any browser (Claude in Chrome, the built-in
+browser, chrome-devtools). Scope, from the Router: this repo's cards only; other repos stay as they
+is until Hugh says.
+
+- `src-tauri/src/nobrowser.rs`: `REPOS` (`hughht5/claude-kanban-dsh`, `hughht5/kanban-app`),
+  `SERVERS` (`computer-use`, `remote-devices`, `claude-in-chrome`, `Claude_Browser`,
+  `Claude_Preview`, `chrome-devtools`) and `deny_rules()` (`mcp__<server>`, whole servers).
+- `session_cmds::start_session` sets `Plan.no_browser` from the card's repo. Then
+  `sessions::settings_json` adds `permissions.deny` with those rules to the session's own
+  settings, and `sessions::mcp_json` adds no headless chrome-devtools (card #77's override).
+  The Router and the merge lanes are not cards and are unchanged.
+- Why the settings and not each agent's `disallowedTools`: a live trial (Claude Code 2.1.246,
+  a stand-in `chrome-devtools` stdio server) showed that a `--settings` deny of
+  `mcp__chrome-devtools` takes the server's tools from the session and from a general-purpose
+  subagent it starts, under `bypassPermissions`; the same run without the deny called the tool.
+  So one rule covers the session, the app's subagents and any other subagent.
+- The card-tester and card-reproducer prompts (`tester.rs`, `repro.rs`) say it too, and the
+  tester's evidence step now names `hughht5/claude-kanban-dsh` as well as the old name.
+  `prompts/kanban-app.md` (In progress step 6, public and private copies) and AGENTS.md (Hard
+  rules) state the rule. Tests: `nobrowser.rs`, `sessions.rs`
+  (`a_no_browser_card_denies_computer_use_and_every_browser`,
+  `a_no_browser_card_gets_no_headless_chrome`), `tests/prompt_rules.rs`.
+- It applies to sessions started (or resumed) after the update: a running session keeps its
+  settings until it restarts.
+- To widen it to another repo, add the repo to `REPOS`.
+
 ## Queued messages go in mid-turn (9 Nov 2026, card #154)
 
 Hugh: "queued messagse take forever - they should come in sooner". A message that went into a
@@ -872,7 +902,8 @@ how it was built.
   low-effort session still merges at high). No `GATES` entry: there is no hold, because the push
   comes before any app call could hold it. The one-ship-per-repo lane (card #79) is unchanged.
 - **Two jobs:** "ship" (the default: the card in Ship it, steps 1 to 11) and "stack" (card #113:
-  a stack child in Human test whose test and review passed; in the lead's worktree it detaches at
+  a stack child in Human test whose test and review are met: passed, or that subagent switched
+  off for the card, as the app's own checks count it (card #176); in the lead's worktree it detaches at
   the child's head SHA, rebases onto the stack's branch and fast-forwards that branch; never the
   child's own branch, never main, never a push). A stack child's recorded merge then calls
   `merger::after_child_merge`, empty here: when #113's branch is merged it becomes the one call
@@ -1200,7 +1231,8 @@ settings row, and the card's worktree is its ordinary `worktreePath` and `branch
   `<checkout>\.claude\worktrees\<name>` and the branch is `<name>`: `card-<n>` on live,
   `<channel>-card-<n>` on a test channel, so a test board's numbers never take a live card's
   branch. `make` runs git (no window, 15 s for all its commands together, because the board is
-  locked; git's error kept): a folder that is already that branch's worktree is used (one git
+  locked; 300 s in a test build, so `cargo test` beside other builds doesn't fail on it, card #171;
+  git's error kept): a folder that is already that branch's worktree is used (one git
   still has locked, an add stopped part way, is refused); otherwise `git worktree prune` forgets
   folders deleted by hand, then a branch with no folder gets a worktree, else a new branch from
   `origin/main` (else `main`), made with `--no-track` so it never has main as its upstream. There is no fetch, because the board is locked while a session
@@ -1480,10 +1512,31 @@ covered only cards that knew about it.
 **Shape.** Two layers.
 - *Turns* (the app, `crates/store/src/testapp.rs`, JSON in the setting `testapp.queue`; the live
   app's board is the real queue): a **tester** turn per card session, one at a time, and an
-  exclusive **install** turn that goes to the front. Pure logic, clock passed in.
+  exclusive **install** turn that goes to the front. Pure logic, clock passed in. A card whose
+  session isn't running keeps its place but is passed over, by the pump (`next`) and by a take
+  (`take_now`, card #149): with nobody holding the turn and nothing outside the queue blocking,
+  a take from a card first in line, or behind only paused cards, gets the turn in its reply.
+  **A stopped card's turn (card #168):** when the turn is a card's (it holds it and hasn't heard
+  it yet, a "your turn" still queued, `Live::unheard`; or nobody holds it and
+  it is the first in line `blocked` doesn't stop, past cards whose wake ran out) and its session
+  isn't running, `step` marks it (`to_wake`, `woke_at` on its `Turn` or `Waiting`, once until its
+  session is seen running again: a live holder, or the card's own take, `ran`) and the pump starts its
+  session (`wake`): its app conversation resumed, else a new one in its worktree, through
+  `begin_session` (why "testapp"), so the cap and start queue apply. A conversation only in the
+  desktop app is never started. For `WAKE_GRACE_MINUTES` (5) a woken card in line keeps the turn's
+  place (`next` and `take_now` give it to nobody behind it); once its session runs, `next` gives
+  it the turn and its usual message. Then the line moves on, and it keeps its place; a woken
+  holder whose session still isn't up loses the turn (`wake_ran_out`, `Ended::NoSession`) and its
+  test app (`free_unstarted`), so the next card waiting for a test app gets it. If the start
+  fails, the card's log says why: a held turn ends (with its ended message) and its test app is
+  freed the same way, and a place in
+  line is passed over at once (`wake_failed`). A new session (no app conversation) is first told
+  why it runs (`woke_new_message`). It asks again (a take) to be woken again. The status shows
+  `waking` on the holder and line entries; the board shows "starting its session".
   `src-tauri/src/testapp.rs` runs it: the pump every 2 s from `dispatch::run` (its first run is the
   start-up check), the `kanban_test_app` tool, `kb testapp`, the page's commands. "Your turn" and
-  "your turn ended" are queued messages only: no session is resumed for them (router decision R2).
+  "your turn ended" are queued messages only: no session is resumed for them (router decision R2),
+  except a stopped card's own turn, above (card #168).
   `copy_board` resets the queue, so a test board never inherits the live holder.
 - *The script's lock and waits* (`scripts\install.ps1 -Channel test`, mode now): it builds first,
   then takes `install.lock` and waits before quitting the test app. It never calls the app.
@@ -1525,7 +1578,9 @@ and `-DshLockDir` runs just this, against fixtures: `scripts\test-install-lock.p
 exists with another owner, the app gives no new turn and the script waits; the new script also takes
 that folder itself (owner file: the owner, then `pid <pid> <start>`) and removes it only if it made
 it and still owns it. A folder whose pid line names a dead process blocks nobody, and the next run
-renames it aside and takes it. Hugh's Release renames it
+renames it aside and takes it. A folder an older writer made (no pid line) is stale once it is 60 min
+old (`DSH_STALE_MINUTES`, card #149): it then blocks nobody either, and the next run renames it aside
+too. A folder whose pid still runs blocks whatever its age. Hugh's Release renames it
 to `.dsh-test-app.lock.released-<time>`. The lock only protects runs of a script from a base that
 has #115: older worktrees' `install.ps1` ignore it. Remove `read_dsh`/`release_dsh` and the
 script's DSH folder block when the last DSH card is in Deploy complete or Done.
@@ -1950,6 +2005,9 @@ default as it is now). `crates/store/src/flow.rs` holds the keys and the store's
   plain `kb` (not held in `tools.rs` `call_inner`: `not_updatable_by`), which also log and run
   `after_edit`. A card session and the Router are refused. `kb update` takes `--skip-planning`,
   `--skip-human-test` (on, off, default) and `--subagent <name>=on|off|default`.
+  `kanban_create_card` takes `skipPlanning: true` from the same callers (card #169, `kb create
+  --skip-planning`; refused with `stack`): it sets the new card's `skipPlanning` and starts it, so
+  `move_as` sends it to In progress.
   `kanban_get_card` and `kb card` show a computed `flow` (`Store::flow_of`).
 - **UI:** `ui/subagents.js`: the Card flow box (`subagentsBox`, three-way selects, one key per
   change), Add card's box (`subagentTicks`, `flowChoice`: only what isn't Default), the chips (a
@@ -2032,9 +2090,9 @@ or any session with `kanban_router`. The decisions below are the router's after 
   the board once.
 - **Tools.** `routertools.rs` checks, then `tools::call_as_router` runs the card tool with
   `by` = "the router" and the card sessions' gates. `if_version` is required on writes and moves;
-  a card Hugh has open or changed in the last 2 minutes is refused (`hands_off`); moves follow
+  a write or move on a card Hugh has open or changed in the last 2 minutes is refused (`hands_off`; a `kanban_session_send` message is not, card #170); moves follow
   `routersession::move_refused` (Planning, In progress, Human test, Blocked freely; Backlog to
-  Planning only with `router.may_start_cards`; never Ship it, never out of Ship it or Deploy
+  Planning or In progress only with `router.may_start_cards`, card #174; never Ship it, never out of Ship it or Deploy
   complete, never into Deploy complete or Done). `kanban_start_card` (setting on, the card's own
   `worktreePath`, through the cap and queue), `kanban_router_log`, a compact `kanban_list_cards`
   (no summaries), and `kanban_session_send/status/read` (a send that would resume a stopped
@@ -2067,7 +2125,7 @@ or any session with `kanban_router`. The decisions below are the router's after 
   failed TESTS line makes it a FAIL. The ship job merges origin/main into an integration branch
   once instead of a rebase.
 - **Panel.** `ui/router.js`, `ui/router.css`: the header button (state dot), a panel docked
-  right (380 px, resizable), the digest, the feed (card #120's `mountAgentsFeed` when present,
+  right (default min(720 px, 55% of the window), resizable; log and chat side by side from a 620 px width, stacked below it, card #128; a saved 380 counts as unset, double-click on the edge clears the saved width), the digest, the feed (card #120's `mountAgentsFeed` when present,
   else a plain list from `router_feed`), Chat and Terminal tabs, the "Router asks" pill
   (`registerPill` when #120 is merged). Commands: `router_status`, `router_start`, `router_stop`,
   `router_send`, `router_feed`, `router_opened`; event `router-changed`. The digest is the app's
@@ -2162,6 +2220,7 @@ or any session with `kanban_router`. The decisions below are the router's after 
 - **"Working…" line (card #66, 4 Nov 2026):** each live session keeps `turn_since`, set when the hooks first say `working` (or `permission`) and cleared at idle, failed or ended (`sessions::turn_start`); `session_info` returns it as `turnMs`. `transcript_read` returns `thought`, the chunk's latest thinking block timed from the line before it (looking back up to 1 MB before the read's offset). The panel draws them under the conversation, ticking every second.
 - **Messages:** one waiting message per card, with new text appended; one held move per card, with the newest winning.
 - **Port:** the API falls back to an OS-picked port, because 47821 can't be bound on this machine.
+- **The folder-trust question in the chat (card #143, 9 Nov 2026):** as the Router's (card #119, F5), for card sessions. `session_trust` (session_cmds.rs) returns the question's words, naming the latest session's folder, while the session is starting (`state == "starting"` or not yet ready) and `routersession::trust_ask` finds the menu on its screen; `session_trust_answer` checks again and types `routersession::trust_keys` (Down or Up to the option, then Enter, never a digit), logs Hugh's answer on the card and emits `session-changed`. The panel (`checkTrust` in `ui/panel.js`) asks every 1.5 s with its transcript poll, only while `session_info` says running and starting, and draws `#p-trust` (router.css's `.rtrust` box) under the chat.
 - **Questions in the chat (card #78, 5 Nov 2026):** `transcript::ask_questions` puts an `AskUserQuestion` call's questions on its entry (`ask`), and the panel draws them as a question card (`askHtml` in `ui/panel.js`). The `PreToolUse` hook's `tool_use_id` and `tool_input` are kept on the live session (`question`, cleared when it leaves `permission`); `session_info` returns the id as `question`. `session_answer` checks the id and types `sessions::answer_keys`: in a single-select question a digit picks and moves on; "Type something" is the digit after the options, a paste and Enter (1.2 s before the next key, or it lands in the typed text); in a multi-select digits tick and Right moves on; with more than one question, or any multi-select, a review screen follows where `1` submits. Learnt on Claude Code 2.1.318: if the dialog changes, fix `answer_keys` and its tests.
 - **Screenshots in the chat (card #84, 5 Nov 2026):** `image_read` (`session_cmds.rs`) returns a local image as a `data:` URL: absolute local paths only (no UNC, so no SMB connection), image extensions from `transcript::image_mime` (the one list; `IMG_EXT` in `ui/panel.js` must match), at most `MAX_ATTACHMENT`. `transcript::parse_line` puts a `Read` of an image on its entry as `images`. In `ui/panel.js` a DOMPurify hook (registered once) turns a local `<img src>` in Markdown into `data-local`; `showShots` loads what is on view (not inside a closed `<details>`), cached per path and message time (so a shot saved again under the same name shows afresh in a later message), up to 150 MB; failures aren't cached. The sessions learn the `![..](C:/..)` form from `api.rs` `INSTRUCTIONS` and the column prompts.
 - **Subagents in the chat (card #91, 5 Nov 2026):** Claude Code keeps each subagent of a session in `<session id>\subagents\agent-<id>.jsonl` beside the transcript, with `agent-<id>.meta.json` (`agentType`, or `name` for a forked skill; `description`; `toolUseId`, the Agent call that started it; `finished` once it has reported back). `transcript::subagents` lists them (an id must be letters and digits, so nothing outside the folder is read); `read_in(.., sub: true)` keeps the sidechain lines the main reader drops. The panel polls `subagent_list` every 3 s, draws the strip (`renderSubs`), and `showView(id)` re-reads from offset 0 with `transcript_read`'s `agent`. Running means not `finished` while the card's session is up; `finished` never comes if the session was killed, so that reads Stopped. `transcript::task_notice` turns a `<task-notification>` user line into a "task" entry (summary, task id in `tool_id`, status in `input`). Learnt on Claude Code 2.1.318: if the folder or the meta fields change, fix `transcript::subagents` and its test.
@@ -2191,6 +2250,8 @@ Card sessions' browser checks (card #77, 5 Nov 2026): each session's `mcp.json` 
 `chrome-devtools` server with the same command plus `--headless --isolated` (`sessions.rs` `headless_devtools`), so
 the Chrome it drives has no window. A `--mcp-config` server beats a configured one of the same name (checked: the
 page reports `HeadlessChrome`). It applies to sessions started after the update; a running session keeps its Chrome.
+Since card #172 this app's own cards get no chrome-devtools at all (it is denied to them); other repos' cards
+keep the headless override.
 
 ## Time in each column (6 Nov 2026, card #111)
 
@@ -2297,3 +2358,35 @@ page reports `HeadlessChrome`). It applies to sessions started after the update;
 - **How it is kept.** Each column has a weight, the smallest being 1, in `localStorage` `wb.colWeights` (`{"<column>": weight}`, the Archive and the Done pile included). `ui\colwidths.js` sets it as `--w`; `.col` is `flex: var(--w) 0 calc(var(--w) * 160px)` with `min-width: 160px` (`COL_MIN`, in both files). A column is weight x 160px when the board overflows, and weight x board / sum of weights when there is room, so the shares hold when the window changes. The weights are shares, not pixels: widths set in a wide window scale down in a narrow one.
 - **The minimum is 160px** (it was 240px, so at a 1440px window the board scrolled and nothing could scale). Eight columns need 1350px.
 - **Tests.** `tools\ui-tests\colwidths.test.mjs` (drag rule, weights read and saved, `--w` on every column, dead zone, redraw mid-drag, double press); the fake DOM gained `style.setProperty`, pointer-event fields, a settable width, window listeners and a working `localStorage`. `node tools\cdp.mjs viewport <w> <h> <js>...` holds one connection with an emulated page size (the real window's minimum is 720px).
+
+## Agents drawer beside the Router panel (9 Nov 2026, card #167)
+
+UI only. With both open, the Agents drawer floats to the left of the Router panel (same top and bottom, 16 px gap) instead of lying over it, and the board and a card panel keep clear of both. The drawer has its own width, `--apane-w` (380 px); `--rpane-w` is the Router panel's. `agents-open` and `router-open` on `<body>` say which is open (`rpane-open` stays while either is), and `--pane-used` is their total, which the board's right margin and a card panel's box use. Closing one no longer removes the other's room.
+
+## Card-merger accepts a switched-off reviewer (9 Nov 2026, card #176)
+
+The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate job's step a) counts a test or review as met when that subagent is off for the card (`subagents.tester` / `subagents.reviewer` false in `kanban_get_card`), as the app's gates do. Before, a stack child with the reviewer off (the board's default since card #162) could never be merged. The lead's merge brief (`stackrun.rs`) says "(or has them switched off)".
+
+
+## Proof in Human test (9 Nov 2026, card #125, branch `dsh-125`)
+
+- **Store:** `proof` (`PROOF_KEY`, `clean_proof` in `crates/store/src/cards.rs`) shares
+  `clean_path_list` with `changesOutputs`; allowed in `tools.rs` UPDATABLE. Tests:
+  `crates/store/tests/proof_field.rs`.
+- **App:** `src-tauri/src/proof.rs`. `find_in_text` (prose lines only: fenced and indented code
+  blocks, code spans, and Markdown link and image targets are skipped; a bare sibling name takes
+  the nearest full path's folder on its line and must exist), `proof_items` (the `proof` field,
+  then the hand-over's; states ok, missing, refused, dup), `check_read` (resolved paths; home or
+  temp; no dot folder bar `.claude\worktrees`; `platform::in_settings_folder`), `decode_doc` (BOM,
+  whole-character cut, NUL check after decoding, cut at whitespace, then `search::mask`), and the
+  commands `proof_list`, `proof_read`, `proof_open` (each reads the card under the lock, then the
+  disk). A dup is an image whose path or bytes match a strip shot (latest evidence run, the
+  reproducer's before and after).
+- **UI:** `ui/proof.js` (+ `proof.css`), loaded after review.js. review.js calls
+  `proofStripFigs`, `proofSectionHtml`, `proofSteps` (via `htStepsHtml`) and `proofFill` from
+  `htBox`. Kept per card while the panel shows it: the items (asked again when the card's version
+  changes), picture data URLs and drawn reports. Proof pictures never go through `image_read`
+  (no `data-local`). `docHtml` sanitises with an allow-list and strips non-http hrefs. panel.js:
+  `shotName`, so tooltips, failures and the viewer's caption show file names.
+- **Tests:** proof.rs's own (11), `tools/ui-tests/proof.test.mjs` (chips, code, links, the kept
+  state). `docHtml` needs a real DOM, so it is checked in the test app over CDP.

@@ -12,9 +12,12 @@
 // askReady, b64bytes and openPanel.
 (()=>{
 const RID="router";
-const W_KEY="router.width",W_DEF=380,W_MIN=300;
+const W_KEY="router.width",W_OLD=380,W_MIN=300;
+// The default width: 720 px, or 55% of the window if that is less (card #128: log and chat side by side).
+const defW=()=>Math.round(Math.min(720,innerWidth*0.55));
 const STATE_TEXT={off:"Off",starting:"Starting",idle:"Ready",working:"Working",asks:"Asks you",down:"Down"};
 const store=(k,v)=>{try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}};
+const unstore=k=>{try{localStorage.removeItem(k)}catch(e){}};
 const ev=()=>window.__TAURI__.event;
 
 let st={on:false,live:false,state:"off",model:"",effort:"",mayStart:false,pending:0,startedAt:null};
@@ -75,7 +78,8 @@ if(typeof boardHooks==="object"){
 
 // ---------- the panel ----------
 function width(){
-  const w=parseFloat(store(W_KEY)||"")||W_DEF;
+  // A saved 380 is the old default (the old double-click wrote it): it counts as unset.
+  let w=parseFloat(store(W_KEY)||"");if(!w||w===W_OLD)w=defW();
   return Math.round(Math.max(W_MIN,Math.min(w,Math.max(W_MIN,innerWidth-360))));
 }
 function applyWidth(w){
@@ -86,28 +90,28 @@ function applyWidth(w){
 function placeTop(){
   if(!pane)return;const h=document.querySelector("header");
   const top=h?Math.round(h.getBoundingClientRect().bottom+8):16;
-  pane.el.style.top=top+"px";
+  pane.el.style.top=top+"px";document.documentElement.style.setProperty("--rpane-top",top+"px");
 }
 function openPane(){
   if(pane){drawButton();return}
-  const el=document.createElement("aside");el.className="rpane";el.setAttribute("aria-label","Router");
+  const el=document.createElement("aside");el.className="rpane router";el.setAttribute("aria-label","Router");
   el.innerHTML=`<div class="rpane-rz" title="Drag to change the Router panel's width. Double-click to reset."></div>
-  <div class="rpane-head"><span class="rdot" id="r-dot"></span><b class="rpane-ttl">Router</b><span class="rpane-meta" id="r-meta"></span><span class="rpane-asks" id="r-asks" hidden>Router asks</span>
+  <div class="rpane-grid" id="r-grid"><div class="rpane-head"><span class="rdot" id="r-dot"></span><b class="rpane-ttl">Router</b><span class="rpane-meta" id="r-meta"></span><span class="rpane-asks" id="r-asks" hidden>Router asks</span>
     <span class="rpane-acts"><button class="ibtn" id="r-start" type="button" hidden>Start</button><button class="ibtn" id="r-stop" type="button" hidden>Stop</button><button class="ibtn x" id="r-close" type="button" aria-label="Close the Router panel">✕</button></span></div>
-  <div class="rpane-top" id="r-top"><div id="r-digest"></div>
+  <div class="rpane-left" id="r-left"><div id="r-digest"></div>
     <div class="rpane-feedwrap"><div class="rpane-feedhead"><h3>Live log</h3><button class="ibtn rpane-col" id="r-fold" type="button" aria-expanded="true" title="Collapse the live log">▾</button></div>
     <div class="rpane-feed" id="r-feed"><div class="quiet">Reading the log…</div></div></div></div>
-  <div class="rpane-tabs" role="tablist" aria-label="Router views"><button class="sub on" type="button" role="tab" data-tab="chat" aria-selected="true"><b>Chat</b></button><button class="sub" type="button" role="tab" data-tab="term" aria-selected="false"><b>Terminal</b></button></div>
+  <div class="rpane-right"><div class="rpane-tabs" role="tablist" aria-label="Router views"><button class="sub on" type="button" role="tab" data-tab="chat" aria-selected="true"><b>Chat</b></button><button class="sub" type="button" role="tab" data-tab="term" aria-selected="false"><b>Terminal</b></button></div>
   <div class="rpane-body" id="r-body">
     <div class="rpane-chat chat" id="r-chat"><div class="msgs" id="r-msgs"><div class="quiet">Reading the Router's conversation…</div></div><div class="busy" id="r-busy" hidden></div><div class="rtrust" id="r-trust" hidden></div>
       <div class="compose" id="r-compose"><div class="atts" id="r-atts"></div><textarea id="r-text" rows="2" aria-label="Message to the Router"></textarea><button class="btn" id="r-send" type="button">Send</button></div>
       <div class="rpane-foot" id="r-foot"></div></div>
     <div class="rpane-term" id="r-termhost" hidden></div>
-  </div>`;
+  </div></div></div>`;
   document.body.appendChild(el);
   pane={el,tab:"chat",entries:[],tools:{},offset:0,open:new Set(),more:new Set(),ask:{},reading:false,timer:null,term:null,fit:null,
     feed:null,feedOpen:store("router.feedOpen")!=="0",digest:null,unlisten:[],question:null,att:[]};
-  document.body.classList.add("rpane-open");
+  document.body.classList.add("rpane-open","router-open");
   applyWidth(width());
   el.querySelector("#r-close").onclick=closePane;
   el.querySelector("#r-stop").onclick=stopRouter;
@@ -135,7 +139,8 @@ function closePane(){
   if(pane.term){termUnlink(pane.link);try{pane.term.dispose()}catch(e){}}
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
-  document.body.classList.remove("rpane-open");
+  document.body.classList.remove("router-open");if(!document.body.classList.contains("agents-open"))document.body.classList.remove("rpane-open");
+  document.documentElement.style.removeProperty("--rpane-w"); // the board margins fall back to 380 px
   fitCardPanel();
   drawButton();
 }
@@ -175,7 +180,7 @@ function addResize(h){
     const up=()=>{document.body.classList.remove("resizing");document.body.style.cursor="";removeEventListener("mousemove",move);removeEventListener("mouseup",up);if(pane&&pane.fit){try{pane.fit.fit()}catch(e){}}};
     addEventListener("mousemove",move);addEventListener("mouseup",up);
   });
-  h.addEventListener("dblclick",()=>{store(W_KEY,String(W_DEF));applyWidth(width())});
+  h.addEventListener("dblclick",()=>{unstore(W_KEY);applyWidth(width())});
 }
 
 // A card panel (panel.js) opens to the left of the Router panel, never over it. Its own box
@@ -187,7 +192,7 @@ function fitCardPanel(){
   fitting=true;
   try{
     if(!pane||!p.style.left||p.style.left==="auto")return;
-    const limit=innerWidth-width()-16-14,r=p.getBoundingClientRect();
+    const limit=innerWidth-width()-(document.body.classList.contains("agents-open")?parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--apane-w"))+16:0)-16-14,r=p.getBoundingClientRect();
     if(r.right<=limit)return;
     const w=Math.max(Math.min(480,limit-14),Math.min(r.width,limit-14)),l=Math.max(14,Math.min(r.left,limit-w));
     p.style.left=l+"px";p.style.width=w+"px";
@@ -270,7 +275,7 @@ async function refreshFeed(){
 }
 function drawFold(){
   if(!pane)return;const f=pane.el.querySelector("#r-feed"),b=pane.el.querySelector("#r-fold");
-  f.hidden=!pane.feedOpen;b.setAttribute("aria-expanded",String(pane.feedOpen));b.textContent=pane.feedOpen?"▾":"▸";b.title=pane.feedOpen?"Collapse the live log":"Show the live log";
+  f.hidden=!pane.feedOpen;const g=pane.el.querySelector("#r-grid");if(g)g.classList.toggle("folded",!pane.feedOpen);b.setAttribute("aria-expanded",String(pane.feedOpen));b.textContent=pane.feedOpen?"▾":"▸";b.title=pane.feedOpen?"Collapse the live log":"Show the live log";
 }
 
 // ---------- tabs ----------

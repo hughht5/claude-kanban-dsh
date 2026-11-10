@@ -578,6 +578,17 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     sys::write_private(path, bytes)
 }
 
+/// A resolved path as a string: on macOS it is already an ordinary one (card #125).
+pub fn plain_path(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
+/// Whether `p` is in the system's own settings folders under `home`, which a card's proof never
+/// reads (card #125): ~/Library (keychains, application data, cookies). Both paths are resolved.
+pub fn in_settings_folder(home: &Path, p: &Path) -> bool {
+    p.starts_with(home.join("Library"))
+}
+
 // --- The shared test-app lock files (testapp.rs) --------------------------------------------
 
 /// Nothing to set: a Unix file is opened whoever else has it open.

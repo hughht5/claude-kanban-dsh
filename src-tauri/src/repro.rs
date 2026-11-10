@@ -44,6 +44,7 @@ const PROMPT: &str = "You are card-reproducer. You prove a reported bug on one c
 2. Find which run this is. If repro has no before, this is the first run. If repro has a before, this is the second run, after the fix.
 3. Use the real thing: the app, the page or the command where the bug shows. Reading the code is not enough.
    - For the Claude Kanban DSH app, use the test app (Claude Kanban DSH Test). Drive it with node tools/cdp.mjs and CDP_PORT=9334, as AGENTS.md (Driving the UI) says. If port 9334 does not answer, restart only the test app with the DevTools port. Always use --background. Never use port 9333. Never quit, restart or install the live app.
+   - For the Claude Kanban DSH app (a card of hughht5/claude-kanban-dsh or hughht5/kanban-app, Hugh's rule, card #172): no computer use (no desktop screenshots, no clicks on the desktop) and no browser (not Claude in Chrome, not the built-in browser, not chrome-devtools). Use node tools/cdp.mjs on the test app's DevTools port, its shots, the tests, kb and the API. The session denies those tools anyway.
    - Use dry-run cards on the test board. Archive each card that you make.
    - For another repo, use the card's dev stack in a headless browser.
 4. First run:

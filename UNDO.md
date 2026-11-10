@@ -916,6 +916,40 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 | Review fixes: turning the Skip Human test default on moves on the cards that follow it and wait in Human test where a session put them (`dispatch::default_skip_waiting`) | The same revert. A card already moved on: drag it back to Human test |
 | Review fixes: a caller naming a session the app doesn't know can't set the card's flow, and writes as "a session the app doesn't know" (`tools::is_hugh`, `UNKNOWN_BY`) | The same revert |
 
+
+## Router panel: log and chat side by side (card #128, branch `dsh-128`)
+
+UI only; nothing on the board or in the data folder changes. The saved width (`router.width` in the WebView's localStorage) is only read.
+
+Undo (PowerShell 5.1): `git -C ~\claude-kanban-dsh revert --no-edit <the card #128 commit>`. A width saved while this was live still works in the old layout.
+
+## Agents drawer beside the Router panel (9 Nov 2026, card #167)
+
+UI only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #167 commit>`, then stage the live update. Files: `ui\router.css`, `ui\rpane.css`, `ui\router.js`, `ui\agents-feed.js`.
+
+## Card #172: no computer use and no browser for this app's cards (9 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `src-tauri\src\nobrowser.rs`; `Plan.no_browser` set in `session_cmds.rs`; `settings_json` adds `permissions.deny` and `mcp_json` drops the headless chrome-devtools for this repo's cards (`sessions.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #172 commit>`, then stage the update. Sessions already running keep their settings until they restart |
+| The card-tester and card-reproducer prompts (`tester.rs`, `repro.rs`): no computer use and no browser for this repo's cards; the tester's evidence step names `hughht5/claude-kanban-dsh` too | The same revert |
+| `prompts\kanban-app.md` In progress step 6, `AGENTS.md` Hard rules, README, HANDOVER, PLAN, `src-tauri\tests\prompt_rules.rs` | The same revert |
+| The private folder's `prompts\kanban-app.md` In progress step 6 (branch `card-172` in its own repo) | Revert its card #172 commit in the private repo, then push that repo's `main` |
+| To keep the rule but let one more repo in or out | Edit `REPOS` in `nobrowser.rs` |
+
+## Card #171: timing tests allow for a busy machine (9 Nov 2026)
+
+Tests only: the app's behaviour is unchanged (the live budget for a worktree's git calls stays 15 s).
+
+| Change | Undo |
+|---|---|
+| `hang_tests::the_focus_flag_under_the_board_lock_never_hangs` runs until the main thread has run 101 commands (up to 60 s) instead of a fixed 2 s; `load` takes `enough` | `git -C ~\claude-kanban-dsh revert --no-edit <the card #171 commit>` |
+| `worktree.rs`: a test build's `MAKE_LIMIT` is 300 s (`#[cfg(test)]`), the error text names the budget the call had (`Git.limit`), and the test `git_past_its_limit_is_not_run` | The same revert |
+
+## Card #176: the card-merger accepts a switched-off reviewer (9 Nov 2026)
+
+Prompt text only, no data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #176 commit>`, then stage the live update. Files: `src-tauri\src\merger.rs` (prompt and test), `src-tauri\src\stackrun.rs` (merge brief), `HANDOVER.md`. A lead session already running keeps the old merger prompt until it restarts.
+
 ## Card #126: kb.exe replaced while in use (6 Nov 2026, branch `dsh-126`)
 
 | Change | Undo |
@@ -954,3 +988,68 @@ PowerShell 5.1 commands. Nothing here deletes a row: every change below is an or
 |---|---|
 | `scripts\test-kb-locked.ps1 -Restart` and `-Fail`: Restart now in a test app, over its CDP port. `-Fail` holds kb.exe from the script, so the installer exits 3 | `git revert` the card's commits. The script changes nothing outside a test app. After a `-Fail` run that stopped part way, run `install.ps1 -Channel <its channel>` to put the built kb.exe back |
 | HANDOVER.md's test line, this section | Same revert |
+
+## Card #143: the folder-trust question as Yes/No buttons in a card's chat (9 Nov 2026)
+
+| Change | Undo |
+|---|---|
+| `session_trust` and `session_trust_answer` (`src-tauri\src\session_cmds.rs`, registered in `main.rs`), `routersession::trust_ask` (the Router's answer uses it too), and their tests | `git -C ~\claude-kanban-dsh revert --no-edit <the card #143 commits>` |
+| The trust box in the card panel's chat (`ui\panel.js` `checkTrust`, `#p-trust`; `ui\panel.css`) | The same revert |
+| The docs (HANDOVER.md, docs\GUIDE.md, this section) | The same revert |
+
+Nothing in the board's data: an answer only adds a log line on the card.
+
+
+## Card #149: a card first in line with no holder gets its turn (9 Nov 2026, branch `card-149`)
+
+| Change | Undo |
+|---|---|
+| `crates\store\src\testapp.rs`: `TestAppQueue::take_now` gives the turn on a take (a first take or a take again from the line) when nobody holds it, the asker isn't blocked and nobody ahead could use it now (`next`'s rule: paused cards ahead are passed over); `take` calls it | `git -C ~\claude-kanban-dsh revert --no-edit <the card's commit>` |
+| `src-tauri\src\testapp.rs`: the old DSH lock folder made by an older writer (no pid line) counts as stale, and blocks nobody, once it is 60 min old (`Dsh::stale`, `Dsh::blocks`, a new `alive` field, also in the status's `mkdir`); a folder whose pid still runs blocks whatever its age; the tool's take passes the live sessions | Same revert |
+| `scripts\install.ps1`: `Move-DeadDshLock` also renames aside (never deletes) a no-pid-line DSH folder 60 min old or more | Same revert. A folder it renamed is `%USERPROFILE%\.dsh-test-app.lock.released-<time>`: `Rename-Item` it back to `.dsh-test-app.lock` if it is still wanted |
+
+Nothing on the board or in the data folders changed; the queue's JSON is the same shape.
+
+## Card #168: a stopped card's session starts when its test-app turn comes (9 Nov 2026, branch `card-168`)
+
+Also carries card #149's fix (the rows above), cherry-picked onto this branch, and `Get-DshOwnerLines` in `scripts\install.ps1` now drops blank lines, as the app's `read_dsh` does.
+
+| Change | Undo |
+|---|---|
+| `crates\store\src\testapp.rs`: `WAKE_GRACE_MINUTES`, `woke_at` on `Turn` and `Waiting` (left out of the JSON when empty), `Waiting::waking`, `TestAppQueue::to_wake`, `wake_failed`, `wake_ran_out` and `ran`, `Ended::NoSession`; `next` and `take_now` give nobody behind a waking card the turn | `git -C ~\claude-kanban-dsh revert --no-edit <the card #168 commit>`, then stage the live update |
+| `src-tauri\src\testapp.rs`: `step` returns `wake`, `run` returns the wakes, the pump's `wake` starts the card's session (`begin_session`, why "testapp"; `woke_new_message` for a new one; `free_unstarted` frees the test app of a holder whose session couldn't start); the status's `waking` on the holder and line entries | Same revert |
+| `ui\testapp.js`: "starting its session" in the popover and "starting" on the tile chip; `tools\ui-tests\testapp.test.mjs` | Same revert |
+| AGENTS.md, HANDOVER.md, PLAN.md, this file | Same revert. Text only |
+
+Data: a queue saved while a card was being woken has `wokeAt` on its entry; an older build ignores it. Nothing else on the board changes.
+
+## Skip Planning when a card is made (9 Nov 2026, card #169, branch `card-169`)
+
+PowerShell 5.1 commands.
+
+| Change | Undo |
+|---|---|
+| `kanban_create_card`'s `skipPlanning` (`src-tauri\src\tools.rs`), `kb create --skip-planning` (`crates\kb\src\main.rs`) and the docs | `git -C ~\claude-kanban-dsh revert --no-edit <the card #169 commit>`, then stage the live update as usual. A card made this way only has #162's `skipPlanning` field |
+
+## Card #170: Router may message a card Hugh has open
+Undo: in `src-tauri/src/routertools.rs`, put back the `routersession::hands_off(app, &store, &c)` refusal
+at the top of the `kanban_session_send` arm (see `git show <card #170 commit>`), or `git revert` the commit.
+
+## Card #174: the Router may move a card out of Backlog (9 Nov 2026)
+
+PowerShell 5.1 commands. No data changes: no migration, no new setting.
+
+| Change | Undo |
+|---|---|
+| `routersession::move_refused` lets the Router move Backlog to In progress, as well as to Planning, while "Router may start cards" is on; `routertools::start_column_refused` tells a start of a Backlog card to move it first | `git -C ~\claude-kanban-dsh revert --no-edit <the card #174 commit>`. A card the Router already moved stays where it is: drag it back to Backlog if you want |
+| The bundled `prompts\router.md` job 2, and the docs (docs\GUIDE.md, HANDOVER.md, PLAN.md decision 33, this section) | The same revert |
+| The owner's private `prompts\router.md` job 2 | Revert the card #174 commit in the private repo |
+
+## Card #125: proof in Human test (9 Nov 2026, branch `dsh-125`)
+
+| Change | Undo |
+|---|---|
+| The `proof` card field (`crates\store\src\cards.rs`, `lib.rs`, `tools.rs`) | `git -C ~\claude-kanban-dsh revert --no-edit <the card #125 commits>`. Cards keep any `proof` field; an older build ignores it |
+| `src-tauri\src\proof.rs`, its commands in `main.rs`, `in_settings_folder` in `src-tauri\src\platform\windows.rs` and `macos.rs` | Same revert |
+| `ui\proof.js`, `ui\proof.css`, their tags in `ui\index.html`, the hooks in `ui\review.js`, file-name captions in `ui\panel.js` | Same revert. The steps then show paths again |
+| The `proof` lines in `prompts\kanban-app.md` and `prompts\in-progress.md` (and the private copies) | Same revert here; in the private repo, `git revert --no-edit` its card #125 commit |

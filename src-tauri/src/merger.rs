@@ -40,7 +40,7 @@ There are two jobs. The brief names the job. If it names no job, the job is \"st
 - Job \"integrate\" (card #119): the Router briefs you (MODE: integrate). Bring one card's finished branch onto the integration branch. Do the INTEGRATE JOB below only.
 If the brief asks for a ship (a card in Ship it, or a branch to bring up to date with origin/main before a push), stop. Change nothing. Report VERDICT: FAIL with the line \"- ships go through the repo's merge lane (kanban_merge), not the card-merger\".
 
-1. Read the card. Use kanban_get_card with the card number from the brief. The card must be a child of a stack (kanban_stack_list), in the column \"Human test\", with test.state \"passed\" and review.state \"passed\". If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
+1. Read the card. Use kanban_get_card with the card number from the brief. The card must be a child of a stack (kanban_stack_list), in the column \"Human test\", with its test and its review met (card #176). A test is met when test.state is \"passed\", or when the card's subagents.tester is false: Hugh switched the card-tester off for it. A review is met when review.state is \"passed\", or when the card's subagents.reviewer is false. A switched-off subagent counts as met, as the app's own checks count it. If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
 2. Go to the worktree that the brief names. If git status --porcelain shows work that is not committed, stop. Change nothing. Report FAIL and name the files.
 3. Resolve each conflict. Keep the work of both sides. Use the repo's own merge rules: the rules in your brief, else the rules in the repo's CLAUDE.md or AGENTS.md (for example a version that is the base's version plus one, or a changelog where you keep both sides, newest first). Apply a version rule also when there is no conflict.
    - If you cannot resolve a conflict safely, stop and report FAIL. Name the file.
@@ -62,7 +62,7 @@ STACK JOB. The brief names the lead's worktree, the stack's branch and the child
    f. Run git fetch origin again, and record origin/<the stack's branch> again. Report as below: CARD is the child's number, HEAD is the stack's branch, ORIGIN is origin/<the stack's branch> before (from a) and after.
 
 INTEGRATE JOB. The brief names the card, the card's branch, the integration branch and the integration worktree.
-   a. Read the card (kanban_get_card). Its test.state and review.state must be \"passed\", and it must not be in Ship it or Deploy complete. If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
+   a. Read the card (kanban_get_card). Its test and its review must be met, as step 1 says (a subagent switched off for the card counts as met), and it must not be in Ship it or Deploy complete. If not, stop. Change nothing. Report VERDICT: FAIL with the reason.
    b. Go to the integration worktree. Do step 2. Make the lock: mkdir \"$(git rev-parse --git-common-dir)/kanban-integrate.lock\". If the folder is there already, another merge runs: stop and report FAIL. Remove the lock (rmdir) before you report, PASS or FAIL.
    c. git checkout <the integration branch>. Record its HEAD SHA, and origin/<the integration branch> (\"none\" if it does not exist).
    d. git merge --no-ff <the card's branch> -m \"Integrate <the card's branch> (card #<n>)\". In this job merge commits are allowed. Resolve conflicts as in step 3. If you cannot resolve a conflict safely, run git merge --abort and report FAIL. Name the file.
@@ -454,6 +454,20 @@ mod tests {
         for needed in ["CARD:", "VERDICT: PASS", "HEAD:", "ORIGIN:", "git rebase --abort", "(card #<n>)", "plus one", "kanban_stack_list", "You never push", "Commit every change", "do not reset", "STACK JOB", "Job \"stack\"", "git checkout --detach", "git merge --ff-only", "Do not check out, rebase or reset the child's own branch"] {
             assert!(PROMPT.contains(needed), "the prompt doesn't say {needed}");
         }
+    }
+
+    /// Card #176: the merger's rule matches the app's own checks. A child whose reviewer (or
+    /// tester) is switched off for the card counts as met, in both jobs; the old rule that
+    /// asked for review.state "passed" alone is gone.
+    #[test]
+    fn a_switched_off_reviewer_or_tester_counts_as_met() {
+        for must in ["subagents.reviewer is false", "subagents.tester is false", "counts as met", "review.state is \"passed\"", "test.state is \"passed\""] {
+            assert!(PROMPT.contains(must), "the prompt doesn't say {must}");
+        }
+        assert!(!PROMPT.contains("review.state \"passed\". If not"), "the old rule is still there");
+        assert!(!PROMPT.contains("test.state and review.state must be \"passed\""), "the integrate job's old rule is still there");
+        let integrate = &PROMPT[PROMPT.find("INTEGRATE JOB.").unwrap()..];
+        assert!(integrate.contains("switched off for the card counts as met"));
     }
 
     /// Card #162: the card-merger no longer does a ship. Its description and prompt say so and

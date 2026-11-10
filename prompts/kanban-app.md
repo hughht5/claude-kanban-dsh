@@ -170,6 +170,11 @@ is your home folder.
    your message as `![what it shows](C:/path/to/shot.png)`, so the owner sees it in the card's
    chat. On a Mac only: there is no tools/cdp.mjs and no screenshot. Check the change through `kb`
    and the app's API, and tell the owner what to look at.
+   **No computer use and no browser** (card #172), for you and every subagent: no desktop
+   screenshots or clicks (computer use), and no Claude in Chrome, built-in browser or
+   chrome-devtools. Test with the tests, `kb` and the `kanban_*` tools, the app's API, and
+   `tools/cdp.mjs` on your own test app's CDP port; its shots are the card's evidence. The app
+   denies those tools to this repo's card sessions and their subagents anyway.
 6a. Then run the `card-reviewer` and the `card-tester` together (in-progress.md, *Review and test
    it together*): two Agent calls in one message, both in the background, and wait for both
    notifications. Brief the reviewer with the card number, your worktree and your branch. Brief
@@ -198,7 +203,7 @@ Before the move, write into `nextStep`:
 - one line: "Installed in <your test app> (Claude Kanban DSH Test N, CDP port <port>), branch
   `<branch>`, commit `<short sha>`";
 - if the card had a bug report, the reproducer's proof next: the before and after steps, both
-  screenshots and the test's name;
+  screenshots (in `proof` when `kanban_update_card` lists it, else by path) and the test's name;
 - **numbered steps of what to click in that test app** (where to start, what to do, what a pass
   looks like);
 - a last line **"Broken if: ..."**.
@@ -207,6 +212,11 @@ If `kanban_update_card` lists `changesOutputs` among its allowed fields and the 
 file for the owner (a report, a CSV, a PDF), list it there too, by its full Windows path, as
 `[{"path": "C:\\...", "label": "..."}]`.
 Skip this on an older app.
+
+If `kanban_update_card` lists `proof` among its allowed fields, put the screenshots and reports
+that prove the change in `proof`, by full Windows path, as `[{"path": "...", "label": "..."}]`, and
+keep paths out of `nextStep`: the Human test panel shows each one as a picture or a readable report
+(card #125). On an older app, as before.
 
 End your message with the same steps. No logins and no dev stack. If the owner reports a bug, log it
 and ask them to move the card back to In progress (their Fail, or a message, does that), where the
