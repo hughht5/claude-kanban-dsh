@@ -177,6 +177,12 @@ app, and they ship one at a time.
   itself (Take it to), or turned on small-change auto-ship for that repo** (`autoTo`; the repo list
   `sessions.small_goes_on_repos`, card #104). Card sessions never merge or push to `main` unless
   their column prompt is Ship it.
+- **When Hugh asks an agent to ship a card for him** (card #184), it asks the app, never moves
+  it: `kanban_move_card` with column "Ship it", `for_hugh: true` and his words as `reason`
+  (`kb move <n> "Ship it" --for-hugh "<his words>"`, or `kb ship <n> --asked-by-hugh`). The app
+  shows him "Ship #n?" in its window and a notification, and only his click on Ship moves the
+  card. One card per request, used once, for 10 minutes; never a standing grant. Never ask
+  unless Hugh asked for that card's ship. The Router never asks.
 - Sessions start only by Hugh's click or a column's auto-spawn; a card whose conversation is in the
   desktop app is never auto-started. One exception (PLAN.md, R1, card #113): Hugh's move of a
   stack's lead into Planning or In progress approves the app starting and resuming that stack's

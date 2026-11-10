@@ -64,8 +64,9 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
         { "name": "kanban_add_log", "description": "Add a line to a card's log.",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
-        { "name": "kanban_move_card", "description": "Move a card to another column, with a one-line reason. A move of your own card waits until your turn ends. Never Ship it. A stack's lead goes to Human test only when its children are ready; the app moves it then. A card that waits on cards not ready yet (blockedBy) goes into Planning or later only once they are.",
-          "inputSchema": { "type": "object", "properties": { "card": card, "column": { "type": "string", "enum": kanban_store::COLUMNS }, "reason": { "type": "string" } }, "required": ["column"] } },
+        { "name": "kanban_move_card", "description": "Move a card to another column, with a one-line reason. A move of your own card waits until your turn ends. Never Ship it on your own: only when Hugh asked you to ship a card for him, call it with column \"Ship it\", `for_hugh: true` and his words as `reason`; that only asks him (\"Ship #n?\" in the app, for 10 minutes) and his click moves it. A stack's lead goes to Human test only when its children are ready; the app moves it then. A card that waits on cards not ready yet (blockedBy) goes into Planning or later only once they are.",
+          "inputSchema": { "type": "object", "properties": { "card": card, "column": { "type": "string", "enum": kanban_store::COLUMNS }, "reason": { "type": "string" },
+            "for_hugh": { "type": "boolean", "description": "Only with column \"Ship it\", and only when Hugh asked you to ship this card for him: asks him to confirm in the app. Put his words in `reason`." } }, "required": ["column"] } },
         { "name": "kanban_create_card", "description": "Add a card. It gets the next number. Pass `stack` (a lead card's number) to create it straight into that stack.",
           "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "column": { "type": "string" }, "repo": { "type": "string" }, "summary": { "type": "string" }, "issue": { "type": "object" }, "labels": { "type": "array", "items": { "type": "string" }, "description": "Short labels, like [\"BUG\", \"RCS\"]." }, "dryRun": { "type": "boolean", "description": "A test card: its sessions change nothing real." }, "stack": { "type": "integer", "description": "The lead card's number: the new card joins its stack, at the end." }, "template": { "type": "string", "description": "A card template's id (e.g. kanban-app, bug): its starting prompt opens the card's first session." }, "to": { "type": "string", "enum": ["Planning", "Human test"], "description": "Only for Hugh's own sessions, when he asked: start the card now (it goes into Planning and its session starts). \"Human test\" also sets it to go on by itself to Human test. A card's own session can't use it." }, "skipPlanning": { "type": "boolean", "description": "Only for Hugh's own sessions, when he asked: the card's flow skips Planning, so it starts now straight in In progress (with `to` \"Human test\", it also goes on by itself to Human test). Not with `stack`." } }, "required": ["title"] } },
         { "name": "kanban_stack_list", "description": "A stack: its lead card (number, title, column, branch, pr, devStack, logins) and its children in order (number, title, column, passed, nextStep, blockedReason, choices), plus the board's rule for when the stack goes to Human test (\"all\" or \"first\") and whether it is ready.",
@@ -126,11 +127,9 @@ pub const CLI_ONLY: &[&str] = &["kanban_request_ship"];
 /// session outside the app.
 pub const CARD_SESSION_ONLY: &[&str] = &["kanban_merge"];
 
-/// `kb ship <n> --asked-by-hugh`: refused without the flag, and from a card's own session.
-pub fn ship_request_allowed(own: Option<&str>, args: &Value) -> Result<(), String> {
-    if own.is_some() {
-        return Err("a card's session can't ask for a ship; only Hugh moves a card into Ship it, in the app".into());
-    }
+/// `kb ship <n> --asked-by-hugh`: refused without the flag. Any session may ask (card #184):
+/// the request only asks Hugh, and his click in the app is what ships.
+pub fn ship_request_allowed(args: &Value) -> Result<(), String> {
     if args.get("asked_by_hugh").and_then(Value::as_bool) != Some(true) {
         return Err("refused: a ship needs Hugh. Run `kb ship <n> --asked-by-hugh` only when Hugh asked for it".into());
     }
@@ -138,6 +137,43 @@ pub fn ship_request_allowed(own: Option<&str>, args: &Value) -> Result<(), Strin
         return Err("say which card: pass its number as `card`".into());
     }
     Ok(())
+}
+
+/// Card #184: asks Hugh to ship card `c` for the agent `by`. Never moves it: the app shows him
+/// "Ship #n?" (a banner in its window and a notification, neither taking his focus), and only
+/// his click on Ship moves it (`approve_ship_ask`). One request per card, used once, for 10
+/// minutes.
+fn ask_ship(app: &AppHandle, store: &mut Store, c: &Card, by: &str, reason: &str) -> Result<Value, String> {
+    if c.archived {
+        return Err(format!("card #{} is archived", c.number));
+    }
+    if c.column == "Ship it" {
+        return Ok(json!(format!("Card #{} is already in Ship it.", c.number)));
+    }
+    let s = |k: &str| c.fields.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let pr = match c.fields.get("pr") {
+        Some(Value::Object(o)) => o.get("url").and_then(Value::as_str).map(str::to_string)
+            .or_else(|| o.get("number").and_then(Value::as_i64).map(|n| format!("#{n}"))).unwrap_or_default(),
+        Some(Value::String(t)) => t.clone(),
+        _ => String::new(),
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let ask = crate::shipask::Ask {
+        id: crate::shipask::new_id(now), card: c.id.clone(), number: c.number, title: c.title().to_string(), by: by.to_string(),
+        reason: reason.trim().to_string(), branch: s("branch"), pr, at: now,
+    };
+    let said = if ask.reason.is_empty() { String::new() } else { format!(" (\"{}\")", ask.reason) };
+    store
+        .add_log(&c.id, &format!("{by} asked Hugh to ship this card for him{said}: waiting for his click on Ship in the app (10 minutes)"), by)
+        .map_err(|e| e.to_string())?;
+    let payload = ask.to_json();
+    if let Some(asks) = app.try_state::<crate::shipask::ShipAsks>() {
+        asks.put(ask);
+    } else {
+        return Err("the app can't take ship requests right now".into());
+    }
+    let _ = app.emit("ship-request", payload);
+    Ok(json!(format!("Asked Hugh to confirm \"Ship #{}?\" in the app. Nothing has moved: it ships only when he clicks Ship there, within 10 minutes. Tell him it is waiting for his click.", c.number)))
 }
 
 pub(crate) fn caller_card(app: &AppHandle, store: &Store, caller: Option<&str>) -> Option<String> {
@@ -361,7 +397,14 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             let to = args.get("column").and_then(Value::as_str).ok_or("pass the column")?;
             let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
             if to == "Ship it" {
-                return Err("only Hugh moves a card into Ship it (or the app for him: Take it to, or small-change auto-ship); say in nextStep that it is ready".into());
+                // Card #184: never a move, only a request Hugh confirms in the app.
+                if args.get("for_hugh").and_then(Value::as_bool) == Some(true) && !as_router {
+                    if reason.trim().is_empty() {
+                        return Err("say what Hugh asked: put his words in `reason`".into());
+                    }
+                    return ask_ship(app, &mut store, &c, &by, reason);
+                }
+                return Err(crate::shipask::HOW_TO_ASK.into());
             }
             if c.column == to {
                 return Ok(json!(format!("Card #{} is already in {to}.", c.number)));
@@ -544,20 +587,10 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             out
         }
         "kanban_request_ship" => {
-            ship_request_allowed(own.as_deref(), args)?;
+            ship_request_allowed(args)?;
             let c = target(&store, None, args)?;
-            if c.archived {
-                return Err(format!("card #{} is archived", c.number));
-            }
-            if c.column == "Ship it" {
-                return Ok(json!(format!("Card #{} is already in Ship it.", c.number)));
-            }
-            store
-                .add_log(&c.id, "A session outside the app asked to ship this card: waiting for Hugh to confirm in the app", &by)
-                .map_err(|e| e.to_string())?;
-            // Never moved here: the app shows a banner, and only Hugh's click ships it.
-            let _ = app.emit("ship-request", json!({ "card": c.id, "number": c.number, "title": c.title() }));
-            json!(format!("Asked Hugh to confirm \"Ship #{}?\" in the app. It ships only when he clicks Ship.", c.number))
+            let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
+            ask_ship(app, &mut store, &c, &by, reason)?
         }
         "kanban_notify" => {
             let c = target(&store, own.as_deref(), args)?;
@@ -588,12 +621,11 @@ mod tests {
     }
 
     #[test]
-    fn t4_6_ship_request_needs_the_flag_and_an_outside_session() {
-        assert!(ship_request_allowed(None, &json!({ "card": 34 })).unwrap_err().starts_with("refused"));
-        assert!(ship_request_allowed(None, &json!({ "card": 34, "asked_by_hugh": false })).is_err());
-        assert!(ship_request_allowed(Some("card-id"), &json!({ "card": 34, "asked_by_hugh": true })).is_err());
-        assert!(ship_request_allowed(None, &json!({ "asked_by_hugh": true })).is_err());
-        assert!(ship_request_allowed(None, &json!({ "card": 34, "asked_by_hugh": true })).is_ok());
+    fn t4_6_ship_request_needs_the_flag() {
+        assert!(ship_request_allowed(&json!({ "card": 34 })).unwrap_err().starts_with("refused"));
+        assert!(ship_request_allowed(&json!({ "card": 34, "asked_by_hugh": false })).is_err());
+        assert!(ship_request_allowed(&json!({ "asked_by_hugh": true })).is_err());
+        assert!(ship_request_allowed(&json!({ "card": 34, "asked_by_hugh": true })).is_ok());
     }
 
     #[test]

@@ -165,6 +165,7 @@ Hugh's ask (3 Nov 2026, through the manager): open a card and **see its chat his
 | 4.4 | Closing the window keeps the app in the tray with sessions running; the tray menu has Show and Quit; the tray tooltip says how many sessions need Hugh | manual |
 | 4.5 | A Windows toast appears for: a session needing permission, a turn finished in Planning or In progress, `kanban_notify`, a ship result, and a session crash; none for the card open in a focused window; clicking one opens that card's panel | manual |
 | 4.6 | `kb ship <n> --asked-by-hugh` from a session outside the app shows "Ship #n?" in the app (banner and toast); only Hugh's click ships it; without the flag it is refused | manual, auto (refusal) |
+| 4.6a | Card #184: `kanban_move_card` to Ship it (MCP, `kb move`, any session but the Router) is refused with how to ask; with `for_hugh` and a reason it asks Hugh (banner with who, reason, branch, PR and time left, and a toast) and moves nothing; his Ship moves it once and logs "Hugh approved <who>'s request"; a second click, an expired (10 min) or replaced request, and a request for another card are refused | auto (`shipask` tests, `kb` `move_for_hugh_asks_with_his_words`), manual |
 | 4.7 | A nightly backup of `board.db` (and one at each start, at most once a day) lands in `backups\`, keeping the newest 30 | auto (pruning), manual |
 | 4.8 | `scripts\install.ps1` builds the NSIS installer, quits the running app cleanly, installs per-user without admin, puts `kb.exe` on the user PATH, and starts the app; running it twice is safe | manual |
 

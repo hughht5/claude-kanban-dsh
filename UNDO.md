@@ -1090,3 +1090,7 @@ No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #175 commit>`, t
 ## Card flow switches instead of dropdowns (10 Nov 2026, card #178)
 
 No data: the card's fields are the same (`skipPlanning`, `skipHumanTest`, `subagents`). `git -C ~\claude-kanban-dsh revert --no-edit <the card #178 commit>`, then stage the live update. Files: `ui\subagents.js` (the switch, Reset, the click handler), `ui\subagents.css`, `ui\board.js` (Add card reads `[data-flow]`), `tools\ui-tests\flow.test.mjs`, `README.md`, `HANDOVER.md`.
+
+## An agent asks to ship a card for Hugh (10 Nov 2026, card #184)
+
+No data: requests live only in the app's memory (`src-tauri\src\shipask.rs`), and the log lines stay. `git -C ~\claude-kanban-dsh revert --no-edit <the card #184 commit>`, then stage the live update. Files: `src-tauri\src\shipask.rs` (new), `tools.rs` (`for_hugh` on `kanban_move_card`, `ask_ship`), `main.rs` (`ship_asks`, `approve_ship_ask`, `dismiss_ship_ask`), `notify.rs` (the toast's text), `api.rs` (the instructions), `crates\kb\src\main.rs` (`kb move --for-hugh`), `ui\panel.js` (the banner), `AGENTS.md`, `README.md`, `HANDOVER.md`, `PLAN.md` (decision 35), `ACCEPTANCE.md` (4.6a), `prompts\in-progress.md`. In the private prompts repo, revert its `card-184` commit.

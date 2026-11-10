@@ -37,7 +37,9 @@ usage). There is no other board.
 - `kanban_notify`: a desktop notification to the owner about the card.
 - `kanban_list_cards`: the whole board.
 
-Never move a card into Ship it, never merge, never push to main.
+Never move a card into Ship it, never merge, never push to main. Only if the owner asks you to ship a
+card for them: `kanban_move_card` with column "Ship it", `for_hugh: true` and their words as `reason`.
+That only asks them to confirm in the app; their click on Ship moves it.
 
 ## Before you build
 

@@ -161,10 +161,10 @@ Read your card with kanban_get_card and keep it current with kanban_update_card 
 A move of your own card waits until your turn ends. \
 To show Hugh a screenshot in the card's chat (a test passing, the UI you changed), put it in your message as a \
 Markdown image with its full path in forward slashes, for example ![what it shows](C:/path/to/shot.png). \
-Never move a card into Ship it. Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo.";
+Never move a card into Ship it. Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo. When Hugh asks you to ship a card for him, you may ask the app: kanban_move_card with column \"Ship it\", for_hugh true and his words as reason (kb move <n> \"Ship it\" --for-hugh \"<his words>\"). That only asks him; his click on Ship in the app moves it.";
 
 const EXTERNAL_INSTRUCTIONS: &str = "Hugh's board, the Claude Kanban DSH desktop app. Read and change cards with the kanban_* card tools, \nand run the cards' Claude Code sessions with kanban_session_*: start (with a first message), send, status, read, \nswitch model or effort, stop, and keys for a prompt a session is stuck on; kanban_search searches every card's 
-session history. Starts over Hugh's running-sessions cap wait \nin the queue; never change the cap. Never move a card into Ship it. Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo.";
+session history. Starts over Hugh's running-sessions cap wait \nin the queue; never change the cap. Never move a card into Ship it. Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by itself (Take it to), or turned on small-change auto-ship for that repo. When Hugh asks you to ship a card for him, you may ask the app: kanban_move_card with column \"Ship it\", for_hugh true and his words as reason (kb move <n> \"Ship it\" --for-hugh \"<his words>\"). That only asks him; his click on Ship in the app moves it.";
 
 const ROUTER_INSTRUCTIONS: &str = "You are the Router of Hugh's board, the Claude Kanban DSH app (card #119). Your rules are in your system prompt. \nRead the board with kanban_list_cards (compact: true) and one card with kanban_get_card. Pass if_version on every write and move. \nNever move a card into Ship it.";
 

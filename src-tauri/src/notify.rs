@@ -110,7 +110,9 @@ pub fn setup(app: &App) {
         let card = s(p, "card");
         let (number, title, _) = lookup(app, &card);
         let title = Some(s(p, "title")).filter(|t| !t.is_empty()).unwrap_or(title);
-        toast(app, &card, &format!("Ship #{}?", n(p, number)), &title);
+        // Card #184: who asked, and that only his click in the app ships it.
+        let by = Some(s(p, "by")).filter(|t| !t.is_empty()).unwrap_or_else(|| "an agent".into());
+        toast(app, &card, &format!("Ship #{}?", n(p, number)), &format!("{title}. Asked by {by}: click Ship on the board within 10 minutes."));
     });
 }
 

@@ -31,6 +31,9 @@ through the running app (a card session's own card when <n> is left out):
                                        reviewer, tester; give it once for each)
   kb log <n> "<text>"                  add a log line
   kb move <n> "<column>" [--reason r]  move a card (your own card's move waits for your turn to end)
+  kb move <n> "Ship it" --for-hugh "<his words>"
+                                       only when Hugh asked you to ship it for him: asks him to confirm
+                                       "Ship #n?" in the app; only his click on Ship moves it (10 minutes)
   kb create --title <t> [--repo r] [--column c] [--summary s] [--template id] [--stack <lead>] [--labels BUG,RCS] [--to Planning|"Human test"] [--skip-planning]
                                        --skip-planning: its flow skips Planning; it starts now in In progress
                                        --stack: create it straight into that card's stack
@@ -43,8 +46,8 @@ through the running app (a card session's own card when <n> is left out):
                                        Planning as its own card and its own session starts
   kb passed <n> [--off]                mark a stack's card passed (or take it back)
   kb ship-result <n> <state> [--detail d]   shipping | shipped | failed | needs-hugh
-  kb ship <n> --asked-by-hugh          ask Hugh to confirm "Ship #n?" in the app (only when he asked;
-                                       from a session outside the app; it never ships by itself)
+  kb ship <n> --asked-by-hugh [--reason r]   the same request as move --for-hugh (only when he
+                                       asked; it never ships by itself)
   kb notify <n> "<text>"               tell Hugh
   kb testapp                           the test apps: each one's card, turn, line and install
   kb testapp take                      a card session: its own card's test app (Test, Test 2, ...) and a
@@ -264,7 +267,7 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
             ("kanban_update_card", json!({ "card": n, "fields": update_fields(&args[1..])? }))
         }
         "log" => ("kanban_add_log", json!({ "card": num(0).ok_or("log needs a card number")?, "text": args.get(1).ok_or("log needs the text")? })),
-        "move" => ("kanban_move_card", json!({ "card": num(0).ok_or("move needs a card number")?, "column": args.get(1).ok_or("move needs a column")?, "reason": opt("--reason") })),
+        "move" => ("kanban_move_card", move_args(args)?),
         "create" => {
             let stack = match opt("--stack") {
                 Some(v) => Some(v.parse::<i64>().map_err(|_| "--stack needs the lead card's number")?),
@@ -423,13 +426,33 @@ fn stack_args(args: &[String]) -> Result<(&'static str, serde_json::Value), Stri
     }
 }
 
+/// `kb move <n> "<column>" [--reason r]`, or `kb move <n> "Ship it" --for-hugh "<his words>"`
+/// (card #184): a request Hugh confirms in the app, never a move by itself.
+fn move_args(args: &[String]) -> Result<serde_json::Value, String> {
+    let n = args.first().and_then(|a| a.parse::<i64>().ok()).ok_or("move needs a card number")?;
+    let col = args.get(1).filter(|c| !c.starts_with("--")).ok_or("move needs a column")?;
+    let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).filter(|v| !v.starts_with("--")).cloned();
+    if args.iter().any(|a| a == "--for-hugh") {
+        if col != "Ship it" {
+            return Err("--for-hugh is only for \"Ship it\"".into());
+        }
+        let words = opt("--for-hugh").or_else(|| opt("--reason")).ok_or("--for-hugh needs Hugh's words: kb move <n> \"Ship it\" --for-hugh \"<what he asked>\"")?;
+        return Ok(json!({ "card": n, "column": col, "for_hugh": true, "reason": words }));
+    }
+    Ok(json!({ "card": n, "column": col, "reason": opt("--reason") }))
+}
+
 /// `kb ship <n> --asked-by-hugh`. Refused here without the flag; the app checks it again.
 fn ship_args(args: &[String]) -> Result<serde_json::Value, String> {
     let n = args.first().and_then(|a| a.parse::<i64>().ok()).ok_or("ship needs a card number")?;
     if !args.iter().any(|a| a == "--asked-by-hugh") {
         return Err("refused: only Hugh ships a card. Add --asked-by-hugh only when Hugh asked for this ship".into());
     }
-    Ok(json!({ "card": n, "asked_by_hugh": true }))
+    let reason = args.iter().position(|a| a == "--reason").and_then(|i| args.get(i + 1)).cloned();
+    Ok(match reason {
+        Some(r) => json!({ "card": n, "asked_by_hugh": true, "reason": r }),
+        None => json!({ "card": n, "asked_by_hugh": true }),
+    })
 }
 
 #[cfg(test)]
@@ -525,6 +548,18 @@ mod tests {
         assert!(ship_args(&a(&["34"])).unwrap_err().starts_with("refused"));
         assert!(ship_args(&a(&["--asked-by-hugh"])).is_err());
         assert_eq!(ship_args(&a(&["34", "--asked-by-hugh"])).unwrap(), json!({ "card": 34, "asked_by_hugh": true }));
+        assert_eq!(ship_args(&a(&["34", "--asked-by-hugh", "--reason", "ship it"])).unwrap()["reason"], "ship it");
+    }
+
+    /// Card #184: `kb move <n> "Ship it" --for-hugh "<his words>"` asks; plain moves are as before.
+    #[test]
+    fn move_for_hugh_asks_with_his_words() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(move_args(&a(&["34", "Ship it", "--for-hugh", "ship 34"])).unwrap(), json!({ "card": 34, "column": "Ship it", "for_hugh": true, "reason": "ship 34" }));
+        assert!(move_args(&a(&["34", "Ship it", "--for-hugh"])).unwrap_err().contains("Hugh's words"));
+        assert!(move_args(&a(&["34", "Done", "--for-hugh", "x"])).unwrap_err().contains("only for"));
+        assert_eq!(move_args(&a(&["34", "Done", "--reason", "r"])).unwrap(), json!({ "card": 34, "column": "Done", "reason": "r" }));
+        assert!(move_args(&a(&["34"])).is_err());
     }
 }
 

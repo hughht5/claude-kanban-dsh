@@ -46,6 +46,7 @@ mod stack;
 mod stackrun;
 mod steps;
 mod settings;
+mod shipask;
 mod slash;
 mod small;
 mod tester;
@@ -273,6 +274,47 @@ fn hugh_move(app: &AppHandle, mut store: lockwatch::WatchedGuard<'_, Store>, id:
 }
 
 const HUGH: &str = "Hugh (board)";
+
+/// The agents' open requests to ship a card for Hugh (card #184), for the page's banners after
+/// a reload.
+#[tauri::command]
+fn ship_asks(asks: State<shipask::ShipAsks>) -> Vec<Value> {
+    asks.open(chrono::Utc::now().timestamp_millis()).iter().map(shipask::Ask::to_json).collect()
+}
+
+/// Hugh's click on Ship in an agent's "Ship #n?" banner (card #184): takes that one request
+/// (refused if it was used, replaced, expired or is for another card), logs his approval, and
+/// moves the card as his drag does. A refused move puts the request back.
+#[tauri::command]
+fn approve_ship_ask(app: AppHandle, board: State<Board>, asks: State<shipask::ShipAsks>, card: String, ask: String, version: i64) -> CmdResult<Value> {
+    let store = board.0.lock().map_err(CmdError::other)?;
+    let a = asks.take(&card, &ask, chrono::Utc::now().timestamp_millis()).map_err(CmdError::other)?;
+    let line = format!("Hugh approved {}'s request to ship this card (asked {})", a.by, chrono::DateTime::from_timestamp_millis(a.at).map(|t| t.to_rfc3339()).unwrap_or_default());
+    match hugh_move(&app, store, card.clone(), version, "Ship it", Patch::new()) {
+        Ok(out) => {
+            if let Ok(mut st) = board.0.lock() {
+                let _ = st.add_log(&card, &line, HUGH);
+            }
+            Ok(out)
+        }
+        Err(e) => {
+            asks.restore(a);
+            Err(e)
+        }
+    }
+}
+
+/// Hugh's Dismiss on an agent's "Ship #n?" banner (card #184): the request is gone, logged.
+#[tauri::command]
+fn dismiss_ship_ask(app: AppHandle, board: State<Board>, asks: State<shipask::ShipAsks>, card: String, ask: String) -> CmdResult<()> {
+    if let Some(a) = asks.dismiss(&card, &ask) {
+        let mut store = board.0.lock().map_err(CmdError::other)?;
+        let _ = store.add_log(&card, &format!("Hugh dismissed {}'s request to ship this card", a.by), HUGH);
+        drop(store);
+        changed(&app);
+    }
+    Ok(())
+}
 
 /// Puts card `child` into the stack led by `lead`. Returns the lead.
 #[tauri::command]
@@ -856,6 +898,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Board(lockwatch::Watched::new("board", store)))
         .manage(ColumnSince::default())
+        .manage(shipask::ShipAsks::default())
         .manage(sessions)
         .manage(routersession::Router::new())
         .manage(lane::Lanes::new())
@@ -911,6 +954,9 @@ fn main() {
             create_card,
             update_card,
             move_card,
+            ship_asks,
+            approve_ship_ask,
+            dismiss_ship_ask,
             archive_card,
             router_archive_approve,
             router_archive_dismiss,

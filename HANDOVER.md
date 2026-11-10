@@ -2416,3 +2416,23 @@ The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate 
 - **Feed rows open sessions:** a verdict item carries `agent_id` (from the verdict record's `agentId`, `crates/store/src/feed.rs`); `AgentsFeed.sessionTarget` says what a row opens; `subagent_find` looks through every `sessions` row of the card, its desktop conversation, then its stack lead's (`pick_subagent`: by id, else by type and the row's time with a minute's grace); `subagent_read` reads it, refusing a session that isn't that card's or its lead's. Merger rows (the merge lane), monitor and Hugh rows aren't buttons.
 - Tests: `running.rs` unit tests, `kb` `caller_tests`, `crates/store/tests/feed.rs` (`agent_id`), `tools/ui-tests/feed.test.mjs` (row targets, Running now).
 - **The open tab is marked** (card #173, on top of #129): `runningHtml(r, {open})` takes what the session pane shows (`window.sessionPaneShows()`) and `openMatch` marks its tab (`.on`, `aria-current="true"`, "· open now" in its title; `agents-feed.css` `.rn-tab[aria-current]`): the Router, a lane by `key`, a card by `cardId`, a subagent by `id` plus its kind's agent tab, an outside session by `id`. `router.js` sends a `session-pane` window event when the pane opens, swaps or closes, and the drawer redraws its tabs. Test: `feed.test.mjs`, "the tab of what the session pane shows is marked".
+
+## An agent asks to ship a card for Hugh (10 Nov 2026, card #184, branch `card-184`)
+
+- **Never a move:** `kanban_move_card` to Ship it is still refused for every agent, and the refusal
+  (`shipask::HOW_TO_ASK`) says how to ask. With `for_hugh: true` and a `reason` (Hugh's words) it
+  calls `tools::ask_ship` instead: a log line "<who> asked Hugh to ship this card for him", a
+  `shipask::Ask` kept in the app's `ShipAsks` state, and a `ship-request` event (banner in
+  `ui/panel.js`, toast in `notify.rs`; neither takes focus). `kb move <n> "Ship it" --for-hugh "<words>"`
+  and `kb ship <n> --asked-by-hugh [--reason r]` reach the same function; the old refusal of a card
+  session's `kb ship` is gone. The Router is still refused (`routersession::move_refused` first,
+  and `as_router` here).
+- **Hugh's click:** the banner's Ship calls `approve_ship_ask {card, ask, version}`: `ShipAsks::take`
+  refuses a used, dismissed, replaced, expired (10 min, `TTL_MS`) or other card's request, then
+  `hugh_move` moves it as his drag, and the log gets "Hugh approved <who>'s request to ship this
+  card (asked <time>)". A refused move (conflict) puts the request back. Dismiss calls
+  `dismiss_ship_ask` and logs it. `ship_asks` lists the open ones so the banners come back after a
+  page reload. One request per card (a new one replaces the old); memory only, so a restart drops them.
+- **Tests:** `shipask::tests` (none, once, expired, other card, replaced, restore and dismiss, the
+  refusal text), `tools::tests::t4_6_ship_request_needs_the_flag`, and kb's
+  `move_for_hugh_asks_with_his_words`.

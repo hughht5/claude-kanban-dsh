@@ -914,29 +914,40 @@ function stateDot(id){const s=activity[id];return s?`<span class="sdot s-${esc(s
   render();
 })();
 
-// "Ship #n?" from `kb ship <n> --asked-by-hugh` in a session outside the app. Nothing ships
-// until Hugh clicks Ship, which makes the same move as his drag, so the normal dispatch runs.
+// "Ship #n?": an agent's request to ship a card for Hugh (card #184: kanban_move_card to Ship it
+// with for_hugh, `kb move <n> "Ship it" --for-hugh`, or `kb ship <n> --asked-by-hugh`). Nothing
+// ships until Hugh clicks Ship: approve_ship_ask takes that one request (used once, 10 minutes,
+// this card only) and makes the same move as his drag, so the normal dispatch runs.
 function shipRequest(p){
-  if(!p||!p.card)return;
-  const old=document.querySelector(`.shipask[data-card="${CSS.escape(p.card)}"]`);if(old)old.remove();
-  const b=document.createElement("div");b.className="banner shipask";b.dataset.card=p.card;b.setAttribute("role","alert");
-  b.innerHTML=`<span class="txt">Ship #${esc(p.number)} "${esc(p.title||"")}"? (asked from a session outside the app)</span><button class="btn" type="button" data-a="ship">Ship</button><button class="btn ghost" type="button" data-a="dismiss">Dismiss</button><span class="msg"></span>`;
+  if(!p||!p.card||!p.ask)return;
+  const old=document.querySelector(`.shipask[data-card="${CSS.escape(p.card)}"]`);if(old){clearInterval(old._t);old.remove()}
+  const b=document.createElement("div");b.className="banner shipask";b.dataset.card=p.card;b.dataset.ask=p.ask;b.setAttribute("role","alert");
+  const bits=[p.branch?`branch ${esc(p.branch)}`:"",p.pr?`PR ${esc(p.pr)}`:""].filter(Boolean).join(", ");
+  b.innerHTML=`<span class="txt">Ship #${esc(p.number)} "${esc(p.title||"")}"? Asked by ${esc(p.by||"an agent")}${p.reason?`: "${esc(p.reason)}"`:""}${bits?` (${bits})`:""}. <span class="left"></span></span><button class="btn" type="button" data-a="ship">Ship</button><button class="btn ghost" type="button" data-a="dismiss">Dismiss</button><span class="msg"></span>`;
   const anchor=$("#copyBanner");anchor?anchor.after(b):document.body.prepend(b);
-  b.querySelector('[data-a="dismiss"]').onclick=()=>b.remove();
+  const msg=t=>{b.querySelector(".msg").textContent=t};
+  const btns=b.querySelectorAll("button");
+  const tick=()=>{const s=Math.round(((p.expires||0)-Date.now())/1000);
+    if(s<=0){clearInterval(b._t);b.querySelector(".left").textContent="Expired: ask the agent to ask again.";b.querySelector('[data-a="ship"]').disabled=true;return}
+    b.querySelector(".left").textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,"0")} left.`};
+  tick();b._t=setInterval(tick,1000);
+  const gone=()=>{clearInterval(b._t);b.remove()};
+  b.querySelector('[data-a="dismiss"]').onclick=async()=>{try{await invoke("dismiss_ship_ask",{card:p.card,ask:p.ask})}catch(e){}gone()};
   b.querySelector('[data-a="ship"]').onclick=async()=>{
-    const msg=t=>{b.querySelector(".msg").textContent=t};
     let c=cards.find(x=>x.id===p.card);
     if(!c){await load();c=cards.find(x=>x.id===p.card)}
     if(!c){msg("That card isn't on the board any more.");return}
-    if(colOf(c)==="Ship it"){b.remove();status(`#${p.number} is already in Ship it`);return}
-    const btns=b.querySelectorAll("button");btns.forEach(x=>x.disabled=true);
+    if(colOf(c)==="Ship it"){gone();status(`#${p.number} is already in Ship it`);return}
+    btns.forEach(x=>x.disabled=true);
     let r=null;
-    try{r=await call("move_card",{id:c.id,version:c.version,column:"Ship it",extra:{}},true)}
-    catch(e){await load();msg("The card changed meanwhile; click Ship again.");btns.forEach(x=>x.disabled=false);return}
-    if(!r){msg("It didn't move; try again.");btns.forEach(x=>x.disabled=false);return}
-    b.remove();status(r.shipWaitFor?`Moved #${p.number} to Ship it: it waits for #${r.shipWaitFor} to finish shipping`:`Moved #${p.number} to Ship it: the card's session is told to ship it`);
+    try{r=await invoke("approve_ship_ask",{card:c.id,ask:p.ask,version:c.version})}
+    catch(e){await load();
+      if(e&&e.kind==="conflict"){msg("The card changed meanwhile; click Ship again.");btns.forEach(x=>x.disabled=false);return}
+      msg(errText(e));b.querySelector('[data-a="dismiss"]').disabled=false;return}
+    gone();status(r&&r.shipWaitFor?`Moved #${p.number} to Ship it: it waits for #${r.shipWaitFor} to finish shipping`:`Moved #${p.number} to Ship it: the card's session is told to ship it`);
   };
 }
+(async()=>{try{for(const a of await invoke("ship_asks"))shipRequest(a)}catch(e){}})();
 
 // The command bar: Ctrl+K, then "34", "34 ship it", "34 plan it" or "34 to Blocked".
 function openCommand(){
