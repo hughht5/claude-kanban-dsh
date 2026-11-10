@@ -1086,3 +1086,7 @@ No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #175 commit>`, t
 | `ui\doing.js`, `ui\doing.css` and their tags in `ui\index.html`; `cardEl` draws `doingChip` where `buildingChip` was (`ui\board.js`); `buildingChip` and its `testing` set gone from `ui\panel.js`; the chip first in the row (`ui\face.js`) | Same revert. The Building and Testing chips come back |
 | The test app's own chip on each tile (card #147's `KBTestApp.tileChip`, still in `ui\testapp.js`) drawn by the status chip, not by testapp.js (`ui\testapp.js`, `ui\testapp.css`, `tools\ui-tests\testapp.test.mjs`); `window.testappState` and the `testapp-status` event; `window.Waits.unmet` (`ui\waits.js`) | Same revert |
 | `tools\ui-tests\doing.test.mjs`, `doing.js` in the test harness's files, two face tests that now see the status chip | Same revert, or `Remove-Item tools\ui-tests\doing.test.mjs -Confirm:$false` |
+
+## Card flow switches instead of dropdowns (10 Nov 2026, card #178)
+
+No data: the card's fields are the same (`skipPlanning`, `skipHumanTest`, `subagents`). `git -C ~\claude-kanban-dsh revert --no-edit <the card #178 commit>`, then stage the live update. Files: `ui\subagents.js` (the switch, Reset, the click handler), `ui\subagents.css`, `ui\board.js` (Add card reads `[data-flow]`), `tools\ui-tests\flow.test.mjs`, `README.md`, `HANDOVER.md`.

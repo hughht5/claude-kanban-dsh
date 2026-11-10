@@ -1,7 +1,8 @@
 // A card's flow (cards #151 and #162): Hugh's per-card choice of the app's five subagents (card #162 took the card-merger off: every
 // ship merges in its repo's merge lane, and an old card's `merger` is ignored) and of
 // skipping Planning or Human test. Each has a default in Settings > Sessions, and each card is
-// three-way: Default (follows Settings as it changes), On or Off (the card's own). A card's
+// three-way: Default (follows Settings as it changes), On or Off (the card's own), shown as a
+// switch with Default or Reset beside it (card #178). A card's
 // `subagents` holds only its own overrides ({critic: false}); `skipPlanning` and `skipHumanTest`
 // are true, false or absent. The Add card form, the card's "Card flow" box in its details (saved
 // as soon as one changes, only that one), a chip on the card for each override that differs from
@@ -73,20 +74,29 @@ if(typeof boardHooks!=="undefined")boardHooks.decorate.push((b,c)=>{
   const tags=b.querySelector(":scope > .tags");if(!tags)return;
   for(const x of window.flowChips(c)){const el=document.createElement("span");el.className="tag flow-chip";el.dataset.flowChip=x.key;el.title=x.title;el.textContent=x.text;tags.appendChild(el)}});
 
-// One three-way pick: Default (shows what it is now), On, Off. `cur` is the card's own value.
-const pick=(k,cur,dis)=>`<select class="flow-pick" data-flow="${esc(k)}" aria-label="${esc(k)}"${dis?" disabled":""}><option value="default"${cur===undefined?" selected":""}>Default (${dflt(k)?"on":"off"})</option><option value="on"${cur===true?" selected":""}>On</option><option value="off"${cur===false?" selected":""}>Off</option></select>`;
-const rows=(cur,dis)=>`<div class="flow-rows">${SKIPS.map(s=>`<label class="flow-row" title="${esc(s.help)}"><span>${esc(s.label)}</span>${pick(s.card,cur(s.card),dis)}</label>`).join("")}
-  ${SUBS.map(s=>`<label class="flow-row" title="${esc(s.help)}"><span>${esc(s.name)}</span>${pick(s.card,cur(s.card),dis)}</label>`).join("")}</div>`;
+// One option as a toggle (card #178, was a three-way pick): the switch shows what holds for the card
+// (its own value, else the default); flipping it makes that the card's own. Beside it, "Default"
+// while it follows Settings, or a "Reset" button that puts it back on the default. `cur` is the
+// card's own value (true, false or undefined); the switch keeps it in data-own (default|on|off).
+const ownWord=v=>v===undefined||v===null?"default":v?"on":"off";
+const tog=(k,cur,dis)=>{const on=cur===undefined?dflt(k):cur,d=dflt(k)?"on":"off";
+  return`<span class="flow-ctl"><button type="button" role="switch" class="flow-tog" data-flow="${esc(k)}" data-own="${ownWord(cur)}" aria-checked="${on}" aria-label="${esc(k)}"${dis?" disabled":""}><span class="flow-knob"></span></button>${cur===undefined
+    ?`<span class="flow-src" title="Follows Settings &gt; Sessions (${d} now), as it changes">Default</span>`
+    :`<button type="button" class="flow-reset" data-flow-reset="${esc(k)}" title="Back to the default (${d} now), which follows Settings &gt; Sessions"${dis?" disabled":""}>Reset</button>`}</span>`};
+const rows=(cur,dis)=>`<div class="flow-rows">${SKIPS.map(s=>`<div class="flow-row" title="${esc(s.help)}"><span>${esc(s.label)}</span>${tog(s.card,cur(s.card),dis)}</div>`).join("")}
+  ${SUBS.map(s=>`<div class="flow-row" title="${esc(s.help)}"><span>${esc(s.name)}</span>${tog(s.card,cur(s.card),dis)}</div>`).join("")}</div>`;
 const valueOf=v=>v==="on"?true:v==="off"?false:null;
+// Redraw one option in place, as the card's own value `v` (true, false, or null for Default).
+const setCtl=(ctl,k,v,dis)=>{ctl.outerHTML=tog(k,v===null?undefined:v,dis)};
 
 // The Add card form: every option at Default. `host` is an empty element in the form.
 window.subagentTicks=async function(host){
   await loadDefaults();
   host.innerHTML=`<fieldset class="subs-set flow-set"><legend>Card flow</legend>${rows(()=>undefined,false)}
-  <p class="meta">Default follows Settings &gt; Sessions, now and when it changes. On or Off is this card's own. Only you change them later, in the card's details.</p></fieldset>`};
+  <p class="meta">Default follows Settings &gt; Sessions, now and when it changes. Flip a switch to make it this card's own; Reset puts it back on the default. Only you change them later, in the card's details.</p></fieldset>`};
 // The form's choice: only what isn't Default, as card fields ({skipPlanning, subagents: {...}}).
 window.flowChoice=host=>{const o={},subs={};
-  host.querySelectorAll("select[data-flow]").forEach(x=>{const v=valueOf(x.value);if(v===null)return;if(isSkip(x.dataset.flow))o[x.dataset.flow]=v;else subs[x.dataset.flow]=v});
+  host.querySelectorAll(".flow-tog[data-flow]").forEach(x=>{const v=valueOf(x.dataset.own);if(v===null)return;if(isSkip(x.dataset.flow))o[x.dataset.flow]=v;else subs[x.dataset.flow]=v});
   if(Object.keys(subs).length)o.subagents=subs;return o};
 // The subagents part of it alone (card #151's name).
 window.subagentChoice=host=>window.flowChoice(host).subagents||{};
@@ -101,19 +111,33 @@ window.subagentsBox=c=>{
   const child=isChild(c)?" This card is in a stack, so it never skips Planning or Human test: its lead's flow covers it.":"";
   return`<div class="shipbox subs-box flow-box" data-subs="${esc(c.id)}"><h3>Card flow</h3>
   ${rows(cur,dis)}
-  <span class="meta">Now: ${skips.length?esc(skips.join(", "))+"; ":""}${off.length?`subagents off: ${esc(off.join(", "))}`:"all subagents on"}.${child} Default follows Settings &gt; Sessions as it changes; On or Off is this card's own. Saved as soon as you change one; its session is told. Only you change these, not its session or the Router.</span>
+  <span class="meta">Now: ${skips.length?esc(skips.join(", "))+"; ":""}${off.length?`subagents off: ${esc(off.join(", "))}`:"all subagents on"}.${child} Default follows Settings &gt; Sessions as it changes; flip a switch to make it this card's own, and Reset puts it back on the default. Saved as soon as you change one; its session is told. Only you change these, not its session or the Router.</span>
   <span class="msg subs-msg"></span></div>`};
-document.addEventListener("change",async e=>{
-  const x=e.target;if(!x.matches||!x.matches(".flow-box select[data-flow]"))return;
-  const box=x.closest(".flow-box"),id=box.dataset.subs,c=cards.find(k=>k.id===id);if(!c)return;
-  const k=x.dataset.flow,v=valueOf(x.value);
+// A click on a switch or a Reset: the new own value for that option (null for Default).
+const clicked=x=>{const t=x.closest&&x.closest(".flow-tog,.flow-reset");if(!t||t.disabled)return null;
+  if(t.matches(".flow-reset"))return{t,k:t.dataset.flowReset,v:null};
+  return{t,k:t.dataset.flow,v:t.getAttribute("aria-checked")!=="true"}};
+document.addEventListener("click",async e=>{
+  const x=e.target;if(!x||!x.closest)return;
+  const form=x.closest(".flow-set");
+  if(form){const h=clicked(x);if(!h)return;e.preventDefault();setCtl(h.t.closest(".flow-ctl"),h.k,h.v,false);
+    const n=form.querySelector(`.flow-tog[data-flow="${h.k}"]`);if(n&&n.focus)n.focus();return}
+  const box=x.closest(".flow-box");if(!box)return;
+  const h=clicked(x);if(!h)return;e.preventDefault();
+  const id=box.dataset.subs,c=cards.find(k=>k.id===id);if(!c)return;
+  const {k,v}=h;
   const patch=isSkip(k)?{[k]:v}:{subagents:{[k]:v}};
-  pend={id,k,v};box.querySelectorAll("select").forEach(i=>i.disabled=true);
+  pend={id,k,v};setCtl(h.t.closest(".flow-ctl"),k,v,true);box.querySelectorAll(".flow-tog,.flow-reset").forEach(i=>i.disabled=true);
   const ok=await write(id,patch,true);pend=null;
   const now=document.querySelector(`.flow-box[data-subs="${CSS.escape(id)}"]`);
-  if(now){now.querySelectorAll("select").forEach(i=>i.disabled=typeof canWrite!=="undefined"&&!canWrite);const mm=now.querySelector(".subs-msg");
+  const dis=typeof canWrite!=="undefined"&&!canWrite;
+  if(now){const mm=now.querySelector(".subs-msg");
+    const cc=cards.find(q=>q.id===id)||c;
+    now.querySelectorAll(".flow-ctl").forEach(ctl=>{const t=ctl.querySelector(".flow-tog");if(!t)return;const kk=t.dataset.flow;
+      const o=ok&&kk===k?v:ownOf(cc,kk);setCtl(ctl,kk,o===undefined?null:o,dis)});
+    const back=now.querySelector(`.flow-tog[data-flow="${k}"]`);if(back&&back.focus)back.focus(); // keys go on from here
     if(ok){mm.textContent="Saved";mm.className="msg subs-msg ok"}
-    else{const cc=cards.find(q=>q.id===id)||c;now.querySelectorAll("select[data-flow]").forEach(i=>{const o=ownOf(cc,i.dataset.flow);i.value=o===undefined?"default":o?"on":"off"});mm.textContent="Not saved. Try again.";mm.className="msg subs-msg err"}}
+    else{mm.textContent="Not saved. Try again.";mm.className="msg subs-msg err"}}
   else if(!ok&&typeof status==="function")status("The card's flow wasn't saved. Try again.",true);
 });
 // The defaults, for the details and the chips; again whenever Hugh changes one in Settings.

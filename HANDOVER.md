@@ -2024,8 +2024,9 @@ default as it is now). `crates/store/src/flow.rs` holds the keys and the store's
   --skip-planning`; refused with `stack`): it sets the new card's `skipPlanning` and starts it, so
   `move_as` sends it to In progress.
   `kanban_get_card` and `kb card` show a computed `flow` (`Store::flow_of`).
-- **UI:** `ui/subagents.js`: the Card flow box (`subagentsBox`, three-way selects, one key per
-  change), Add card's box (`subagentTicks`, `flowChoice`: only what isn't Default), the chips (a
+- **UI:** `ui/subagents.js`: the Card flow box (`subagentsBox`, one key per change; card #178 made
+  each three-way select a switch, `role="switch"` with `data-own` default|on|off, and a Reset
+  button beside an override), Add card's box (`subagentTicks`, `flowChoice`: only what isn't Default), the chips (a
   `boardHooks.decorate` hook, `flowChips`), and `CARD_FLOW_SKIPS` for Settings' "Card flow
   defaults" group in `ui/settings.js`. Tests: `crates/store/tests/flow.rs`, `subagents.rs`,
   `dispatch.rs`, `critic.rs`, `tools.rs`, `small.rs`, `kb`, `tools/ui-tests/flow.test.mjs`.

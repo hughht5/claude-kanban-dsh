@@ -549,7 +549,7 @@ async function openAdd(){
       const fields={title,summary};
       if(repo)fields.repo=repo;if(issue)fields.issue=issue;if(links.length)fields.links=links;
       if($("#a-tpl").value)fields.templateId=$("#a-tpl").value; // its starting prompt opens the card's first session
-      if(typeof flowChoice==="function"&&$("#a-subs").querySelector("select"))Object.assign(fields,flowChoice($("#a-subs"))); // cards #151, #162: only what isn't Default
+      if(typeof flowChoice==="function"&&$("#a-subs").querySelector("[data-flow]"))Object.assign(fields,flowChoice($("#a-subs"))); // cards #151, #162: only what isn't Default
       const to=Object.hasOwn(TAKE_TO,$("#a-to").value)?$("#a-to").value:"Backlog";
       const args={id,fields};if(to!=="Backlog")args.to=to; // the store moves it on and sets autoTo
       const c=await invoke("create_card",args);

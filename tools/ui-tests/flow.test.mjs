@@ -1,5 +1,5 @@
-// A card's flow (card #162): its chips on the card face, the Card flow box in its details (three-way
-// picks, each change sent alone), the Add card form's choice and the defaults in Settings ›
+// A card's flow (card #162): its chips on the card face, the Card flow box in its details (switches,
+// card #178; each change sent alone), the Add card form's choice and the defaults in Settings ›
 // Sessions, on the real ui/*.js files in a vm (harness.mjs).
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -49,7 +49,7 @@ test("the card face shows a chip for each override that differs from the default
   assert.equal(c1.title, "Skip Planning: on for this card (the default is off)");
 });
 
-test("the Card flow box: Default shows what the default is, and a change sends only that option", async () => {
+test("the Card flow box: each option is a switch showing what holds, and a click sends only that option", async () => {
   const { b, updates } = board();
   await tick();
   const c = card(7, { skipPlanning: false, subagents: { tester: false } });
@@ -60,43 +60,69 @@ test("the Card flow box: Default shows what the default is, and a change sends o
   host.innerHTML = b.run(`subagentsBox(__c)`);
   const box = host.querySelector(".flow-box");
   assert.equal(box.querySelector("h3").textContent, "Card flow");
-  const sel = (k) => box.querySelector(`select[data-flow="${k}"]`);
-  const chosen = (k) => sel(k).querySelector("option[selected]").getAttribute("value");
-  assert.equal(chosen("skipPlanning"), "off");
-  assert.equal(chosen("skipHumanTest"), "default");
-  assert.equal(sel("skipHumanTest").querySelector('option[value="default"]').textContent, "Default (on)");
-  assert.equal(chosen("tester"), "off");
-  assert.equal(chosen("critic"), "default");
-  assert.equal(sel("critic").querySelector('option[value="default"]').textContent, "Default (off)");
-  assert.equal(box.querySelectorAll("select[data-flow]").length, 7, "two skips and five subagents");
+  assert.equal(box.querySelectorAll("select").length, 0, "no dropdowns any more (card #178)");
+  const sw = (k) => box.querySelector(`.flow-tog[data-flow="${k}"]`);
+  const ctl = (k) => sw(k).parentNode;
+  const state = (k) => [sw(k).getAttribute("role"), sw(k).getAttribute("aria-checked"), sw(k).dataset.own, ctl(k).querySelector(".flow-src") ? "Default" : ctl(k).querySelector(".flow-reset").textContent];
+  assert.deepEqual(state("skipPlanning"), ["switch", "false", "off", "Reset"], "the card's own off");
+  assert.deepEqual(state("skipHumanTest"), ["switch", "true", "default", "Default"], "follows the default, on");
+  assert.match(ctl("skipHumanTest").querySelector(".flow-src").title, /on now/);
+  assert.deepEqual(state("tester"), ["switch", "false", "off", "Reset"]);
+  assert.deepEqual(state("critic"), ["switch", "false", "default", "Default"], "the default here is off");
+  assert.deepEqual(state("reviewer"), ["switch", "true", "default", "Default"]);
+  assert.equal(box.querySelectorAll(".flow-tog[data-flow]").length, 7, "two skips and five subagents");
   assert.match(box.querySelector(".meta").textContent, /Now: Skip Human test; subagents off: card-critic, card-tester\./);
-  // One change: only that key, null for Default.
-  sel("critic").value = "on";
-  sel("critic").dispatchEvent(new b.ctx.Event("change", { bubbles: true }));
+  // One click each: only that key; Reset sends null (Default).
+  sw("critic").querySelector(".flow-knob").click();
   await tick();
-  sel("skipHumanTest").value = "off";
-  sel("skipHumanTest").dispatchEvent(new b.ctx.Event("change", { bubbles: true }));
+  assert.deepEqual(state("critic"), ["switch", "true", "on", "Reset"], "a flip makes it the card's own");
+  sw("skipHumanTest").click();
   await tick();
-  sel("tester").value = "default";
-  sel("tester").dispatchEvent(new b.ctx.Event("change", { bubbles: true }));
+  ctl("tester").querySelector(".flow-reset").click();
   await tick();
+  assert.deepEqual(state("tester"), ["switch", "true", "default", "Default"], "back on the default (the tester's is on)");
   assert.deepEqual(JSON.parse(JSON.stringify(updates)), [{ subagents: { critic: true } }, { skipHumanTest: false }, { subagents: { tester: null } }]);
+  assert.equal(box.querySelector(".subs-msg").textContent, "Saved");
+});
+
+test("the Card flow box puts the switch back when the save fails", async () => {
+  const { b } = board({ update_card: () => { throw new Error("refused"); } });
+  await tick();
+  const c = card(8);
+  b.show([c]);
+  b.ctx.__c = c;
+  const host = b.document.createElement("div");
+  b.document.body.appendChild(host);
+  host.innerHTML = b.run(`subagentsBox(__c)`);
+  const box = host.querySelector(".flow-box");
+  box.querySelector('.flow-tog[data-flow="reviewer"]').click();
+  await tick();
+  const sw = box.querySelector('.flow-tog[data-flow="reviewer"]');
+  assert.equal(sw.getAttribute("aria-checked"), "true", "still the default, on");
+  assert.equal(sw.dataset.own, "default");
+  assert.ok(!sw.disabled);
+  assert.equal(box.querySelector(".subs-msg").textContent, "Not saved. Try again.");
 });
 
 test("Add card sends only what isn't Default", async () => {
-  const { b } = board();
+  const { b, updates } = board();
   const host = b.document.createElement("div");
   b.document.body.appendChild(host);
   b.ctx.__h = host;
   await b.run(`subagentTicks(__h)`);
   assert.equal(host.querySelector("legend").textContent, "Card flow");
-  assert.ok(host.querySelectorAll("select[data-flow]").every((s) => s.querySelector("option[selected]").getAttribute("value") === "default"));
+  assert.ok(host.querySelectorAll(".flow-tog[data-flow]").every((s) => s.dataset.own === "default"));
   assert.deepEqual(JSON.parse(JSON.stringify(b.run(`flowChoice(__h)`))), {}, "all Default: nothing sent");
-  host.querySelector('select[data-flow="skipPlanning"]').value = "on";
-  host.querySelector('select[data-flow="reviewer"]').value = "off";
-  host.querySelector('select[data-flow="critic"]').value = "on";
+  const sw = (k) => host.querySelector(`.flow-tog[data-flow="${k}"]`);
+  sw("skipPlanning").click();
+  sw("reviewer").click();
+  sw("critic").click();
+  sw("tester").click();
+  sw("tester").parentNode.querySelector(".flow-reset").click();
+  assert.equal(sw("skipPlanning").getAttribute("aria-checked"), "true");
   assert.deepEqual(JSON.parse(JSON.stringify(b.run(`flowChoice(__h)`))), { skipPlanning: true, subagents: { reviewer: false, critic: true } });
   assert.deepEqual(JSON.parse(JSON.stringify(b.run(`subagentChoice(__h)`))), { reviewer: false, critic: true });
+  assert.equal(updates.length, 0, "the form saves nothing until Add");
 });
 
 test("Settings › Sessions: the two skip defaults sit with the subagent defaults, off unless turned on", async () => {
