@@ -52,6 +52,8 @@ struct Request {
     method: String,
     path: String,
     session: Option<String>,
+    /// `X-Claude-Session`: the Claude session of a caller outside the app (card #129).
+    claude: Option<String>,
     body: Vec<u8>,
 }
 
@@ -62,7 +64,7 @@ fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
-    let (mut len, mut session) = (0usize, None);
+    let (mut len, mut session, mut claude) = (0usize, None, None);
     loop {
         let mut h = String::new();
         if r.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" {
@@ -72,13 +74,14 @@ fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
             match k.trim().to_ascii_lowercase().as_str() {
                 "content-length" => len = v.trim().parse().unwrap_or(0),
                 "x-kanban-session" => session = Some(v.trim().to_string()),
+                "x-claude-session" => claude = Some(v.trim().to_string()),
                 _ => {}
             }
         }
     }
     let mut body = vec![0; len.min(8 * 1024 * 1024)];
     r.read_exact(&mut body)?;
-    Ok(Request { method, path, session, body })
+    Ok(Request { method, path, session, claude, body })
 }
 
 fn respond(mut stream: &TcpStream, status: &str, body: &Value) -> std::io::Result<()> {
@@ -95,7 +98,7 @@ fn serve(app: &AppHandle, token: &str, stream: TcpStream) -> std::io::Result<()>
     let req = match read_request(&stream) {
         Ok(r) => r,
         Err(e) => {
-            log_request(&Request { method: "?".into(), path: format!("/unreadable/{e}"), session: None, body: vec![] });
+            log_request(&Request { method: "?".into(), path: format!("/unreadable/{e}"), session: None, claude: None, body: vec![] });
             return Err(e);
         }
     };
@@ -109,6 +112,19 @@ fn serve(app: &AppHandle, token: &str, stream: TcpStream) -> std::io::Result<()>
         return respond(&stream, "405 Method Not Allowed", &Value::Null);
     }
     let body: Value = serde_json::from_slice(&req.body).unwrap_or(Value::Null);
+    // A Claude Code session outside the app that uses this board (card #129): a tool call on the
+    // external MCP route (not its start-up `initialize` or `tools/list`, which every session with
+    // `kb mcp` configured sends), or `/tool` with no card session named.
+    if let Some(id) = req.claude.as_deref() {
+        let outside = match (seg[0], seg.get(2)) {
+            ("mcp", Some(&"external")) => body.get("method").and_then(Value::as_str) == Some("tools/call"),
+            ("tool", Some(_)) => req.session.is_none(),
+            _ => false,
+        };
+        if outside {
+            crate::running::note_call(id, &body);
+        }
+    }
     match (seg[0], seg.get(2), seg.get(3)) {
         // A card session's shell call, before it runs: the reply refuses an app subagent's kb or
         // claude config, and a card-merger's push (cards #100, #96). The other hooks aren't sent it.

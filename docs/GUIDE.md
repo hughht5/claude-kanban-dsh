@@ -1233,6 +1233,40 @@ author, not guesses from the text) when it opens and when the board changes, at 
 2 s. The pane is not a dialog: Human test keys (P, F, U, the arrows) go on working with it open.
 Esc (with the focus in the pane) or ✕ closes it.
 
+## Open any running session (card #129)
+
+The Agents pane keeps its feed, with the agents along its top as tabs to jump into:
+
+- **The agents:** Router, a **Merger** for each repo's merge lane, Critic, Reviewer, Tester and
+  Reproducer. Each opens that agent's conversation: the one running now (its tab has a dot), else
+  the latest. **Monitor** is part of the app and has no conversation: its tab shows only its lines
+  in the feed, and again shows everyone's.
+- **Running now:** each card session the app runs, each subagent running in it, and each Claude
+  Code session outside the app that has used this board in the last 15 minutes. The count on the
+  **Agents** button is this list, kept current with the pane closed.
+
+Whatever you click opens in the Router's panel, the way the Router opens: its live log beside its
+chat. The tab of what that panel shows is marked (card #173), so you can see which one you're in;
+a subagent marks its own tab and its agent's. The mark moves when you open another and goes when
+you close the panel.
+
+- **A card session:** its chat takes messages and images, its questions are answered there, and
+  it has a Terminal tab. If the card's own panel already shows its terminal, the Terminal tab
+  says so instead, so the two never fight over its size. **Open card** opens the card's panel.
+- **A subagent** (critic, tester, reviewer, reproducer, card-router): its own conversation, read
+  only. Its card's session takes the messages: **Open card session**.
+- **A merge lane** (the merger, one per repo): its conversation, read only.
+- **Outside the app:** read only, with its folder and the cards it named. Type to it where it
+  runs. A session counts as outside only if its `kb` (or `kb mcp`) called this app with its
+  Claude session id, so a test app's sessions never show on live, and the app's own sessions
+  never show as outside. An older `kb.exe` sends no id, so its session isn't listed. A session counts once it calls a tool, not when it merely starts with `kb mcp` configured. After a `/clear`, a session's `kb mcp` still names the conversation it started in.
+
+In the feed, an agent's name on a row is a button too: a verdict opens the subagent that gave it
+(by the id the verdict records, in any of the card's conversations or its stack lead's), a
+critic, tester, reviewer or reproducer line opens the one of that kind that started last before
+it, and a Router line opens the Router. Opening another session swaps what the panel shows; the
+Agents pane stays open beside it.
+
 ## Search every card's session history
 
 "Which card touched the invoice code?" **Search sessions** in the header (or Ctrl+Shift+F, also

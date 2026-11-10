@@ -20,7 +20,7 @@ fn post(path_tail: impl Fn(&str) -> String, body: &Value, timeout: Duration) -> 
         .map_err(|_| format!("the {} app isn't running", crate::app_label()))?;
     s.set_read_timeout(Some(timeout)).ok();
     let payload = body.to_string();
-    let session = std::env::var("KANBAN_SESSION").map(|v| format!("X-Kanban-Session: {v}\r\n")).unwrap_or_default();
+    let session = caller_headers(std::env::var("KANBAN_SESSION").ok(), std::env::var("CLAUDE_CODE_SESSION_ID").ok());
     write!(
         s,
         "POST {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{session}Connection: close\r\n\r\n{payload}",
@@ -35,6 +35,41 @@ fn post(path_tail: impl Fn(&str) -> String, body: &Value, timeout: Duration) -> 
         return Err("the app refused the token; is api.json from an older run?".into());
     }
     Ok(serde_json::from_str(body).unwrap_or(Value::Null))
+}
+
+/// Who is calling, as request headers. A card session's `kb` names its app session
+/// (`X-Kanban-Session`). Any other Claude Code session names its own Claude session
+/// (`X-Claude-Session`, from `CLAUDE_CODE_SESSION_ID`, card #129), so the app can list the
+/// sessions outside it that use this board. An id that isn't a plain id is left out.
+pub(crate) fn caller_headers(kanban: Option<String>, claude: Option<String>) -> String {
+    let plain = |v: &str| !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if let Some(k) = kanban.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()) {
+        return format!("X-Kanban-Session: {k}\r\n");
+    }
+    match claude.map(|c| c.trim().to_string()).filter(|c| plain(c)) {
+        Some(c) => format!("X-Claude-Session: {c}\r\n"),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod caller_tests {
+    use super::caller_headers;
+    #[test]
+    fn a_card_session_names_its_app_session_and_nothing_else() {
+        assert_eq!(caller_headers(Some("row-1".into()), Some("abc-123".into())), "X-Kanban-Session: row-1\r\n");
+    }
+    #[test]
+    fn a_session_outside_the_app_names_its_claude_session() {
+        assert_eq!(caller_headers(None, Some("344b450b-a120-445a".into())), "X-Claude-Session: 344b450b-a120-445a\r\n");
+        assert_eq!(caller_headers(Some(" ".into()), Some("abc".into())), "X-Claude-Session: abc\r\n");
+    }
+    #[test]
+    fn no_session_or_an_odd_id_sends_nothing() {
+        assert_eq!(caller_headers(None, None), "");
+        assert_eq!(caller_headers(None, Some("a\r\nX-Evil: 1".into())), "");
+        assert_eq!(caller_headers(None, Some("x".repeat(65))), "");
+    }
 }
 
 /// Runs a kanban_* tool in the app and returns its result.
@@ -95,7 +130,8 @@ pub fn fields(args: &[String]) -> Result<Value, String> {
 /// It reads api.json for every message, so it keeps working after the app restarts.
 pub fn mcp_bridge() {
     use std::io::BufRead;
-    let route = std::env::var("KANBAN_SESSION").unwrap_or_else(|_| "external".into());
+    // The same reading of KANBAN_SESSION as caller_headers: blank is no card session.
+    let route = std::env::var("KANBAN_SESSION").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| "external".into());
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
     for line in stdin.lock().lines() {

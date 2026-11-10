@@ -7,9 +7,22 @@
 // A "Router" button in the header (with a state dot) opens a panel docked on the right of the
 // board: the digest of what happened while it was closed, the live log, then the Router's Chat
 // and Terminal. The board narrows to make room, and a card panel opens to its left.
+//
+// The session pane (card #129): the same panel opens any running session, the way it opens the
+// Router (window.openSessionPane(src)). One at a time: opening another swaps what it shows. src:
+//   {kind:"router"}                            the Router, as above
+//   {kind:"card", cardId, num, title}          a card session in the app: its chat takes messages
+//                                              (session_send) and answers, and it has a Terminal
+//   {kind:"lane", key, repo}                   a merge lane (the merger, cards #160, #162): read only
+//   {kind:"sub", cardId, num, session, id, type, desc, running}
+//                                              a subagent's own conversation (subagent_read), read only
+//   {kind:"outside", id, cwd, title, account, cards}
+//                                              a Claude Code session outside the app that used this
+//                                              board (outside_transcript_read), read only
+// Each has its live log beside its chat (the Agents feed, narrowed to its cards or agent).
 // Uses board.js's $, esc, invoke, errText, cards, cardNum, render, boardHooks and panel.js's
 // md, stamp, groups, showShots, shotImg, attachedImages, userHtml, openShot, askAnswers, askAuto,
-// askReady, b64bytes and openPanel.
+// askReady, b64bytes, panel and openPanel.
 (()=>{
 const RID="router";
 const W_KEY="router.width",W_OLD=380,W_MIN=300;
@@ -22,42 +35,64 @@ const ev=()=>window.__TAURI__.event;
 
 let st={on:false,live:false,state:"off",model:"",effort:"",mayStart:false,pending:0,startedAt:null};
 let stErr="";
-let pane=null; // the open panel: {el, tab, entries, tools, offset, open, more, ask, timer, term, fit, feed, digest, feedOpen, unlisten}
+let pane=null; // the open panel: {el, src, cst, tab, entries, tools, offset, open, more, ask, timer, term, fit, feed, digest, feedOpen, unlisten}
 let pillDone=false,fallbackPill=null;
+
+// ---------- what the pane shows (card #129) ----------
+const kind=()=>pane?pane.src.kind:"router";
+const isRouter=()=>kind()==="router";
+// The session's key in the app's session map: the Router's, a lane's or the card's id.
+const key=()=>({router:RID,card:pane&&pane.src.cardId,lane:pane&&pane.src.key}[kind()]||null);
+// Types into it: the Router and a card session. The rest are read only.
+const writable=()=>isRouter()||kind()==="card";
+const hasTerm=()=>isRouter()||kind()==="card";
+// The state the pane draws: the Router's, else the card session's (session_info), else none.
+function cur(){
+  if(isRouter())return{live:st.live,state:st.state};
+  if(kind()==="card")return pane.cst||{live:false,state:"off"};
+  if(kind()==="lane"){const s=pane.src.state||"off";return{live:s!=="off",state:STATE_TEXT[s]?s:s==="permission"?"asks":"idle"}}
+  return{live:false,state:"off"};
+}
+const curState=()=>STATE_TEXT[cur().state]?cur().state:"off";
+const sameSrc=(a,b)=>a.kind===b.kind&&(a.cardId||"")===(b.cardId||"")&&(a.id||"")===(b.id||"")&&(a.key||"")===(b.key||"");
+// A card session's state as the Router's words: permission is "asks".
+const cardWord=i=>!i||!i.running?"off":i.state==="permission"?"asks":STATE_TEXT[i.state]?i.state:i.state==="failed"?"down":"starting";
+const shortPath=p=>{const s=String(p||"").replace(/[\\/]+$/,"");const parts=s.split(/[\\/]/);return parts.length>2?"…\\"+parts.slice(-2).join("\\"):s};
 
 // ---------- status and the header button ----------
 async function refreshStatus(){
   try{st=Object.assign({},st,await invoke("router_status"));stErr=""}
   catch(e){stErr=errText(e)}
-  drawButton();drawHead();drawCompose();drawPillFallback();
+  drawButton();if(isRouter()){drawHead();drawCompose()}drawPillFallback();
   if(typeof window.fbDraw==="function")try{window.fbDraw()}catch(e){}
 }
 const dotState=()=>STATE_TEXT[st.state]?st.state:"off";
 const neverStarted=()=>dotState()==="off"&&!st.on&&!st.startedAt;
 function drawButton(){
   const b=$("#routerBtn");if(!b)return;
-  const s=dotState();
+  const s=dotState(),open=!!pane&&isRouter();
   b.innerHTML=`<span class="rdot r-${s}" aria-hidden="true"></span>${neverStarted()?"Start Router":"Router"}`;
-  b.setAttribute("aria-pressed",pane?"true":"false");
-  b.title=stErr?`Router: can't read its state (${stErr})`:neverStarted()?"Start the Router: one session that watches the whole board":`Router: ${STATE_TEXT[s]}. Click to ${pane?"close":"open"} its panel.`;
+  b.setAttribute("aria-pressed",open?"true":"false");
+  b.title=stErr?`Router: can't read its state (${stErr})`:neverStarted()?"Start the Router: one session that watches the whole board":`Router: ${STATE_TEXT[s]}. Click to ${open?"close":"open"} its panel.`;
 }
 async function onButton(){
-  if(pane){closePane();return}
+  if(pane&&isRouter()){closePane();return}
   if(neverStarted()){
     const b=$("#routerBtn");if(b)b.disabled=true;
     try{st=Object.assign({},st,await invoke("router_start"));stErr=""}catch(e){stErr=errText(e);if(typeof status==="function")status("Couldn't start the Router: "+stErr,true)}
     if(b)b.disabled=false;drawButton();
   }
-  openPane();
+  openPane({kind:"router"});
 }
 
 // ---------- "Router asks": the filter bar's pill (card #120) or our own ----------
+const openRouter=()=>openPane({kind:"router"});
 function setupPill(){
   if(pillDone)return;
   if(typeof window.registerPill==="function"){
     pillDone=true;
     // Third in the row (order 30), in the Router's own tone, redrawn when its state changes (final-test F3).
-    try{window.registerPill({key:"router-asks",label:"Router asks",tone:"router",order:30,term:"is:router-asks",deps:()=>st.state,count:()=>(st.state==="asks"?1:0),onClick:()=>openPane()})}catch(e){console.error("router pill",e)}
+    try{window.registerPill({key:"router-asks",label:"Router asks",tone:"router",order:30,term:"is:router-asks",deps:()=>st.state,count:()=>(st.state==="asks"?1:0),onClick:openRouter})}catch(e){console.error("router pill",e)}
     return;
   }
   drawPillFallback();
@@ -66,14 +101,14 @@ function drawPillFallback(){
   if(pillDone)return;
   const b=$("#routerBtn");if(!b)return;
   if(!fallbackPill){fallbackPill=document.createElement("button");fallbackPill.type="button";fallbackPill.className="rpill";fallbackPill.textContent="Router asks";
-    fallbackPill.title="The Router is asking you something. Click to open its panel.";fallbackPill.onclick=()=>openPane();b.after(fallbackPill)}
+    fallbackPill.title="The Router is asking you something. Click to open its panel.";fallbackPill.onclick=openRouter;b.after(fallbackPill)}
   fallbackPill.hidden=st.state!=="asks";
 }
 // The pill's term in the filter box: every card still matches, and the term's arrival opens the panel.
 let askTermSeen=false,askTermWas=false;
 if(typeof boardHooks==="object"){
   boardHooks.filters.push((c,t)=>{if(t!=="is:router-asks")return null;askTermSeen=true;return true});
-  boardHooks.rendered.push(()=>{if(askTermSeen&&!askTermWas&&!pane)setTimeout(openPane,0);askTermWas=askTermSeen;askTermSeen=false});
+  boardHooks.rendered.push(()=>{if(askTermSeen&&!askTermWas&&!(pane&&isRouter()))setTimeout(openRouter,0);askTermWas=askTermSeen;askTermSeen=false});
 }
 
 // ---------- the panel ----------
@@ -92,70 +127,127 @@ function placeTop(){
   const top=h?Math.round(h.getBoundingClientRect().bottom+8):16;
   pane.el.style.top=top+"px";document.documentElement.style.setProperty("--rpane-top",top+"px");
 }
-function openPane(){
-  if(pane){drawButton();return}
-  const el=document.createElement("aside");el.className="rpane router";el.setAttribute("aria-label","Router");
-  el.innerHTML=`<div class="rpane-rz" title="Drag to change the Router panel's width. Double-click to reset."></div>
-  <div class="rpane-grid" id="r-grid"><div class="rpane-head"><span class="rdot" id="r-dot"></span><b class="rpane-ttl">Router</b><span class="rpane-meta" id="r-meta"></span><span class="rpane-asks" id="r-asks" hidden>Router asks</span>
-    <span class="rpane-acts"><button class="ibtn" id="r-start" type="button" hidden>Start</button><button class="ibtn" id="r-stop" type="button" hidden>Stop</button><button class="ibtn x" id="r-close" type="button" aria-label="Close the Router panel">✕</button></span></div>
+// The header's title and its buttons, by what the pane shows.
+function headHtml(src){
+  const x=`<button class="ibtn x" id="r-close" type="button" aria-label="Close the ${src.kind==="router"?"Router":"session"} panel">✕</button>`;
+  if(src.kind==="router")return`<span class="rdot" id="r-dot"></span><b class="rpane-ttl">Router</b><span class="rpane-meta" id="r-meta"></span><span class="rpane-asks" id="r-asks" hidden>Router asks</span>
+    <span class="rpane-acts"><button class="ibtn" id="r-start" type="button" hidden>Start</button><button class="ibtn" id="r-stop" type="button" hidden>Stop</button>${x}</span>`;
+  let ttl="",open="";
+  if(src.kind==="card"){ttl=`<button type="button" class="rcard" data-card="${esc(src.num)}">#${esc(src.num)}</button> ${esc(src.title||"")}`;open=`<button class="ibtn" id="r-opencard" type="button" title="Open the card's panel">Open card</button>`}
+  else if(src.kind==="lane")ttl=`Merge lane <span class="rpane-sub">${esc(src.repo||"")}</span>`;
+  else if(src.kind==="sub"){ttl=`${esc(src.type||"subagent")} on <button type="button" class="rcard" data-card="${esc(src.num)}">#${esc(src.num)}</button>`;open=`<button class="ibtn" id="r-opencard" type="button" title="Open the card whose session runs it">Open card session</button>`}
+  else ttl=`Outside the app${src.title?` <span class="rpane-sub">${esc(src.title)}</span>`:""}`;
+  return`<span class="rdot" id="r-dot"></span><b class="rpane-ttl">${ttl}</b><span class="rpane-meta" id="r-meta"></span><span class="rpane-asks" id="r-asks" hidden>Asks you</span><span class="rpane-acts">${open}${x}</span>`;
+}
+// The note in place of the message box, for a session nothing can type into.
+function roNote(src){
+  if(src.kind==="lane")return"The merge lane works on its own: it takes no messages here.";
+  if(src.kind==="sub")return`A subagent takes no messages: its card's session does. Open the card session to talk to it.`;
+  if(src.kind==="outside")return`Read only: this session runs outside the app${src.cwd?`, in ${esc(src.cwd)}`:""}${src.account?` (${src.account==="account2"?"Account 2":"main account"})`:""}. Type to it where it runs.`;
+  return"";
+}
+function openPane(src){
+  src=src&&src.kind?src:{kind:"router"};
+  if(pane){if(sameSrc(pane.src,src)){drawButton();return}closePane(true)}
+  const router=src.kind==="router",term=src.kind==="router"||src.kind==="card",wr=src.kind==="router"||src.kind==="card";
+  const label=router?"Router":"Session";
+  const el=document.createElement("aside");el.className="rpane router"+(router?"":" session s-"+src.kind);el.setAttribute("aria-label",router?"Router":"Session");
+  el.innerHTML=`<div class="rpane-rz" title="Drag to change the panel's width. Double-click to reset."></div>
+  <div class="rpane-grid" id="r-grid"><div class="rpane-head">${headHtml(src)}</div>
   <div class="rpane-left" id="r-left"><div id="r-digest"></div>
     <div class="rpane-feedwrap"><div class="rpane-feedhead"><h3>Live log</h3><button class="ibtn rpane-col" id="r-fold" type="button" aria-expanded="true" title="Collapse the live log">▾</button></div>
     <div class="rpane-feed" id="r-feed"><div class="quiet">Reading the log…</div></div></div></div>
-  <div class="rpane-right"><div class="rpane-tabs" role="tablist" aria-label="Router views"><button class="sub on" type="button" role="tab" data-tab="chat" aria-selected="true"><b>Chat</b></button><button class="sub" type="button" role="tab" data-tab="term" aria-selected="false"><b>Terminal</b></button></div>
+  <div class="rpane-right"><div class="rpane-tabs" role="tablist" aria-label="${label} views"><button class="sub on" type="button" role="tab" data-tab="chat" aria-selected="true"><b>Chat</b></button>${term?`<button class="sub" type="button" role="tab" data-tab="term" aria-selected="false"><b>Terminal</b></button>`:""}</div>
   <div class="rpane-body" id="r-body">
-    <div class="rpane-chat chat" id="r-chat"><div class="msgs" id="r-msgs"><div class="quiet">Reading the Router's conversation…</div></div><div class="busy" id="r-busy" hidden></div><div class="rtrust" id="r-trust" hidden></div>
-      <div class="compose" id="r-compose"><div class="atts" id="r-atts"></div><textarea id="r-text" rows="2" aria-label="Message to the Router"></textarea><button class="btn" id="r-send" type="button">Send</button></div>
+    <div class="rpane-chat chat" id="r-chat"><div class="msgs" id="r-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="r-busy" hidden></div><div class="rtrust" id="r-trust" hidden></div>
+      ${wr?`<div class="compose" id="r-compose"><div class="atts" id="r-atts"></div><textarea id="r-text" rows="2" aria-label="Message to the ${router?"Router":"card's session"}"></textarea><button class="btn" id="r-send" type="button">Send</button></div>`:`<div class="rpane-ro" id="r-ro">${roNote(src)}</div>`}
       <div class="rpane-foot" id="r-foot"></div></div>
-    <div class="rpane-term" id="r-termhost" hidden></div>
+    ${term?`<div class="rpane-term" id="r-termhost" hidden></div>`:""}
   </div></div></div>`;
   document.body.appendChild(el);
-  pane={el,tab:"chat",entries:[],tools:{},offset:0,open:new Set(),more:new Set(),ask:{},reading:false,timer:null,term:null,fit:null,
+  pane={el,src,cst:null,tab:"chat",entries:[],tools:{},offset:0,open:new Set(),more:new Set(),ask:{},reading:false,timer:null,term:null,fit:null,
     feed:null,feedOpen:store("router.feedOpen")!=="0",digest:null,unlisten:[],question:null,att:[]};
   document.body.classList.add("rpane-open","router-open");
   applyWidth(width());
-  el.querySelector("#r-close").onclick=closePane;
-  el.querySelector("#r-stop").onclick=stopRouter;
-  el.querySelector("#r-start").onclick=startRouter;
+  el.querySelector("#r-close").onclick=()=>closePane();
+  if(router){el.querySelector("#r-stop").onclick=stopRouter;el.querySelector("#r-start").onclick=startRouter}
+  const oc=el.querySelector("#r-opencard");if(oc)oc.onclick=()=>{const p=pane&&pane.src;if(!p)return;if(p.kind==="sub"&&p.cardId)openCardId(p.cardId);else openCard(p.num)};
   el.querySelector("#r-fold").onclick=()=>{pane.feedOpen=!pane.feedOpen;store("router.feedOpen",pane.feedOpen?"1":"0");drawFold()};
   el.querySelectorAll(".rpane-tabs [data-tab]").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
   addResize(el.querySelector(".rpane-rz"));
   setupChat(el);
   drawFold();drawHead();drawCompose();drawButton();
   mountFeed();
-  // The app holds the Router's toasts while its panel is open, as a card's (final-test F7).
-  invoke("router_panel_opened",{open:true}).catch(()=>{});
-  loadDigest();
+  if(router){
+    // The app holds the Router's toasts while its panel is open, as a card's (final-test F7).
+    invoke("router_panel_opened",{open:true}).catch(()=>{});
+    loadDigest();
+  }
+  if(src.kind==="card")refreshCard();
   pollTranscript();
-  pane.timer=setInterval(()=>{if(pane&&pane.tab==="chat"){pollTranscript();checkTrust()}},1500);
+  pane.timer=setInterval(()=>{if(!pane)return;if(pane.tab==="chat"){pollTranscript();if(isRouter())checkTrust()}if(kind()==="card")refreshCard()},1500);
   pane.busyTick=setInterval(drawBusy,1000);
   // A card panel already open moves to the left of this one.
   fitCardPanel();
+  paneChanged();
 }
-function closePane(){
+// The Agents drawer marks the tab of what this pane shows (card #173).
+function paneChanged(){try{window.dispatchEvent(new CustomEvent("session-pane"))}catch(e){}}
+// `swap`: another session opens in its place at once, so the board keeps its margin.
+function closePane(swap){
   if(!pane)return;
   clearInterval(pane.timer);clearInterval(pane.busyTick);
-  invoke("router_panel_opened",{open:false}).catch(()=>{});
+  if(isRouter())invoke("router_panel_opened",{open:false}).catch(()=>{});
   pane.unlisten.forEach(u=>{try{u()}catch(e){}});
-  if(pane.term){termUnlink(pane.link);try{pane.term.dispose()}catch(e){}}
+  dropTerm();
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
+  if(swap===true){drawButton();return}
+  paneChanged();
   document.body.classList.remove("router-open");if(!document.body.classList.contains("agents-open"))document.body.classList.remove("rpane-open");
   document.documentElement.style.removeProperty("--rpane-w"); // the board margins fall back to 380 px
   fitCardPanel();
   drawButton();
 }
-window.openRouterPanel=openPane;window.closeRouterPanel=closePane;
-// The width the board and a card panel leave free for the Router panel (0 when it is closed).
+window.openRouterPanel=openRouter;window.closeRouterPanel=()=>{if(pane&&isRouter())closePane()};
+// Card #129: open any session in this panel; close it whatever it shows.
+window.openSessionPane=src=>openPane(src);window.closeSessionPane=()=>closePane();
+window.sessionPaneShows=()=>pane?Object.assign({},pane.src):null;
+// The width the board and a card panel leave free for this panel (0 when it is closed).
 window.routerPaneWidth=()=>pane?width():0;
 
 function drawHead(){
-  if(!pane)return;const el=pane.el,s=dotState();
-  const d=el.querySelector("#r-dot");d.className="rdot r-"+s;d.title=`Router: ${STATE_TEXT[s]}${stErr?` (${stErr})`:""}`;
-  const meta=[st.model,st.effort].filter(Boolean).join(" · ");
-  el.querySelector("#r-meta").innerHTML=`${esc(meta)}${st.mayStart?` <span class="rpane-may" title="Router may start cards (Settings, Router)">· may start cards</span>`:""}`;
-  el.querySelector("#r-asks").hidden=st.state!=="asks";
-  el.querySelector("#r-stop").hidden=!st.live;
-  el.querySelector("#r-start").hidden=!!st.live;
+  if(!pane)return;const el=pane.el,c=cur(),s=curState();
+  const d=el.querySelector("#r-dot");d.className="rdot r-"+s;
+  const k=kind();
+  if(k==="router"){
+    d.title=`Router: ${STATE_TEXT[s]}${stErr?` (${stErr})`:""}`;
+    const meta=[st.model,st.effort].filter(Boolean).join(" · ");
+    el.querySelector("#r-meta").innerHTML=`${esc(meta)}${st.mayStart?` <span class="rpane-may" title="Router may start cards (Settings, Router)">· may start cards</span>`:""}`;
+    el.querySelector("#r-stop").hidden=!st.live;
+    el.querySelector("#r-start").hidden=!!st.live;
+  }else{
+    const src=pane.src,i=pane.cst&&pane.cst.info;
+    d.title=k==="card"?`Session: ${STATE_TEXT[s]}`:k==="sub"?(src.running?"Running":"Finished"):k==="lane"?`Merge lane: ${STATE_TEXT[s]}`:"Outside the app";
+    if(k==="sub"&&src.running)d.className="rdot r-working";
+    let meta="";
+    if(k==="card"){const row=i&&(i.running||i.latest);meta=[i?(i.running?STATE_TEXT[s]:"not running"):"",(row&&row.model)||(i&&i.model),(row&&row.effort)||(i&&i.effort)].filter(Boolean).join(" · ")}
+    else if(k==="sub")meta=[src.running?"running":"finished",src.desc].filter(Boolean).join(" · ");
+    else if(k==="lane")meta=STATE_TEXT[s];
+    else meta=[src.cwd?shortPath(src.cwd):"",src.account==="account2"?"Account 2":src.account?"main account":"",(src.cards||[]).length?(src.cards||[]).map(n=>"#"+n).join(" "):""].filter(Boolean).join(" · ");
+    el.querySelector("#r-meta").textContent=meta;el.querySelector("#r-meta").title=k==="outside"&&src.cwd?src.cwd:meta;
+  }
+  el.querySelector("#r-asks").hidden=c.state!=="asks";
+}
+// A card session's state, from session_info: whether it runs, and asks.
+async function refreshCard(){
+  if(!pane||kind()!=="card")return;const p=pane;
+  let i=null;try{i=await invoke("session_info",{cardId:p.src.cardId})}catch(e){i=null}
+  if(pane!==p)return;
+  const was=p.cst&&p.cst.live;
+  p.cst={live:!!(i&&i.running),state:cardWord(i),info:i};
+  drawHead();drawCompose();termGuard();
+  if(p.term&&was!==p.cst.live)attachTerm();
 }
 async function startRouter(){
   const b=pane&&pane.el.querySelector("#r-start");if(b){b.disabled=true;b.textContent="Starting…"}
@@ -222,12 +314,17 @@ function openCard(n){
   if(!c){if(typeof status==="function")status(`There's no card ${n} on this board.`,true);return}
   if(typeof openPanel==="function")openPanel(c.id);
 }
+function openCardId(id){
+  const c=(typeof cards!=="undefined"?cards:[]).find(x=>x.id===id);
+  if(!c){if(typeof status==="function")status("That card isn't on this board.",true);return}
+  if(typeof openPanel==="function")openPanel(c.id);
+}
 window.routerOpenCard=openCard;
 // "#12" in a line of text: bold and clickable.
 function linkText(t){return esc(t).replace(/#(\d+)\b/g,(m,n)=>cardLink(n))}
 async function loadDigest(){
   let r=null;try{r=await invoke("router_opened")}catch(e){r=null}
-  if(!pane)return;
+  if(!pane||!isRouter())return;
   pane.digest=r&&r.digest?r.digest:null;drawDigest();
 }
 function drawDigest(){
@@ -252,18 +349,28 @@ function hm(at){
   const t=d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
   return d.toDateString()===new Date().toDateString()?t:d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})+" "+t;
 }
+// The live log's filter for what the pane shows: the Router's is the whole feed.
+function feedFilter(src){
+  if(src.kind==="card")return{cards:[+src.num]};
+  if(src.kind==="sub"){const a=window.AgentsFeed?window.AgentsFeed.agentOf(src.type):"other";return a!=="other"?{cards:[+src.num],agents:[a]}:{cards:[+src.num]}}
+  if(src.kind==="lane")return{agents:["merger"]};
+  if(src.kind==="outside")return(src.cards||[]).length?{cards:src.cards.map(Number)}:null;
+  return{};
+}
 function mountFeed(){
-  const el=pane.el.querySelector("#r-feed");
+  const el=pane.el.querySelector("#r-feed"),f=feedFilter(pane.src);
+  if(!f){el.innerHTML=`<div class="rf-empty">It hasn't named a card yet, so there is nothing to show here.</div>`;return}
   if(typeof window.mountAgentsFeed==="function"){
     // The Agents feed itself (agents_feed), which holds the Router's log too (final-test F4).
-    try{el.innerHTML="";pane.feed=window.mountAgentsFeed(el,{filter:{},compact:true,onCard:n=>openCard(n)});return}
+    try{el.innerHTML="";pane.feed=window.mountAgentsFeed(el,{filter:f,compact:true,onCard:n=>openCard(n),onSession:item=>window.openSessionFromFeed&&window.openSessionFromFeed(item)});return}
     catch(e){console.error("agents feed",e);pane.feed=null}
   }
-  refreshFeed();
+  if(isRouter())refreshFeed();
 }
 async function refreshFeed(){
   if(!pane)return;
   if(pane.feed&&typeof pane.feed.refresh==="function"){try{pane.feed.refresh()}catch(e){}return}
+  if(!isRouter())return;
   const el=pane.el.querySelector("#r-feed");
   let rows;try{rows=await invoke("router_feed",{limit:200})}catch(e){if(pane)el.innerHTML=`<div class="rf-empty err">Can't read the Router's log: ${esc(errText(e))}</div>`;return}
   if(!pane)return;
@@ -280,22 +387,42 @@ function drawFold(){
 
 // ---------- tabs ----------
 function showTab(t){
-  if(!pane||pane.tab===t)return;pane.tab=t;
+  if(!pane||pane.tab===t)return;if(t==="term"&&!hasTerm())return;pane.tab=t;
   pane.el.querySelectorAll(".rpane-tabs [data-tab]").forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on))});
   pane.el.querySelector("#r-chat").hidden=t!=="chat";
-  const host=pane.el.querySelector("#r-termhost");host.hidden=t!=="term";
-  if(t==="term"){if(!pane.term)openTerm();else{try{pane.fit.fit()}catch(e){}}pane.term.focus()}
+  const host=pane.el.querySelector("#r-termhost");if(host)host.hidden=t!=="term";
+  if(t==="term"){if(termTaken()){termGuard();return}if(!pane.term)openTerm();else{try{pane.fit.fit()}catch(e){}}if(pane.term)pane.term.focus()}
   else pollTranscript();
 }
 
-// ---------- the terminal: xterm on the "router" session, as the card panel's ----------
+// ---------- the terminal: xterm on the session, as the card panel's ----------
+// One terminal per session (card #129): a card's terminal open in its card panel keeps this
+// one away, so the two never fight over the session's size.
+function termTaken(){
+  return kind()==="card"&&typeof panel!=="undefined"&&!!panel&&panel.id===pane.src.cardId&&!!panel.term;
+}
+function dropTerm(){
+  if(!pane||!pane.term)return;
+  termUnlink(pane.link);pane.link=null;try{pane.term.dispose()}catch(e){}pane.term=null;pane.fit=null;
+  const host=pane.el.querySelector("#r-termhost");if(host)host.innerHTML="";
+}
+function termGuard(){
+  if(!pane||!hasTerm())return;const host=pane.el.querySelector("#r-termhost");if(!host)return;
+  if(termTaken()){
+    dropTerm();
+    if(!host.querySelector(".rterm-note"))host.innerHTML=`<div class="rterm-note">Its terminal is open in the card panel. Close it there to use it here.</div>`;
+    return;
+  }
+  const n=host.querySelector(".rterm-note");if(n){n.remove();if(pane.tab==="term")openTerm()}
+}
 function openTerm(){
-  const host=pane.el.querySelector("#r-termhost");
+  if(!pane||!hasTerm()||termTaken())return;
+  const host=pane.el.querySelector("#r-termhost"),k=key();
   const term=new Terminal({fontFamily:'"IBM Plex Mono", Consolas, monospace',fontSize:13,cursorBlink:true,scrollback:5000,
     macOptionIsMeta:typeof IS_MAC!=="undefined"&&IS_MAC,theme:{background:"#0f1117",foreground:"#e6e8ef"}});
   const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(host);pane.term=term;pane.fit=fit;
-  pane.link=termLink(term,RID,"The Router isn't running. Start it with the Start button above.");
-  new ResizeObserver(()=>{if(pane&&pane.term===term&&!host.hidden){try{fit.fit()}catch(e){}if(pane.link&&pane.link.run)invoke("session_resize",{cardId:RID,cols:term.cols,rows:term.rows}).catch(()=>{})}}).observe(host);
+  pane.link=termLink(term,k,isRouter()?"The Router isn't running. Start it with the Start button above.":"No session is running for this card. Open the card to start or resume one.");
+  new ResizeObserver(()=>{if(pane&&pane.term===term&&!host.hidden&&!termTaken()){try{fit.fit()}catch(e){}if(pane.link&&pane.link.run)invoke("session_resize",{cardId:k,cols:term.cols,rows:term.rows}).catch(()=>{})}}).observe(host);
   attachTerm();
 }
 // termlink.js (card #95): replays once per open or new run, so a refresh never wipes the screen.
@@ -305,11 +432,11 @@ function attachTerm(){
   termAttach(pane.link);
 }
 
-// ---------- the chat: the Router's transcript, its questions and the message box ----------
+// ---------- the chat: the session's transcript, its questions and the message box ----------
 // Claude Code's folder-trust question at the Router's first start (final-test F5): shown in the
 // chat with buttons, so Hugh needn't find it in the Terminal tab.
 async function checkTrust(){
-  if(!pane)return;const box=pane.el.querySelector("#r-trust");if(!box)return;
+  if(!pane||!isRouter())return;const box=pane.el.querySelector("#r-trust");if(!box)return;
   let q=null;
   if(st.live)try{q=await invoke("router_trust")}catch(e){q=null}
   if(!pane)return;
@@ -323,11 +450,19 @@ async function checkTrust(){
     setTimeout(checkTrust,1500);
   });
 }
+// Where each kind's conversation is read.
+function readChunk(src,offset){
+  if(src.kind==="router")return invoke("transcript_read",{cardId:RID,offset,agent:null});
+  if(src.kind==="card")return invoke("transcript_read",{cardId:src.cardId,offset,agent:null});
+  if(src.kind==="lane")return invoke("transcript_read",{cardId:src.key,offset,agent:null});
+  if(src.kind==="sub")return invoke("subagent_read",{cardId:src.cardId,session:src.session,agent:src.id,offset});
+  return invoke("outside_transcript_read",{id:src.id,offset});
+}
 async function pollTranscript(){
   if(!pane||pane.reading)return;pane.reading=true;const p=pane;
   let chunk;
-  try{chunk=await invoke("transcript_read",{cardId:RID,offset:p.offset,agent:null})}
-  catch(e){p.reading=false;if(pane===p&&!p.entries.length)p.el.querySelector("#r-msgs").innerHTML=`<div class="quiet">Can't read the Router's conversation: ${esc(errText(e))}</div>`;return}
+  try{chunk=await readChunk(p.src,p.offset)}
+  catch(e){p.reading=false;if(pane===p&&!p.entries.length)p.el.querySelector("#r-msgs").innerHTML=`<div class="quiet">Can't read the conversation: ${esc(errText(e))}</div>`;return}
   p.reading=false;if(pane!==p)return;
   if(chunk.offset<p.offset){p.entries=[];p.tools={}}
   const first=p.offset===0;p.offset=chunk.offset;
@@ -341,11 +476,18 @@ async function pollTranscript(){
   renderChat(first);
 }
 const SHOW=300;
+function emptyText(){
+  const k=kind();
+  if(k==="router")return st.live?"No conversation yet. Send the Router a message below.":"The Router has no conversation yet. Start it to begin one.";
+  if(k==="card")return"No conversation yet. Send the session a message below.";
+  if(k==="sub")return"This subagent hasn't written anything yet.";
+  return"Nothing in this conversation yet.";
+}
 function renderChat(first){
   if(!pane)return;const box=pane.el.querySelector("#r-msgs");
   const near=box.scrollHeight-box.scrollTop-box.clientHeight<120;
   const all=groups(pane.entries),list=all.slice(-SHOW);
-  if(!all.length){box.innerHTML=`<div class="quiet">${st.live?"No conversation yet. Send the Router a message below.":"The Router has no conversation yet. Start it to begin one."}</div>`;return}
+  if(!all.length){box.innerHTML=`<div class="quiet">${emptyText()}</div>`;return}
   const html=[];
   if(all.length>list.length)html.push(`<div class="quiet">Showing the newest ${SHOW} entries.</div>`);
   for(const g of list){
@@ -382,15 +524,18 @@ function toolHtml(i){
   return`<details class="tool" data-k="${esc(tk)}"${k&&pane.open.has(tk)?" open":""}><summary><b>${esc(n)}</b>${d?` <span>${esc(d)}</span>`:""}${o&&o.is_error?` <em class="terr">error</em>`:""}</summary><div class="tbody">${body}</div></details>`;
 }
 function askState(k,n){if(!pane.ask[k])pane.ask[k]={picks:Array.from({length:n},()=>[]),text:Array(n).fill(""),sent:false};return pane.ask[k]}
-// Live: the Router is at a question, and this is it (the latest unanswered one).
+// Live: the session is at a question, and this is it (the latest unanswered one). Only the
+// sessions Hugh can answer: the Router and a card's.
 function askLive(e){
-  if(e.output||!st.live||st.state!=="asks")return false;
+  const c=cur();
+  if(e.output||!writable()||!c.live||c.state!=="asks")return false;
   const last=[...pane.entries].reverse().find(x=>x.ask&&!x.output);return last===e;
 }
 function askHtml(e){
   const qs=e.ask,k=e.tool_id||"",live=askLive(e),s=askState(k,qs.length),o=e.output;
+  const who=isRouter()?"The Router":"The session";
   const answers=o&&!o.is_error?askAnswers(o.text,qs):null;
-  const tag=o?(o.is_error?"The Router asked · dismissed":"The Router asked · answered"):s.sent&&live?"Sending your answer…":live?"The Router is asking you":"The Router asked";
+  const tag=o?(o.is_error?`${who} asked · dismissed`:`${who} asked · answered`):s.sent&&live?"Sending your answer…":live?`${who} is asking you`:`${who} asked`;
   let h=`<div class="m ask${live?" live":""}${o?" done":""}" data-ask="${esc(k)}">${stamp(e.at)}<div class="ptag">${esc(tag)}</div>`;
   qs.forEach((q,i)=>{
     h+=`<div class="q"><div class="qq">${q.header?`<span class="qh">${esc(q.header)}</span>`:""}${esc(q.question)}${q.multiSelect?` <span class="qm">pick any</span>`:""}</div>`;
@@ -403,10 +548,10 @@ function askHtml(e){
     }
     h+=`</div>`;
   });
-  if(o&&o.is_error)h+=`<div class="tnote">Dismissed in the terminal, so the Router stopped there.</div>`;
+  if(o&&o.is_error)h+=`<div class="tnote">Dismissed in the terminal, so ${isRouter()?"the Router":"the session"} stopped there.</div>`;
   else if(o&&!answers)h+=`<div class="qa">${esc(o.text)}</div>`;
   if(live&&!s.sent)h+=`<div class="pacts">${askAuto(qs)?"":`<button class="btn" type="button" data-ask-submit${askReady(qs,s)?"":" disabled"}>Submit answers</button>`}<span>${askAuto(qs)?"Click an answer, or answer in the terminal":"or answer in the terminal"}</span></div>`;
-  else if(!o&&!live)h+=`<div class="tnote">${st.state==="asks"?"Answer it in the terminal.":"Not answered yet."}</div>`;
+  else if(!o&&!live)h+=`<div class="tnote">${writable()&&cur().state==="asks"?"Answer it in the terminal.":"Not answered yet."}</div>`;
   return h+`</div>`;
 }
 async function askSubmit(k){
@@ -414,7 +559,7 @@ async function askSubmit(k){
   const s=askState(k,e.ask.length);if(s.sent||!askReady(e.ask,s))return;
   const answers=e.ask.map((q,i)=>!q.multiSelect&&s.text[i].trim()?{picks:[],text:s.text[i].trim()}:{picks:s.picks[i]});
   s.sent=true;renderChat(false);
-  try{await invoke("session_answer",{cardId:RID,toolId:k,answers})}
+  try{await invoke("session_answer",{cardId:key(),toolId:k,answers})}
   catch(err){if(!pane)return;s.sent=false;foot(`<span class="err">Not answered: ${esc(errText(err))}</span>`);renderChat(false)}
 }
 function setupChat(el){
@@ -448,31 +593,36 @@ function setupChat(el){
   });
   // Clicking "#12" anywhere in the panel opens that card.
   el.addEventListener("click",e=>{const c=e.target.closest("button.rcard[data-card]");if(!c)return;e.preventDefault();openCard(c.dataset.card)});
+  // A file dropped anywhere on the pane is cancelled (dragDropEnabled is off, so the window would
+  // open it), and taken only by a session that takes messages.
+  el.addEventListener("dragover",onDragOver);
+  el.addEventListener("drop",onDrop);
   // The message box: Enter sends, Shift+Enter is a new line.
-  const ta=el.querySelector("#r-text");
+  const ta=el.querySelector("#r-text");if(!ta)return;
   ta.addEventListener("keydown",e=>{if(e.isComposing)return;if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
   el.querySelector("#r-send").onclick=send;
   ta.addEventListener("paste",onPaste);
-  el.addEventListener("dragover",onDragOver);
-  el.addEventListener("drop",onDrop);
   el.querySelector("#r-atts").addEventListener("click",e=>{
     const b=e.target.closest(".rm");if(!b||!pane)return;
     pane.att.splice(+b.dataset.i,1);renderAtts();clearErr();ta.focus();
   });
 }
 // ---------- attachments: pasted or dropped images and files, saved in the data folder ----------
-// As the card chat (panel.js): saved in the data folder under attachments/router, and sent as "[Attached: <path>]" lines.
+// As the card chat (panel.js): saved in the data folder under attachments/<key> (the Router's
+// "router", a card's id), and sent as "[Attached: <path>]" lines.
 // Uses panel.js's hasFiles, withAttachments, readDataUrl, baseName and IMG_EXT.
 const clearErr=()=>{if(pane){const f=pane.el.querySelector("#r-foot");if(f&&f.querySelector(".err"))f.innerHTML=""}};
+// A card session takes files whether it runs or not (the message waits, as in the card panel).
+const canAttach=()=>writable()&&(isRouter()?st.live:true);
 function onPaste(e){
   const files=[...(e.clipboardData?e.clipboardData.files:[])];
-  if(!files.length||!pane||!st.live)return;
+  if(!files.length||!pane||!canAttach())return;
   // Keep any text that came with the image; only an image-only paste is taken over.
   if(!e.clipboardData.getData("text/plain"))e.preventDefault();
   addFiles(files);
 }
 async function addFiles(files){
-  if(!pane)return;const p=pane;
+  if(!pane)return;const p=pane,k=key();
   for(const f of files){
     const a={path:null,name:f.name||"screenshot.png",thumb:null};
     p.att.push(a);renderAtts();
@@ -481,7 +631,7 @@ async function addFiles(files){
       const data=await readDataUrl(f);
       if((f.type||"").startsWith("image/"))a.thumb=data;
       const name=f.name&&f.name!=="image.png"?f.name:`screenshot${f.type==="image/jpeg"?".jpg":".png"}`;
-      const path=await invoke("attachment_save",{cardId:RID,name,data});
+      const path=await invoke("attachment_save",{cardId:k,name,data});
       a.path=path;a.name=baseName(path);
       if(pane===p)clearErr();
     }catch(err){
@@ -504,39 +654,72 @@ function onDragOver(e){
 function onDrop(e){
   if(!hasFiles(e))return;e.preventDefault();
   if(!pane)return;
-  if(!st.live){if(typeof status==="function")status("Start the Router to attach files",true);return}
+  if(!writable()){if(typeof status==="function")status("This session is read-only: it takes no files",true);return}
+  if(!canAttach()){if(typeof status==="function")status("Start the Router to attach files",true);return}
   if(pane.tab!=="chat")showTab("chat");
   addFiles([...e.dataTransfer.files]);
 }
 async function send(){
-  if(!pane||!st.live||pane.sending)return;const p=pane,ta=p.el.querySelector("#r-text");
+  if(!pane||!writable()||pane.sending)return;if(isRouter()&&!st.live)return;
+  const p=pane,ta=p.el.querySelector("#r-text");
   const snap=p.att.slice();
   if(snap.some(a=>!a.path)){foot(`<span class="err">Wait for the attachments to finish saving.</span>`);return}
   const text=withAttachments(ta.value,snap.map(a=>a.path));
   if(!text.trim())return;
   p.sending=true;
-  try{await invoke("router_send",{text});if(pane===p){ta.value="";p.att=p.att.filter(a=>!snap.includes(a));renderAtts();foot("")}}
+  try{
+    if(isRouter())await invoke("router_send",{text});else await invoke("session_send",{cardId:p.src.cardId,text});
+    if(pane===p){ta.value="";p.att=p.att.filter(a=>!snap.includes(a));renderAtts();foot("")}}
   catch(e){
     // The same message comes when the typed text holds a secret; a saved file's name can too.
     const m=errText(e),hint=snap.length&&/looks like it holds a token, key/.test(m)?" If your text is fine, rename the file and attach it again.":"";
-    foot(`<span class="err">Not sent: ${esc(m)}${hint}</span>`)}
-  finally{if(pane===p)p.sending=false;refreshStatus()}
+    if(pane===p)foot(`<span class="err">Not sent: ${esc(m)}${hint}</span>`)}
+  finally{if(pane===p)p.sending=false;if(p.src.kind==="router")refreshStatus();else refreshCard()}
 }
 function drawCompose(){
   if(!pane)return;const ta=pane.el.querySelector("#r-text"),b=pane.el.querySelector("#r-send");
-  ta.disabled=b.disabled=!st.live;
-  ta.placeholder=st.live?`Send the Router a message… (Enter to send, Shift+Enter for a new line${st.state==="working"?"; it is typed in when the Router is free":""})`:"Start the Router to send it a message";
+  if(!ta||!b)return;
   const f=pane.el.querySelector("#r-foot");
-  if(!f.querySelector(".err"))f.innerHTML=st.pending>0?`<span>${st.pending} waiting for the Router: typed in when it is free</span>`:"";
+  if(isRouter()){
+    ta.disabled=b.disabled=!st.live;
+    ta.placeholder=st.live?`Send the Router a message… (Enter to send, Shift+Enter for a new line${st.state==="working"?"; it is typed in when the Router is free":""})`:"Start the Router to send it a message";
+    if(!f.querySelector(".err"))f.innerHTML=st.pending>0?`<span>${st.pending} waiting for the Router: typed in when it is free</span>`:"";
+    return;
+  }
+  const c=cur(),i=pane.cst&&pane.cst.info;
+  ta.disabled=b.disabled=false;
+  ta.placeholder=c.live?`Send the session a message… (Enter to send, Shift+Enter for a new line${c.state==="working"?"; it is typed in when the session is free":""})`:"The session isn't running: a message waits until it starts (open the card to start or resume it)";
+  if(!f.querySelector(".err"))f.innerHTML=i&&i.waiting?`<span>A message is waiting for the session.</span>`:"";
 }
 function drawBusy(){
-  if(!pane)return;const el=pane.el.querySelector("#r-busy");
-  const w=st.live&&(st.state==="working"||st.state==="asks"||st.state==="starting");
+  if(!pane)return;const el=pane.el.querySelector("#r-busy"),c=cur();
+  const w=writable()&&c.live&&(c.state==="working"||c.state==="asks"||c.state==="starting");
   if(!w){el.hidden=true;el.innerHTML="";el.classList.remove("asking");return}
-  const asking=st.state==="asks";
-  el.innerHTML=asking?`<span class="g">?</span> <span class="v">Waiting for you: answer the question above, or in the terminal</span>`:`<span class="g">✻</span> <span class="v">${st.state==="starting"?"Starting…":"Working…"}</span>`;
+  const asking=c.state==="asks";
+  el.innerHTML=asking?`<span class="g">?</span> <span class="v">Waiting for you: answer the question above, or in the terminal</span>`:`<span class="g">✻</span> <span class="v">${c.state==="starting"?"Starting…":"Working…"}</span>`;
   el.classList.toggle("asking",asking);el.hidden=false;
 }
+
+// ---------- opening a session from the Agents feed or the Running now list (card #129) ----------
+// A feed row's target (AgentsFeed.sessionTarget): the Router, or a subagent the app finds by its
+// id (a verdict) or by its type and the row's time, in the card's conversations or its lead's.
+window.openSessionFromFeed=async item=>{
+  const t=window.AgentsFeed&&window.AgentsFeed.sessionTarget(item);if(!t)return;
+  if(t.kind==="router"){openRouter();return}
+  let f=null;
+  try{f=await invoke("subagent_find",{card:t.card,agentId:t.agentId||null,kind:t.type,before:t.before||null})}
+  catch(e){if(typeof status==="function")status(`Couldn't find that ${t.type}: ${errText(e)}`,true);return}
+  if(!f){if(typeof status==="function")status(`There's no ${t.type} conversation for #${t.card} on this machine.`,true);return}
+  openPane({kind:"sub",cardId:f.cardId,num:t.card,session:f.session,id:f.id,type:f.agentType,desc:f.description,running:!!f.running});
+};
+
+// A lane's or a subagent's state follows the Running now poll (agents-feed.js), so the header
+// says when it stops: a lane gone from the list is off, a subagent gone from it has finished.
+window.onRunningNow=r=>{
+  if(!pane||!r)return;const src=pane.src;
+  if(src.kind==="lane"){const l=(r.lanes||[]).find(x=>x.key===src.key);const s=l?l.state:"off";if(s!==src.state){src.state=s;drawHead();drawBusy()}}
+  else if(src.kind==="sub"){const on=(r.cards||[]).some(c=>(c.subagents||[]).some(x=>x.id===src.id));if(on!==!!src.running){src.running=on;drawHead()}}
+};
 
 // ---------- start-up ----------
 function init(){
@@ -546,12 +729,14 @@ function init(){
   // card #120's filter bar may load after this file.
   addEventListener("load",()=>setTimeout(setupPill,0));
   try{
-    ev().listen("router-changed",()=>{refreshStatus();refreshFeed();if(pane&&pane.term)attachTerm()});
-    ev().listen("activity",e=>{if(e.payload&&e.payload.card===RID)refreshStatus()});
-    ev().listen("session-changed",e=>{if(e.payload===RID){refreshStatus();if(pane&&pane.term)attachTerm()}});
+    ev().listen("router-changed",()=>{refreshStatus();refreshFeed();if(pane&&pane.term&&isRouter())attachTerm()});
+    ev().listen("activity",e=>{if(e.payload&&e.payload.card===RID)refreshStatus();else if(pane&&kind()==="card"&&e.payload&&e.payload.card===pane.src.cardId)refreshCard()});
+    ev().listen("session-changed",e=>{if(e.payload===RID){refreshStatus();if(pane&&pane.term&&isRouter())attachTerm()}else if(pane&&kind()==="card"&&e.payload===pane.src.cardId){refreshCard();if(pane.term)attachTerm()}});
   }catch(e){}
   // A slow check besides the events, so a missed event can't leave the dot wrong for long.
   setInterval(refreshStatus,15000);
+  // The one-terminal rule: a card panel's terminal opening or closing.
+  setInterval(termGuard,1000);
   cardPanelWatch.observe(document.body,{childList:true});
   if(document.querySelector("section.panel"))watchPanelStyle();
   addEventListener("resize",()=>{if(pane){applyWidth(width());if(pane.fit){try{pane.fit.fit()}catch(e){}}}});

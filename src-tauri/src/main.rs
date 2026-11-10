@@ -36,6 +36,7 @@ mod router;
 // The Router session and its tools (card #119).
 mod routersession;
 mod routertools;
+mod running;
 mod search;
 mod platform;
 mod private;
@@ -971,6 +972,11 @@ fn main() {
             changes::card_changes_brief,
             // The agents' feed (card #120).
             feed::agents_feed,
+            // What runs now, and opening any of it (card #129).
+            running::sessions_running,
+            running::outside_transcript_read,
+            running::subagent_find,
+            running::subagent_read,
             changes::changes_open,
             proof::proof_list,
             proof::proof_read,

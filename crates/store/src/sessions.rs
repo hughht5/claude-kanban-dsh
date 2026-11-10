@@ -92,6 +92,27 @@ impl Store {
         Ok(rows)
     }
 
+    /// One card's session rows, newest first (status left out), for opening a subagent from any
+    /// of its conversations (card #129). Read-only.
+    pub fn card_sessions(&self, card_id: &str) -> Result<Vec<SessionRow>> {
+        let mut st = self.conn.prepare("SELECT s.*, NULL AS status FROM sessions s WHERE s.card_id = ?1 ORDER BY s.rowid DESC")?;
+        let rows = st.query_map([card_id], session_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every Claude session id the app has run itself: its card sessions, the Router's and the
+    /// merge lanes' conversations, every channel's rows on this board (card #129: never listed as
+    /// a session outside the app). Read-only; only the ids are read.
+    pub fn own_claude_ids(&self) -> Result<std::collections::HashSet<String>> {
+        let mut st = self.conn.prepare(
+            "SELECT claude_session_id FROM sessions
+             UNION SELECT claude_session_id FROM router_sessions
+             UNION SELECT claude_session_id FROM lane_sessions",
+        )?;
+        let ids = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<std::collections::HashSet<String>>>()?;
+        Ok(ids)
+    }
+
     /// Sessions whose latest status is still `running`, for marking orphans after a crash.
     pub fn running_sessions(&self) -> Result<Vec<String>> {
         let mut st = self.conn.prepare(
