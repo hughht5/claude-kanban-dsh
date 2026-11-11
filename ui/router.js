@@ -139,7 +139,8 @@ function openPane(src){
   <div class="rpane-grid" id="r-grid"><div class="rpane-head">${headHtml(src)}</div>
   <div class="rpane-left" id="r-left"><div id="r-digest"></div>
     <div class="rpane-feedwrap"><div class="rpane-feedhead"><h3>Live log</h3><button class="ibtn rpane-col" id="r-fold" type="button" aria-expanded="true" title="Collapse the live log">▾</button></div>
-    <div class="rpane-feed" id="r-feed"><div class="quiet">Reading the log…</div></div></div></div>
+    <div class="rpane-feed" id="r-feed"><div class="quiet">Reading the log…</div></div></div>
+    <div class="rpane-split" id="r-split" role="separator" aria-orientation="horizontal" aria-label="Resize the live log and the chat" tabindex="0" title="Drag to change how tall the live log and the chat are. Up and down arrows when focused. Double-click to reset."></div></div>
   <div class="rpane-right"><div class="rpane-tabs" role="tablist" aria-label="${label} views"><button class="sub on" type="button" role="tab" data-tab="chat" aria-selected="true"><b>Chat</b></button>${term?`<button class="sub" type="button" role="tab" data-tab="term" aria-selected="false"><b>Terminal</b></button>`:""}</div>
   <div class="rpane-body" id="r-body">
     <div class="rpane-chat chat" id="r-chat"><div class="msgs" id="r-msgs"><div class="quiet">Reading the conversation…</div></div><div class="busy" id="r-busy" hidden></div><div class="rtrust" id="r-trust" hidden></div>
@@ -158,6 +159,8 @@ function openPane(src){
   el.querySelector("#r-fold").onclick=()=>{pane.feedOpen=!pane.feedOpen;store("router.feedOpen",pane.feedOpen?"1":"0");drawFold()};
   el.querySelectorAll(".rpane-tabs [data-tab]").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
   addResize(el.querySelector(".rpane-rz"));
+  // The line between the live log and the chat (card #185), kept per panel type.
+  if(window.PaneSplit)pane.split=PaneSplit.attach({handle:el.querySelector("#r-split"),grid:el.querySelector("#r-grid"),feed:el.querySelector("#r-feed"),right:el.querySelector(".rpane-right"),kind:src.kind});
   setupChat(el);
   drawFold();drawHead();drawCompose();
   mountFeed();
@@ -365,6 +368,7 @@ async function refreshFeed(){
 function drawFold(){
   if(!pane)return;const f=pane.el.querySelector("#r-feed"),b=pane.el.querySelector("#r-fold");
   f.hidden=!pane.feedOpen;const g=pane.el.querySelector("#r-grid");if(g)g.classList.toggle("folded",!pane.feedOpen);b.setAttribute("aria-expanded",String(pane.feedOpen));b.textContent=pane.feedOpen?"▾":"▸";b.title=pane.feedOpen?"Collapse the live log":"Show the live log";
+  if(pane.split)pane.split.refit();
 }
 
 // ---------- tabs ----------

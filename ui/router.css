@@ -120,8 +120,20 @@ button.rcard:hover{text-decoration:underline}
 .rpane.router .rpane-feed{border-bottom:0}
 .rpane.router .rpane-feed[hidden]{display:none}
 .rpane-right{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0}
+/* The line between the live log and the chat (split.js, card #185): only while they are stacked and
+   the log is open. A height Hugh set (--log-h) replaces the log's 40% cap; the chat takes the rest. */
+.rpane-split{flex:none;height:7px;margin:-3px 0 -4px;position:relative;z-index:2;cursor:ns-resize;outline:none;touch-action:none}
+.rpane-split::after{content:"";position:absolute;left:0;right:0;top:3px;height:1px;background:transparent}
+.rpane-split:hover::after,.rpane-split.on::after{height:3px;top:2px;background:color-mix(in srgb,var(--accent) 45%,transparent)}
+.rpane-split:focus-visible::after{height:3px;top:2px;background:var(--accent)}
+.rpane-grid.folded .rpane-split{display:none}
+.rpane-grid.split-set .rpane-feed{height:var(--log-h);max-height:none;flex:none}
+body.resizing-v,body.resizing-v *{cursor:ns-resize!important;user-select:none}
+body.resizing-v .rpane-term{pointer-events:none}
 /* 618px: a saved width of 620 is a 618px container (1px border, border-box). */
 @container (min-width:618px){
+  .rpane-split{display:none}
+  .rpane-grid.split-set .rpane-feed{height:auto;flex:1 1 auto}
   .rpane-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
   .rpane-grid>.rpane-head{grid-column:1/-1}
   .rpane-left{border-bottom:0;border-right:1px solid var(--line)}

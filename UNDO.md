@@ -1098,3 +1098,7 @@ No data: requests live only in the app's memory (`src-tauri\src\shipask.rs`), an
 ## The header's Router button removed (11 Nov 2026, card #186)
 
 No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #186 commit>`, then stage the live update. Files: `ui\index.html` (the button), `ui\router.js` (`drawButton`, `onButton`; the fallback pill now sits before Settings), `ui\router.css`, `ui\settings.js` (the Router note), `src-tauri\src\routersession.rs` and `crates\store\src\router.rs` (messages that named the button), `docs\GUIDE.md`, `HANDOVER.md`.
+
+## Drag the line between the live log and the chat (11 Nov 2026, card #185)
+
+No data: the split is kept only in the page's localStorage (`rpane.split.router`, `rpane.split.session`); a double-click on the line clears it. `git -C ~\claude-kanban-dsh revert --no-edit <the card #185 commit>`, then stage the live update. Files: `ui\split.js` (new), `ui\router.js` (the handle, `PaneSplit.attach`, `drawFold`), `ui\router.css`, `ui\index.html`, `tools\ui-tests\split.test.mjs` (new), `README.md`, `HANDOVER.md`.

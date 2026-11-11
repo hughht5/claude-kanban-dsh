@@ -2436,3 +2436,8 @@ The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate 
 - **Tests:** `shipask::tests` (none, once, expired, other card, replaced, restore and dismiss, the
   refusal text), `tools::tests::t4_6_ship_request_needs_the_flag`, and kb's
   `move_for_hugh_asks_with_his_words`.
+
+## Drag the line between the live log and the chat (11 Nov 2026, card #185, branch `card-185`)
+
+- **`ui/split.js`** (`window.PaneSplit`, loaded before `router.js`): `attach({handle, grid, feed, right, kind})` wires `#r-split`, the `role="separator"` strip at the bottom of the session pane's `.rpane-left`. A drag (pointer events, its `pointerdown` default prevented so the focus and caret stay in the message box) or Up/Down (Shift for 64 px), Home and End on the focused handle set `--log-h` on `#r-grid` and the `split-set` class; `router.css` then gives `.rpane-feed` that height in place of its 40% cap, and the chat takes the rest. Limits: the log at least 60 px, the chat at least 160 px (`clamp`). Kept in localStorage per panel type: `rpane.split.router` and `rpane.split.session` (every other kind); a double-click clears it. A `ResizeObserver` on the grid and `drawFold` call `refit()`, which clamps the saved height to the room there is now, and drops it while the handle is hidden (folded log, or side by side from 618 px, where it does nothing).
+- **Tests:** `tools/ui-tests/split.test.mjs` (limits, keys, drag, saved per type, double-click, refit).
