@@ -1094,3 +1094,7 @@ No data: the card's fields are the same (`skipPlanning`, `skipHumanTest`, `subag
 ## An agent asks to ship a card for Hugh (10 Nov 2026, card #184)
 
 No data: requests live only in the app's memory (`src-tauri\src\shipask.rs`), and the log lines stay. `git -C ~\claude-kanban-dsh revert --no-edit <the card #184 commit>`, then stage the live update. Files: `src-tauri\src\shipask.rs` (new), `tools.rs` (`for_hugh` on `kanban_move_card`, `ask_ship`), `main.rs` (`ship_asks`, `approve_ship_ask`, `dismiss_ship_ask`), `notify.rs` (the toast's text), `api.rs` (the instructions), `crates\kb\src\main.rs` (`kb move --for-hugh`), `ui\panel.js` (the banner), `AGENTS.md`, `README.md`, `HANDOVER.md`, `PLAN.md` (decision 35), `ACCEPTANCE.md` (4.6a), `prompts\in-progress.md`. In the private prompts repo, revert its `card-184` commit.
+
+## The header's Router button removed (11 Nov 2026, card #186)
+
+No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #186 commit>`, then stage the live update. Files: `ui\index.html` (the button), `ui\router.js` (`drawButton`, `onButton`; the fallback pill now sits before Settings), `ui\router.css`, `ui\settings.js` (the Router note), `src-tauri\src\routersession.rs` and `crates\store\src\router.rs` (messages that named the button), `docs\GUIDE.md`, `HANDOVER.md`.

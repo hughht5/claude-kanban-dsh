@@ -59,32 +59,15 @@ const sameSrc=(a,b)=>a.kind===b.kind&&(a.cardId||"")===(b.cardId||"")&&(a.id||""
 const cardWord=i=>!i||!i.running?"off":i.state==="permission"?"asks":STATE_TEXT[i.state]?i.state:i.state==="failed"?"down":"starting";
 const shortPath=p=>{const s=String(p||"").replace(/[\\/]+$/,"");const parts=s.split(/[\\/]/);return parts.length>2?"…\\"+parts.slice(-2).join("\\"):s};
 
-// ---------- status and the header button ----------
+// ---------- status ----------
+// No header button (card #186): the Agents drawer's Router tab and the "Router asks" pill open the
+// panel, and the panel's own Start starts it.
 async function refreshStatus(){
   try{st=Object.assign({},st,await invoke("router_status"));stErr=""}
   catch(e){stErr=errText(e)}
-  drawButton();if(isRouter()){drawHead();drawCompose()}drawPillFallback();
+  if(isRouter()){drawHead();drawCompose()}drawPillFallback();
   if(typeof window.fbDraw==="function")try{window.fbDraw()}catch(e){}
 }
-const dotState=()=>STATE_TEXT[st.state]?st.state:"off";
-const neverStarted=()=>dotState()==="off"&&!st.on&&!st.startedAt;
-function drawButton(){
-  const b=$("#routerBtn");if(!b)return;
-  const s=dotState(),open=!!pane&&isRouter();
-  b.innerHTML=`<span class="rdot r-${s}" aria-hidden="true"></span>${neverStarted()?"Start Router":"Router"}`;
-  b.setAttribute("aria-pressed",open?"true":"false");
-  b.title=stErr?`Router: can't read its state (${stErr})`:neverStarted()?"Start the Router: one session that watches the whole board":`Router: ${STATE_TEXT[s]}. Click to ${open?"close":"open"} its panel.`;
-}
-async function onButton(){
-  if(pane&&isRouter()){closePane();return}
-  if(neverStarted()){
-    const b=$("#routerBtn");if(b)b.disabled=true;
-    try{st=Object.assign({},st,await invoke("router_start"));stErr=""}catch(e){stErr=errText(e);if(typeof status==="function")status("Couldn't start the Router: "+stErr,true)}
-    if(b)b.disabled=false;drawButton();
-  }
-  openPane({kind:"router"});
-}
-
 // ---------- "Router asks": the filter bar's pill (card #120) or our own ----------
 const openRouter=()=>openPane({kind:"router"});
 function setupPill(){
@@ -99,9 +82,9 @@ function setupPill(){
 }
 function drawPillFallback(){
   if(pillDone)return;
-  const b=$("#routerBtn");if(!b)return;
+  const b=$("#settingsBtn");if(!b)return;
   if(!fallbackPill){fallbackPill=document.createElement("button");fallbackPill.type="button";fallbackPill.className="rpill";fallbackPill.textContent="Router asks";
-    fallbackPill.title="The Router is asking you something. Click to open its panel.";fallbackPill.onclick=openRouter;b.after(fallbackPill)}
+    fallbackPill.title="The Router is asking you something. Click to open its panel.";fallbackPill.onclick=openRouter;b.before(fallbackPill)}
   fallbackPill.hidden=st.state!=="asks";
 }
 // The pill's term in the filter box: every card still matches, and the term's arrival opens the panel.
@@ -148,7 +131,7 @@ function roNote(src){
 }
 function openPane(src){
   src=src&&src.kind?src:{kind:"router"};
-  if(pane){if(sameSrc(pane.src,src)){drawButton();return}closePane(true)}
+  if(pane){if(sameSrc(pane.src,src))return;closePane(true)}
   const router=src.kind==="router",term=src.kind==="router"||src.kind==="card",wr=src.kind==="router"||src.kind==="card";
   const label=router?"Router":"Session";
   const el=document.createElement("aside");el.className="rpane router"+(router?"":" session s-"+src.kind);el.setAttribute("aria-label",router?"Router":"Session");
@@ -176,7 +159,7 @@ function openPane(src){
   el.querySelectorAll(".rpane-tabs [data-tab]").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
   addResize(el.querySelector(".rpane-rz"));
   setupChat(el);
-  drawFold();drawHead();drawCompose();drawButton();
+  drawFold();drawHead();drawCompose();
   mountFeed();
   if(router){
     // The app holds the Router's toasts while its panel is open, as a card's (final-test F7).
@@ -202,12 +185,11 @@ function closePane(swap){
   dropTerm();
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
-  if(swap===true){drawButton();return}
+  if(swap===true)return;
   paneChanged();
   document.body.classList.remove("router-open");if(!document.body.classList.contains("agents-open"))document.body.classList.remove("rpane-open");
   document.documentElement.style.removeProperty("--rpane-w"); // the board margins fall back to 380 px
   fitCardPanel();
-  drawButton();
 }
 window.openRouterPanel=openRouter;window.closeRouterPanel=()=>{if(pane&&isRouter())closePane()};
 // Card #129: open any session in this panel; close it whatever it shows.
@@ -253,13 +235,13 @@ async function startRouter(){
   const b=pane&&pane.el.querySelector("#r-start");if(b){b.disabled=true;b.textContent="Starting…"}
   try{st=Object.assign({},st,await invoke("router_start"));stErr="";foot("")}catch(e){foot(`<span class="err">Couldn't start the Router: ${esc(errText(e))}</span>`)}
   if(b){b.disabled=false;b.textContent="Start"}
-  drawButton();drawHead();drawCompose();if(pane&&pane.term)attachTerm();
+  drawHead();drawCompose();if(pane&&pane.term)attachTerm();
 }
 async function stopRouter(){
   const b=pane&&pane.el.querySelector("#r-stop");if(b){b.disabled=true;b.textContent="Stopping…"}
   try{st=Object.assign({},st,await invoke("router_stop"));stErr="";foot("")}catch(e){foot(`<span class="err">Couldn't stop the Router: ${esc(errText(e))}</span>`)}
   if(b){b.disabled=false;b.textContent="Stop"}
-  drawButton();drawHead();drawCompose();if(pane&&pane.term)attachTerm();
+  drawHead();drawCompose();if(pane&&pane.term)attachTerm();
 }
 function foot(html){if(pane)pane.el.querySelector("#r-foot").innerHTML=html}
 
@@ -723,8 +705,6 @@ window.onRunningNow=r=>{
 
 // ---------- start-up ----------
 function init(){
-  const b=$("#routerBtn");if(b){b.hidden=false;b.onclick=onButton}
-  drawButton();
   refreshStatus().then(setupPill);
   // card #120's filter bar may load after this file.
   addEventListener("load",()=>setTimeout(setupPill,0));

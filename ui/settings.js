@@ -433,7 +433,7 @@ async function router(m){
   const model=mo.value||mo.default||"claude-sonnet-5-5",effort=ef.value||ef.default||"low",may=(ms.value||ms.default||"off")==="on";
   const models=ROUTER_MODELS.some(([v])=>v===model)?ROUTER_MODELS:[...ROUTER_MODELS,[model,model]];
   m.innerHTML=`<h3>Router</h3>
-  <p class="note">The Router is one long-running Claude Code session for the whole board: it routes cards, checks them and sends them back. Open it with the Router button in the header. A model or effort change applies the next time it starts.</p>
+  <p class="note">The Router is one long-running Claude Code session for the whole board: it routes cards, checks them and sends them back. Open it from the Router tab at the top of the Agents drawer. A model or effort change applies the next time it starts.</p>
   <div class="st-box" data-setting="router"><div class="st-row">
     <label class="f">Model<select class="tx" id="st-rmodel">${models.map(([v,n])=>opt(v,model,n)).join("")}</select></label>
     <label class="f">Effort<select class="colsel" id="st-reffort">${EFFORTS.map(x=>opt(x,effort)).join("")}</select></label></div>

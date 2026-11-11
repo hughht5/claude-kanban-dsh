@@ -1392,8 +1392,9 @@ never moves a card into Ship it. It doesn't merge this app's own cards onto an i
 any more (card #148): each is tested in its own test app and ships alone, and a stack's lead
 integrates its own children.
 
-- **Start it** with the **Router** button in the board's header ("Start Router" before the first
-  start). Nothing changes on the board until you do. Its panel docks on the right: a digest when
+- **Start it** from its panel: open **Agents** in the header, click the **Router** tab at the top,
+  then **Start**. (The header's own Router button went in card #186.) Nothing changes on the board
+  until you do. The **Router asks** pill in the filter bar opens the panel too. Its panel docks on the right: a digest when
   you have been away 2 hours or more, the Router's log, then **Chat** and **Terminal**. **Stop**
   turns it off; while it is on, the app resumes it after a restart.
 - **Send it a screenshot.** Paste an image into its message box, or drop a file on the panel: a

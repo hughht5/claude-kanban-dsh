@@ -11,9 +11,9 @@ body.router-open{--pane-used:var(--rpane-w)}
 body.agents-open{--pane-used:var(--apane-w)}
 body.router-open.agents-open{--pane-used:calc(var(--rpane-w) + var(--apane-w) + 16px)}
 
-/* The header button and its state dot: off grey, idle green, working accent, asks amber, down red. */
-.rbtn{display:inline-flex;align-items:center;gap:6px;align-self:center}
-.rbtn[hidden]{display:none}
+/* The state dot (the panel's head, the Agents drawer's tabs): off grey, idle green, working accent,
+   asks amber, down red. The header's Router button is gone (card #186): the Agents drawer's Router
+   tab and the "Router asks" pill open the panel. */
 .rdot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);flex:0 0 auto}
 .rdot.r-idle{background:var(--ok)}
 .rdot.r-working,.rdot.r-starting{background:var(--accent);animation:rpulse 1.2s ease-in-out infinite}

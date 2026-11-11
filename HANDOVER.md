@@ -2067,7 +2067,7 @@ Router-off message shows; the disabled box has `pointer-events:none`.
 ## The Router session (6 Nov 2026, card #119, branch `dsh-119`)
 
 One long-running Claude Code session the app owns for the whole board (the DSH "router"). Hugh
-starts it with the header's Router button and talks to it in the Router panel, with `kb router`,
+starts it from the Router panel (the Router tab in the Agents drawer; the header's Router button went in card #186) and talks to it in the Router panel, with `kb router`,
 or any session with `kanban_router`. The decisions below are the router's after the critic's FAIL
 (`~\kanban-critic\119.md`); the plan on card #119 has the rest.
 
@@ -2140,7 +2140,7 @@ or any session with `kanban_router`. The decisions below are the router's after 
   FAIL, a `MODE: integrate` and `TESTS:` line. `on_stop` writes `integrate` (not `merge`), and a
   failed TESTS line makes it a FAIL. The ship job merges origin/main into an integration branch
   once instead of a rebase.
-- **Panel.** `ui/router.js`, `ui/router.css`: the header button (state dot), a panel docked
+- **Panel.** `ui/router.js`, `ui/router.css`: a panel docked
   right (default min(720 px, 55% of the window), resizable; log and chat side by side from a 620 px width, stacked below it, card #128; a saved 380 counts as unset, double-click on the edge clears the saved width), the digest, the feed (card #120's `mountAgentsFeed` when present,
   else a plain list from `router_feed`), Chat and Terminal tabs, the "Router asks" pill
   (`registerPill` when #120 is merged). Commands: `router_status`, `router_start`, `router_stop`,

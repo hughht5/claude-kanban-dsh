@@ -226,7 +226,7 @@ impl Store {
         self.set_setting(ROUTER_RESUME_AFTER_KEY, &last.to_string())?;
         self.set_setting(ROUTER_ON_KEY, "0")?;
         if last > 0 {
-            self.add_router_log("session", None, "Board copied: the Router of the board this came from is not resumed here. Start a new one with the Router button.", "the app")?;
+            self.add_router_log("session", None, "Board copied: the Router of the board this came from is not resumed here. Start a new one from the Router panel (the Router tab in the Agents drawer).", "the app")?;
         }
         Ok(())
     }
