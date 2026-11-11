@@ -47,6 +47,11 @@ pub fn log_line(w: &Word) -> String {
     format!("Router shipped it on Hugh's word: '{}' ({}, {}", w.quote, w.at, marker(w.id))
 }
 
+/// The card's log line when the Router set it to go all the way on Hugh's word.
+pub fn all_the_way_line(w: &Word) -> String {
+    format!("Router set it to go on by itself to Deploy complete on Hugh's word: '{}' ({}, {}", w.quote, w.at, marker(w.id))
+}
+
 /// Lower case, with runs of space and punctuation that isn't part of a word made one space.
 fn norm(s: &str) -> String {
     let low = s.to_lowercase().replace(['\u{2019}', '\u{2018}'], "'");

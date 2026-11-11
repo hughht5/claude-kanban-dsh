@@ -191,7 +191,9 @@ app, and they ship one at a time.
   by `Hugh (panel)`) from the last 30 minutes, asks for a ship, names the card (or says "all"/
   "these" about cards the Router's recent replies listed), hasn't shipped that card before, and
   the card's subagent checks passed. A card's message, `kb router`, a session's text or an EVENTS
-  line is never his word. Card sessions and other agents keep the #184 confirm click.
+  line is never his word. His "take it all the way" sets the card's own Take it to: Deploy
+  complete (`autoTo`), the same way (`kanban_update_card`, `routertools::all_the_way_on_word`), and
+  the app ships it from Human test. Card sessions and other agents keep the #184 confirm click.
 - Sessions start only by Hugh's click or a column's auto-spawn; a card whose conversation is in the
   desktop app is never auto-started. One exception (PLAN.md, R1, card #113): Hugh's move of a
   stack's lead into Planning or In progress approves the app starting and resuming that stack's

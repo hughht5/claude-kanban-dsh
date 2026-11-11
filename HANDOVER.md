@@ -2470,8 +2470,16 @@ Hugh, 11 Nov: "Agents and router should open automatically on start." UI only.
   (on Hugh's word)", ship record `"word": true`), the log line "Router shipped it on Hugh's word:
   '<quote>' (<time>, message m<id>)", a Router decision line, and `dispatch::after_router_move`
   (the ship starts, or waits its turn).
-- **Take it all the way.** Covered by the same move: the Router ships the card once its tester has
-  passed, within the 30 minutes; after that it tells Hugh the card is ready.
+- **Take it all the way.** Hugh's "take #n all the way" (or "skip human testing") about a card
+  not ready to ship: the Router's `kanban_update_card` with `fields: {"autoTo": "Deploy complete"}`
+  alone, citing his message the same way, goes to `routertools::all_the_way_on_word`
+  (`all_the_way_refused`: only Deploy complete, the version, Backlog to Human test or Blocked, not
+  a stack's child, then `hughs_word`). It sets the card's own Take it to (by `WORD_BY`), logs
+  "Router set it to go on by itself to Deploy complete on Hugh's word: '<quote>' (...)", and runs
+  `dispatch::auto_progress`, so the app moves it into Ship it for him once it is in Human test
+  (through its subagent test), however long the build takes. The 30 minutes are for the Router to
+  act on his word, not for the build. A tester run found the first version, which shipped only
+  inside the 30 minutes, too short for a build and test.
 - **Unchanged:** with no matching message the move is refused as before; card sessions and other
   agents keep #184's confirm click; `routersession::move_refused` still refuses Ship it on the
   Router's ordinary path.

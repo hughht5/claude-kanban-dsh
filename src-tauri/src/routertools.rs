@@ -52,6 +52,16 @@ pub fn tool_list() -> Value {
                 t["inputSchema"]["properties"]["if_version"] = json!({ "type": "integer", "description": "The card's version from the event or your last read. Required." });
                 t["inputSchema"]["required"] = json!(if name == "kanban_move_card" { json!(["card", "column", "reason", "if_version"]) } else { json!(["card", "fields", "if_version"]) });
             }
+            if name == "kanban_update_card" {
+                // Card #188: Hugh's "take it all the way", on his typed word.
+                if let Some(props) = t["inputSchema"]["properties"].as_object_mut() {
+                    props.insert("hugh_message".into(), json!({ "type": "integer", "description": "Only with fields {\"autoTo\": \"Deploy complete\"}: the id of the message Hugh typed in the Router panel telling you to take this card all the way (kanban_router_log with hugh: true)." }));
+                    props.insert("hugh_words".into(), json!({ "type": "string", "description": "Only with autoTo: his words from that message, quoted exactly." }));
+                }
+                if let Some(d) = t["description"].as_str() {
+                    t["description"] = json!(format!("{d} The Router may also set autoTo to \"Deploy complete\" (Hugh's Take it to), on its own, only on Hugh's typed word in the Router panel to take the card all the way: pass hugh_message and hugh_words. The app then moves the card into Ship it for him once it is in Human test, through its subagent test."));
+                }
+            }
             if name == "kanban_move_card" {
                 // Card #188: the Router's own Ship it, on Hugh's typed word; no for_hugh ask.
                 t["description"] = json!(ROUTER_MOVE_DESCRIPTION);
@@ -129,12 +139,7 @@ pub fn ship_on_word_refused(store: &Store, c: &Card, version: i64, id: i64, quot
     if let Some(lead) = c.stack_of() {
         return Err(format!("#{} ships with its stack: ship stack #{lead}", c.number));
     }
-    let since = chrono::DateTime::from_timestamp_millis(now_ms - crate::hughword::WORD_FOR_MS - 60_000)
-        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .unwrap_or_default();
-    let lines = store.router_log_since_time(&since, 2000).map_err(|e| e.to_string())?;
-    let used = store.log(&c.id).map_err(|e| e.to_string())?.iter().any(|l| l.text.contains(&crate::hughword::marker(id)));
-    let word = crate::hughword::check(&lines, id, quote, c.number, listed, used, now_ms)?;
+    let word = hughs_word(store, c, id, quote, listed, now_ms)?;
     // From In progress the ship passes Human test, so it is held to that move's gates too (the
     // subagent review and test); from Human test they already held.
     let gate_to = if c.column == "In progress" { "Human test" } else { "Ship it" };
@@ -148,6 +153,80 @@ pub fn ship_on_word_refused(store: &Store, c: &Card, version: i64, id: i64, quot
         }
     }
     Ok(word)
+}
+
+/// Hugh's message `id`, checked for card `c` (`hughword::check`): his panel typing from the
+/// last 30 minutes that asks for a ship and names the card, not used for it before.
+fn hughs_word(store: &Store, c: &Card, id: i64, quote: &str, listed: &[i64], now_ms: i64) -> Result<crate::hughword::Word, String> {
+    let since = chrono::DateTime::from_timestamp_millis(now_ms - crate::hughword::WORD_FOR_MS - 60_000)
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .unwrap_or_default();
+    let lines = store.router_log_since_time(&since, 2000).map_err(|e| e.to_string())?;
+    let used = store.log(&c.id).map_err(|e| e.to_string())?.iter().any(|l| l.text.contains(&crate::hughword::marker(id)));
+    crate::hughword::check(&lines, id, quote, c.number, listed, used, now_ms)
+}
+
+/// Card #188: Hugh's "take #n all the way" (or "skip human testing") in the Router panel. The
+/// Router sets the card's own Take it to: Deploy complete (`autoTo`) on his typed word, so the
+/// app moves it into Ship it for him once it reaches Human test (through its subagent test), as
+/// his Take it to does, however long the build takes. Only Deploy complete, and only with his word.
+fn all_the_way_on_word(app: &AppHandle, args: &Value) -> Result<Value, String> {
+    let n = number(args)?;
+    let v = version(args)?;
+    let fields = args.get("fields").and_then(Value::as_object).ok_or("pass the fields to change as `fields`")?;
+    if fields.len() != 1 {
+        return Err("set autoTo on its own, in a call of its own".into());
+    }
+    let id = args.get("hugh_message").and_then(Value::as_i64).ok_or(
+        "the card's Take it to (autoTo) is Hugh's: set it only when he told you to take this card all the way in the Router panel, with `hugh_message` (the id of his typed message; kanban_router_log with hugh: true lists them) and `hugh_words` (his words from it)",
+    )?;
+    let quote = args.get("hugh_words").and_then(Value::as_str).unwrap_or("");
+    let listed: Vec<i64> = {
+        let board = app.state::<Board>();
+        let store = board.0.lock().map_err(|e| e.to_string())?;
+        routersession::replies(&store, LISTED_REPLIES).iter().flat_map(|r| crate::hughword::numbers(r)).collect()
+    };
+    let board = app.state::<Board>();
+    let mut store = board.0.lock().map_err(|e| e.to_string())?;
+    let c = store.get_by_number(n).map_err(|e| e.to_string())?;
+    let word = match all_the_way_refused(&store, &c, v, fields.get(kanban_store::AUTO_KEY).unwrap_or(&Value::Null), id, quote, &listed, chrono::Utc::now().timestamp_millis()) {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = store.add_log(&c.id, &format!("Refused the Router's Take it to: {e}"), "the app");
+            return Err(format!("refused: {e}"));
+        }
+    };
+    let mut patch = kanban_store::Patch::new();
+    patch.insert(kanban_store::AUTO_KEY.into(), json!("Deploy complete"));
+    store.update(&c.id, v, &patch, kanban_store::WORD_BY).map_err(|e| format!("refused: {e}"))?;
+    let _ = store.add_log(&c.id, &crate::hughword::all_the_way_line(&word), ROUTER_BY);
+    // Already in Human test: it goes on now, as the app's Take it to does on arrival.
+    crate::dispatch::auto_progress(app, &mut store, &c.id);
+    drop(store);
+    let _ = tauri::Emitter::emit(app, "cards-changed", ());
+    log_decision(app, Some(n), &format!("Set #{n} to go on by itself to Deploy complete on Hugh's word (m{id}): '{}'", word.quote));
+    Ok(json!(format!("Card #{n} now goes on by itself to Deploy complete (Hugh's Take it to): once it is in Human test, through its subagent test, the app moves it into Ship it for him.")))
+}
+
+/// Why the Router may not set card `c` to go on by itself to `to` on Hugh's message `id`, else
+/// his checked word (card #188).
+pub fn all_the_way_refused(store: &Store, c: &Card, version: i64, to: &Value, id: i64, quote: &str, listed: &[i64], now_ms: i64) -> Result<crate::hughword::Word, String> {
+    if to.as_str() != Some("Deploy complete") {
+        return Err("on Hugh's word you may set autoTo to \"Deploy complete\" only; anything else is his to set".into());
+    }
+    if c.archived {
+        return Err(format!("card #{} is archived", c.number));
+    }
+    if c.version != version {
+        return Err(format!("card #{} changed: you had version {version}, it is now at {}. Read it again and decide again", c.number, c.version));
+    }
+    if !["Backlog", "Planning", "In progress", "Human test", "Blocked"].contains(&c.column.as_str()) {
+        return Err(format!("card #{} is in {}: too late to set where it goes", c.number, c.column));
+    }
+    if let Some(lead) = c.stack_of() {
+        return Err(format!("#{} goes on with its stack: set it on stack #{lead}", c.number));
+    }
+    hughs_word(store, c, id, quote, listed, now_ms)
 }
 
 fn number(args: &Value) -> Result<i64, String> {
@@ -210,6 +289,8 @@ pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Valu
             let out = crate::tools::call_as_router(app, row, name, args)?;
             Ok(out)
         }
+        // Card #188: Hugh's "take it all the way", on his typed word in the Router panel.
+        "kanban_update_card" if args.get("fields").and_then(|f| f.get(kanban_store::AUTO_KEY)).is_some() => all_the_way_on_word(app, args),
         "kanban_update_card" => {
             {
                 let board = app.state::<Board>();
@@ -681,6 +762,20 @@ mod tests {
         let e = ship_on_word_refused(&s, &c, c.version, id, "ship", &[], now_ms()).unwrap_err();
         assert!(e.contains("hasn't passed a subagent test"), "{e}");
         assert!(ship_on_word_refused(&s, &c, c.version + 1, id, "ship", &[], now_ms()).unwrap_err().contains("changed"));
+        // Hugh's "take it all the way": the card's own Take it to, on his word only.
+        let far = word_card(&mut s, "In progress", json!({}));
+        let fid = s.add_router_log("event", None, &format!("take #{} all the way, skip human testing", far.number), crate::hughword::PANEL_BY).unwrap();
+        let q = format!("take #{} all the way", far.number);
+        assert!(all_the_way_refused(&s, &far, far.version, &json!("Human test"), fid, &q, &[], now_ms()).unwrap_err().contains("only"));
+        assert!(all_the_way_refused(&s, &far, far.version, &json!("Deploy complete"), id, "ship", &[], now_ms()).is_err(), "a message about another card");
+        let kb = s.add_router_log("event", None, &q, "Hugh (kb)").unwrap();
+        assert!(all_the_way_refused(&s, &far, far.version, &json!("Deploy complete"), kb, &q, &[], now_ms()).unwrap_err().contains("not Hugh's typing"));
+        let w = all_the_way_refused(&s, &far, far.version, &json!("Deploy complete"), fid, &q, &[], now_ms()).unwrap();
+        assert!(crate::hughword::all_the_way_line(&w).starts_with(&format!("Router set it to go on by itself to Deploy complete on Hugh's word: '{q}' (")));
+        let mut patch = kanban_store::Patch::new();
+        patch.insert(kanban_store::AUTO_KEY.into(), json!("Deploy complete"));
+        let set = s.update(&far.id, far.version, &patch, kanban_store::WORD_BY).unwrap();
+        assert_eq!(set.auto_to(), Some("Deploy complete"), "the app's own Take it to now carries it on from Human test");
         // The Router is offered the cited move, and no for_hugh ask.
         let mv = tool_list().as_array().unwrap().iter().find(|t| t["name"] == "kanban_move_card").cloned().unwrap();
         assert!(mv["inputSchema"]["properties"].get("hugh_message").is_some() && mv["inputSchema"]["properties"].get("for_hugh").is_none());
