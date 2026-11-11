@@ -333,6 +333,7 @@ function htView(v,focusChat){
   if(!htOpen())return;
   rvView=v==="chat"?"chat":"review";
   htBox();htDraw();
+  if(typeof navNote==="function")navNote(); // nav.js: review and chat are two views (card #187)
   if(focusChat&&panel){const ta=panel.el.querySelector("#p-text");if(ta)ta.focus()}
 }
 function htAct(a){

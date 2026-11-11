@@ -30,10 +30,12 @@ function openSettings(which){
   document.addEventListener("keydown",keys,true);
   show();
   root.querySelector("#st-close").focus();
+  if(typeof navNote==="function")navNote(); // nav.js: Back and Forward (card #187)
 }
-function closeSettings(){if(!root)return;laneUnwatch();document.removeEventListener("keydown",keys,true);root.remove();root=null;const g=$("#settingsBtn");if(g)g.focus()}
+function closeSettings(){if(!root)return;laneUnwatch();document.removeEventListener("keydown",keys,true);root.remove();root=null;if(typeof navNote==="function")navNote();const g=$("#settingsBtn");if(g)g.focus()}
 function keys(e){if(e.key==="Escape"&&root){e.preventDefault();e.stopPropagation();closeSettings()}}
 window.openSettings=openSettings;window.closeSettings=closeSettings;
+window.settingsShows=()=>root?section:null; // nav.js (card #187)
 
 function show(){
   laneUnwatch();

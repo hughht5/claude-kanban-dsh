@@ -364,6 +364,7 @@
     drawRunning();pollRunning();
     // The focus goes in only from the board; over a card in review it stays where it is, so the keys go on working.
     if(!(opts&&opts.focus===false)&&!(typeof panel!=="undefined"&&panel))pane.focus({preventScroll:true});
+    if(typeof navNote==="function")navNote(); // nav.js: Back and Forward (card #187)
   }
   function closePane(){
     if(!isOpen())return;
@@ -373,6 +374,7 @@
     // events (active: isOpen), and openPane refreshes it.
     if(had){const b=back&&back.isConnected&&back!==document.body?back:btn;try{b.focus({preventScroll:true})}catch(e){}}
     back=null;
+    if(typeof navNote==="function")navNote(); // nav.js (card #187)
   }
   btn.onclick=()=>isOpen()?closePane():openPane();
   // The feed below the tabs, every agent's or (the Monitor tab) only the monitor's.

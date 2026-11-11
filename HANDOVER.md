@@ -2489,3 +2489,32 @@ Hugh, 11 Nov: "Agents and router should open automatically on start." UI only.
   all/these, the time limit, no quote or ship word or "don't ship", once per card, numbers) and
   `routertools::tests::a_ship_on_hughs_word_*` (the store path: gates, columns, the move and its
   log).
+
+## Back and Forward between panels and views (11 Nov 2026, card #187, branch `card-187`)
+
+- **`ui/nav.js`** keeps one history of what is on screen: a view is the card panel (its card, its
+  subagent tab, and in the Human test review whether it shows the review or the chat), the stack
+  overlay (lead and child), the session pane (`sessionPaneShows`), the Agents drawer
+  (`agentsPane.isOpen`) and Settings (`settingsShows`, new in `settings.js`). It starts at the
+  board (nothing open), and keeps up to 100 views.
+- **Recording:** every opener and closer calls `navNote()`: `openPanel`, `closePanel`, `showView`
+  (`panel.js`), `htView` (`review.js`), `stkKidOpen`, `stkDlgClose` and the overlay's close event
+  (`stacks.js`), `openPane` and `closePane` (`router.js`), the Agents drawer's open and close
+  (`agents-feed.js`), `openSettings` and `closeSettings` (`settings.js`). The view is taken in a
+  microtask, so "close this, open that" in one click is one step, and a view the same as the last
+  isn't added. A new view after Back drops the forward steps.
+- **Back and Forward** (`Nav.back`, `Nav.forward`) close what the target view hasn't and open what it
+  has, through those same functions (panel before the stack overlay, which is modal; Settings last).
+  A view whose card is gone or archived is skipped. At either end nothing happens. While it restores,
+  `navNote` is ignored.
+- **Keys:** mouse buttons 3 and 4 (`mouseup`; the press and `auxclick` are stopped too, so the
+  WebView's own page history never moves), always, even with the focus in a box. Alt+Left and
+  Alt+Right and the BrowserBack/BrowserForward keys only when the focus isn't in an input, a
+  textarea, a select, anything editable or the terminal. All listeners are on `window`, capture.
+- **Typed text:** leaving the card panel or the session pane by Back or Forward keeps the message
+  box's unsent text (`Nav.takeText`), and it comes back when that view does (`panel.js`'s
+  `compose` puts it in the new box; the pane's box gets it straight away).
+- **Tests:** `tools/ui-tests/nav.test.mjs` (nav.js with a stand-in for the panels): empty history,
+  stack lead to child (overlay, and the child's own panel) and back, the review to the card's chat
+  and back, stepping the review, forward, a new view dropping forward, pane, drawer and Settings,
+  an archived card skipped, typed text kept, the keys and buttons, one step per click.

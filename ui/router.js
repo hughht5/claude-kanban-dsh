@@ -176,6 +176,7 @@ function openPane(src){
   // A card panel already open moves to the left of this one.
   fitCardPanel();
   paneChanged();
+  if(typeof navNote==="function")navNote(); // nav.js: Back and Forward (card #187)
 }
 // The Agents drawer marks the tab of what this pane shows (card #173).
 function paneChanged(){try{window.dispatchEvent(new CustomEvent("session-pane"))}catch(e){}}
@@ -188,6 +189,7 @@ function closePane(swap){
   dropTerm();
   if(pane.feed&&typeof pane.feed.destroy==="function"){try{pane.feed.destroy()}catch(e){}}
   pane.el.remove();pane=null;
+  if(typeof navNote==="function")navNote(); // nav.js (card #187)
   if(swap===true)return;
   paneChanged();
   document.body.classList.remove("router-open");if(!document.body.classList.contains("agents-open"))document.body.classList.remove("rpane-open");

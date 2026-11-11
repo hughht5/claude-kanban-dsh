@@ -282,7 +282,7 @@ function stkPageHtml(lead){
 function stkKidOpen(leadId,kidId){
   if(stkDlg&&stkDlg.el.open){
     if(stkDlg.lead!==leadId||stkDlg.kid!==kidId)stkArm=null;
-    stkDlg.lead=leadId;stkDlg.kid=kidId;stkDlg.focusBar=true;stkDlgDraw();return;
+    stkDlg.lead=leadId;stkDlg.kid=kidId;stkDlg.focusBar=true;stkDlgDraw();if(typeof navNote==="function")navNote();return;
   }
   stkDlgClose();
   const d=document.createElement("dialog");d.className="stk-kdlg";d.innerHTML=STK_SKEL;
@@ -309,14 +309,16 @@ function stkKidOpen(leadId,kidId){
     stkBannerOut(d);d.remove();
     if(stkDlg===s){stkDlg=null;stkArm=null}
     if(!s.quiet&&s.inQueue)reviewClosed(false);   // Hugh's close ends the queue, as the panel's does
+    if(typeof navNote==="function")navNote(); // nav.js (card #187)
   });
   document.body.appendChild(d);
   stkDlgDraw();
   if(stkDlg!==s)return;   // the child is no longer in the stack
   try{d.showModal()}catch(e){d.setAttribute("open","")}
   stkBannerIn();stkFocusBar();
+  if(typeof navNote==="function")navNote(); // nav.js: Back and Forward (card #187)
 }
-function stkDlgClose(){if(stkDlg){const s=stkDlg;s.quiet=true;stkDlg=null;stkArm=null;stkBannerOut(s.el);if(s.el.open)s.el.close();s.el.remove()}}
+function stkDlgClose(){if(stkDlg){const s=stkDlg;s.quiet=true;stkDlg=null;stkArm=null;stkBannerOut(s.el);if(s.el.open)s.el.close();s.el.remove();if(typeof navNote==="function")navNote();}}
 function stkDlgDraw(){
   if(!stkDlg)return;
   const s=stkDlg,{lead,page,k}=stkCur();

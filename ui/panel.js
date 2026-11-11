@@ -118,6 +118,7 @@ function openPanel(id,opts){
   ev.listen("session-changed",e=>{if(panel&&e.payload===id)refreshInfo()}).then(u=>panel&&panel.unlisten.push(u));
   ev.listen("session-status",e=>{if(panel&&panel.id===id&&(!panel.status||!panel.status.row||panel.status.row===e.payload))refreshStatusSoon()}).then(u=>panel&&panel.unlisten.push(u));
   panel.statusTick=setInterval(()=>{if(panel&&panel.status&&panel.status.running)renderStatus();renderBusy();if(panel&&panel.subs.some(subRunning))renderSubs()},1000);
+  if(typeof navNote==="function")navNote(); // nav.js: Back and Forward (card #187)
 }
 function panelKeys(e){
   if(modKey(e)&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==="f"&&panel&&!$("#addDlg").open){e.preventDefault();const q=panel.el.querySelector("#p-q");q.focus();q.select();return}
@@ -133,6 +134,7 @@ function closePanel(step){
   invoke("panel_opened",{cardId:null}).catch(()=>{});
   document.removeEventListener("keydown",panelKeys);
   selected=null;draft=null;stale=null;try{history.replaceState(null,"",location.pathname)}catch(e){}
+  if(typeof navNote==="function")navNote(); // nav.js (card #187)
   if(step===true)return; // the review switching card: the next panel opens straight away
   render();
   const back=returnFocusTo;returnFocusTo=null;
@@ -294,6 +296,7 @@ function compose(info){
   if(!box.querySelector("#p-text")){
     box.innerHTML=`<div class="slashmenu" id="p-slash" role="listbox" aria-label="Slash commands" hidden></div><div class="startrow" id="p-startrow"></div><div class="atts" id="p-atts" aria-label="Attachments"></div><textarea id="p-text" rows="2" aria-label="Message to the card's session"></textarea><button class="btn" id="p-send" type="button">Send</button><button class="btn ghost" id="p-bug" type="button" hidden title="Send this message as a bug report: the card-reproducer subagent reproduces the bug before the fix and proves the fix after it">Report a bug</button>`;
     const ta=box.querySelector("#p-text");
+    if(typeof Nav!=="undefined"){const t=Nav.takeText("p:"+panel.id);if(t)ta.value=t} // left by Back or Forward (card #187)
     // bug: Hugh's "Report a bug" (card #112): the message goes as a bug report for the card-reproducer.
     const post=async bug=>{
       const paths=panel.att.filter(a=>a.path).map(a=>a.path);
@@ -628,6 +631,7 @@ function showView(id){
   if(typeof stepsChat==="function")stepsChat(); // the to-do list is the main session's (card #158)
   panel.el.querySelector("#p-msgs").innerHTML=`<div class="quiet">Reading the conversation…</div>`;
   pollTranscript();
+  if(typeof navNote==="function")navNote(); // nav.js: a subagent's tab is a view too (card #187)
 }
 // A /btw side question and its answer (session_info's btw, read off the session's screen). Not
 // part of the conversation: Claude Code keeps it out of the transcript, and the app keeps it

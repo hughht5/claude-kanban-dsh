@@ -1110,3 +1110,7 @@ No data: nothing is saved, so closing either panel lasts until the next start. `
 ## The Router ships on Hugh's typed word (11 Nov 2026, card #188)
 
 No data: nothing new is stored; Hugh's panel messages were already in `router_log`, and the log lines stay. A ship made this way is an ordinary ship request (`ship.word: true`). `git -C ~\claude-kanban-dsh revert --no-edit <the card #188 commit>`, then stage the live update. Files: `src-tauri\src\hughword.rs` (new), `src-tauri\src\routertools.rs` (`ship_on_word`, `all_the_way_on_word`, the move and update tools' schemas, `kanban_router_log` `hugh`), `src-tauri\src\routersession.rs` (the refusal's text), `src-tauri\src\main.rs` (`mod hughword`), `src-tauri\src\api.rs` (the Router's instructions), `crates\store\src\cards.rs` and `lib.rs` (`move_on_hughs_word`, `How::Word`, `WORD_BY`), `prompts\router.md`, `AGENTS.md`, `README.md`, `HANDOVER.md`, `PLAN.md` (decision 36), `ACCEPTANCE.md` (4.6b). In the private prompts repo, revert its `card-188` commit.
+
+## Back and Forward between panels and views (11 Nov 2026, card #187)
+
+No data: the history lives only in the page. `git -C ~\claude-kanban-dsh revert --no-edit <the card #187 commit>`, then stage the live update. Files: `ui\nav.js` (new) and its tag in `ui\index.html`, the `navNote()` calls in `ui\panel.js`, `ui\review.js`, `ui\stacks.js`, `ui\router.js`, `ui\agents-feed.js` and `ui\settings.js` (and `window.settingsShows`), `tools\ui-tests\nav.test.mjs`, `README.md`, `HANDOVER.md`.

@@ -55,6 +55,7 @@ You stay in charge of the one decision that matters: what ships.
 - **Know everything at a glance.** Every card shows "Done when…" with its acceptance checks, step progress ("Step 4 of 7: writing the tests", and the whole to-do list in its chat), what changed, and the exact question it's waiting on you for.
 - **Ship together, cleanly.** Group related cards into a stack. They build in parallel, a merger brings their branches together and resolves conflicts, and you test and ship them as one.
 - **Order and history.** Mark a card "Blocked by #12" and it starts by itself when #12 is ready. Search every session that has ever run. See how long cards spend in each column, so you know where the waiting happens.
+- **Back and Forward.** The mouse's back and forward buttons (or Alt+Left and Alt+Right) step through what you opened: a stack's lead and its child, a card in review and its chat, the Router, the Agents drawer, Settings. Typed text waits in its box.
 - **Your own column widths.** Drag the edge of a column to widen or narrow it; every column keeps its share as the window changes, and the widths stay after a restart. Press an edge twice to reset them.
 
 ## How it works
