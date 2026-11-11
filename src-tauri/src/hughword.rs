@@ -11,7 +11,8 @@
 //! The Router's ship cites the message's id and quotes his words; `check` lets it through only
 //! when that message is Hugh's typing from the last `WORD_FOR_MS`, holds the quote, asks for a
 //! ship (or Deploy complete, or "all the way") and isn't "don't ship", and names the card: its
-//! number, or "all"/"these"/"both"/... when the Router's own recent replies listed it. Each
+//! number, or (naming no card) "all"/"these"/"both"/... when the Router's own recent replies
+//! listed it. Each
 //! message ships a card once.
 
 use kanban_store::RouterLogLine;
@@ -133,7 +134,10 @@ pub fn check(lines: &[RouterLogLine], id: i64, quote: &str, card: i64, listed: &
         return Err(format!("Hugh's message m{id} says not to ship: ask him"));
     }
     let named = numbers(&text);
-    let by_group = GROUP_WORDS.iter().any(|w| has_word(&text, w)) && listed.contains(&card);
+    // A group word covers the Router's listed set only when the message names no card itself,
+    // and "all the way" is not "all" (so "take #12 all the way" ships #12 only).
+    let grouped = text.replace("all the way", " ");
+    let by_group = named.is_empty() && GROUP_WORDS.iter().any(|w| has_word(&grouped, w)) && listed.contains(&card);
     if !named.contains(&card) && !by_group {
         return Err(format!(
             "Hugh's message m{id} doesn't name card #{card}: it must name it (#{card}), or say \"all\"/\"these\" about a set your own replies just listed with #{card} in it"
@@ -207,6 +211,14 @@ mod tests {
         assert!(check(&lines, 5, "ship all of these", 13, &[12, 14], false, now()).is_err());
         let lines = [line(6, PANEL_BY, "event", "ship it", 1)];
         assert!(check(&lines, 6, "ship it", 12, &[12], false, now()).is_err(), "no group word, no number");
+        // A named card keeps the message to it: "all the way" isn't "all", nor is "all" beside a number.
+        let lines = [line(7, PANEL_BY, "event", "take #12 all the way", 1)];
+        assert!(check(&lines, 7, "take #12 all the way", 12, &[12, 14], false, now()).is_ok());
+        assert!(check(&lines, 7, "take #12 all the way", 14, &[12, 14], false, now()).is_err());
+        let lines = [line(8, PANEL_BY, "event", "ship all of #12", 1)];
+        assert!(check(&lines, 8, "ship all of #12", 14, &[12, 14], false, now()).is_err());
+        let lines = [line(9, PANEL_BY, "event", "take them all the way", 1)];
+        assert!(check(&lines, 9, "take them all the way", 14, &[12, 14], false, now()).is_ok(), "them still groups");
     }
 
     #[test]
