@@ -24,6 +24,8 @@ pub const WORD_FOR_MS: i64 = 30 * 60 * 1000;
 
 /// The words that ask for a ship.
 const SHIP_WORDS: [&str; 3] = ["ship", "deploy", "all the way"];
+/// Hugh's "skip human testing" asks for the same: no human test, so a ship once the tester passes.
+const SKIP_PHRASES: [&str; 4] = ["skip human test", "skip the human test", "skip human-test", "no human test"];
 /// The words that cover a set the Router listed.
 const GROUP_WORDS: [&str; 7] = ["all", "these", "them", "both", "each", "every", "those"];
 /// The words that say not to.
@@ -132,8 +134,8 @@ pub fn check(lines: &[RouterLogLine], id: i64, quote: &str, card: i64, listed: &
     if !text.contains(&q) {
         return Err(format!("Hugh's message m{id} doesn't say \"{}\": quote his own words from it", quote.trim()));
     }
-    if !SHIP_WORDS.iter().any(|w| has_word(&text, w)) {
-        return Err(format!("Hugh's message m{id} doesn't ask for a ship (ship, deploy, all the way)"));
+    if !SHIP_WORDS.iter().any(|w| has_word(&text, w)) && !SKIP_PHRASES.iter().any(|p| text.contains(p)) {
+        return Err(format!("Hugh's message m{id} doesn't ask for a ship (ship, deploy, all the way, skip human testing)"));
     }
     if NOT_WORDS.iter().any(|w| text.contains(w)) {
         return Err(format!("Hugh's message m{id} says not to ship: ask him"));
@@ -243,6 +245,9 @@ mod tests {
         assert!(check(&lines, 5, "", 12, &[], false, now()).unwrap_err().contains("quote"));
         let lines = [line(6, PANEL_BY, "event", "don't ship #12 yet", 1)];
         assert!(check(&lines, 6, "ship #12", 12, &[], false, now()).unwrap_err().contains("not to ship"));
+        // "Skip human testing" asks for a ship once the tester passes.
+        let lines = [line(8, PANEL_BY, "event", "Skip human testing for #12", 1)];
+        assert!(check(&lines, 8, "skip human testing for #12", 12, &[], false, now()).is_ok());
         let lines = [line(7, PANEL_BY, "event", "my relationship with #12", 1)];
         assert!(check(&lines, 7, "relationship with #12", 12, &[], false, now()).is_err(), "ship inside a word");
     }

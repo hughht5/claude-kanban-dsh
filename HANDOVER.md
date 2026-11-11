@@ -2461,7 +2461,7 @@ Hugh, 11 Nov: "Agents and router should open automatically on start." UI only.
   (its schema drops `for_hugh` and adds `hugh_message` and `hugh_words`). `ship_on_word_refused`
   checks: the card's version, In progress or Human test, not a stack's child (a lead only when
   every child is ready), `hughword::check` (the message is his panel typing, at most 30 minutes
-  old (`WORD_FOR_MS`), holds the quote, has ship/deploy/"all the way" and no "don't ship", and
+  old (`WORD_FOR_MS`), holds the quote, has ship/deploy/"all the way"/"skip human testing" and no "don't ship", and
   names the card's number, or a group word ("all", "these", "both", ...) with the card named in
   the Router's last 5 replies; not used for this card before, by the marker "message m<id>)" in
   the card's log), then the card session's subagent gates (`agents::move_refused`; from In
