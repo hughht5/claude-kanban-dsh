@@ -12,7 +12,8 @@ function pane(b, { log = 200, chat = 400 } = {}) {
   feed.getBoundingClientRect = () => ({ top: 0, left: 0, width: 300, height: grid.classList.contains("split-set") ? parseFloat(grid.style.getPropertyValue("--log-h")) : h.log, bottom: 0, right: 300 });
   right.getBoundingClientRect = () => {
     const l = feed.getBoundingClientRect().height;
-    return { top: 0, left: 0, width: 300, height: h.log + h.chat - l, bottom: 0, right: 300 };
+    // The grid's room is fixed: a log set taller than it overflows and leaves the chat nothing.
+    return { top: 0, left: 0, width: 300, height: Math.max(0, h.log + h.chat - l), bottom: 0, right: 300 };
   };
   return { grid, feed, right, handle, h };
 }
@@ -86,9 +87,13 @@ test("keyboard on the focused handle, and a saved split refitted to a smaller pa
   const tab = fire(p.handle, "keydown", { key: "Tab" });
   assert.equal(tab.defaultPrevented, false); // Tab still moves on
   // The window gets smaller: the saved height is cut so the chat keeps its minimum.
+  // The log is still set to the old window's 500 px, so it overflows: the chat measures 0.
   b.store.set("rpane.split.router", "500");
-  p.h.log = 100; p.h.chat = 200; p.grid.classList.remove("split-set");
+  s.apply(500);
+  p.h.log = 100; p.h.chat = 200;
+  assert.equal(p.right.getBoundingClientRect().height, 0);
   s.refit();
+  assert.equal(p.right.getBoundingClientRect().height, b.ctx.PaneSplit.MIN_CHAT);
   assert.equal(p.grid.style.getPropertyValue("--log-h"), (300 - b.ctx.PaneSplit.MIN_CHAT) + "px");
   // Folded or side by side (the handle hidden): the default layout, nothing forced.
   b.ctx.getComputedStyle = () => ({ display: "none" });

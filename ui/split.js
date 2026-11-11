@@ -44,9 +44,13 @@ function attach({handle,grid,feed,right,kind}){
     aria(h);
   }
   // The saved height, clamped to the room the pane has now (a smaller window, a longer digest).
+  // The room is measured with the default split: a height set for a taller window can overflow
+  // the pane, and then the log's height plus the chat's is not the room there is (the tester's
+  // find on card #185: a shorter window left the chat at 0 px). Both reads happen before a paint.
   function refit(){
     const saved=read(k);
-    if(saved==null||!shown()){apply(null);return}
+    apply(null);
+    if(saved==null||!shown())return;
     apply(clamp(saved,room()));
   }
   function reset(){write(k,null);apply(null)}
