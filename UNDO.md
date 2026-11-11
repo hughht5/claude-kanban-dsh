@@ -1102,3 +1102,7 @@ No data. `git -C ~\claude-kanban-dsh revert --no-edit <the card #186 commit>`, t
 ## Drag the line between the live log and the chat (11 Nov 2026, card #185)
 
 No data: the split is kept only in the page's localStorage (`rpane.split.router`, `rpane.split.session`); a double-click on the line clears it. `git -C ~\claude-kanban-dsh revert --no-edit <the card #185 commit>`, then stage the live update. Files: `ui\split.js` (new), `ui\router.js` (the handle, `PaneSplit.attach`, `drawFold`), `ui\router.css`, `ui\index.html`, `tools\ui-tests\split.test.mjs` (new), `README.md`, `HANDOVER.md`.
+
+## The Agents drawer and the Router panel open at start (11 Nov 2026, card #189)
+
+No data: nothing is saved, so closing either panel lasts until the next start. `git -C ~\claude-kanban-dsh revert --no-edit <the card #189 commit>`, then stage the live update. Files: `ui\startup.js` (new), `ui\index.html` (its script tag), `ui\agents-feed.js` (the drawer's `open({focus:false})`), `tools\ui-tests\startup.test.mjs` (new), `README.md`, `HANDOVER.md`.

@@ -2441,3 +2441,11 @@ The card-merger's prompt (`merger.rs`, the stack job's step 1 and the integrate 
 
 - **`ui/split.js`** (`window.PaneSplit`, loaded before `router.js`): `attach({handle, grid, feed, right, kind})` wires `#r-split`, the `role="separator"` strip at the bottom of the session pane's `.rpane-left`. A drag (pointer events, its `pointerdown` default prevented so the focus and caret stay in the message box) or Up/Down (Shift for 64 px), Home and End on the focused handle set `--log-h` on `#r-grid` and the `split-set` class; `router.css` then gives `.rpane-feed` that height in place of its 40% cap, and the chat takes the rest. Limits: the log at least 60 px, the chat at least 160 px (`clamp`). Kept in localStorage per panel type: `rpane.split.router` and `rpane.split.session` (every other kind); a double-click clears it. A `ResizeObserver` on the grid and `drawFold` call `refit()`, which clamps the saved height to the room there is now, and drops it while the handle is hidden (folded log, or side by side from 618 px, where it does nothing).
 - **Tests:** `tools/ui-tests/split.test.mjs` (limits, keys, drag, saved per type, double-click, refit).
+
+## The Agents drawer and the Router panel open at start (11 Nov 2026, card #189, branch `card-189`)
+
+Hugh, 11 Nov: "Agents and router should open automatically on start." UI only.
+
+- **`ui/startup.js`** (loaded last, after `agents-feed.js` and `router.js`): once the page has loaded, `openPanesAtStart()` opens the Agents drawer (`agentsPane.open({focus:false})`, so the focus stays on the board and its keys work) and then the Router panel (`openRouterPanel()`), the drawer floating to its left as card #167 lays them out. It opens nothing already open and never swaps out a session the pane already shows. Each panel's ✕ still closes it; nothing is remembered, so every start (and every page reload) opens them again.
+- **The Router's toasts are held while its panel is open** (`router_panel_opened`, final-test F7), so with the panel open from the start they show in the panel, not as notifications, until Hugh closes it.
+- **Tests:** `tools/ui-tests/startup.test.mjs`.

@@ -355,14 +355,15 @@
     });
     pane.addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();e.stopPropagation();closePane()}});
   }
-  function openPane(){
+  // opts.focus false (the open at start, card #189): the focus stays on the board.
+  function openPane(opts){
     if(!pane)build();
     back=document.activeElement;
     pane.hidden=false;document.body.classList.add("rpane-open","agents-open");btn.setAttribute("aria-pressed","true");
     if(feed)feed.refresh();else remountFeed();
     drawRunning();pollRunning();
     // The focus goes in only from the board; over a card in review it stays where it is, so the keys go on working.
-    if(!(typeof panel!=="undefined"&&panel))pane.focus({preventScroll:true});
+    if(!(opts&&opts.focus===false)&&!(typeof panel!=="undefined"&&panel))pane.focus({preventScroll:true});
   }
   function closePane(){
     if(!isOpen())return;
