@@ -46,7 +46,7 @@ pub use archive_ask::{archive_refused, lifts_decline, ArchiveResult, ARCHIVE_ASK
 pub use move_in::{import_if_asked, Imported, IMPORT_DONE, IMPORT_REQUEST};
 pub use config::PRIVATE_DIR_KEY;
 pub use channel::{app_name, app_name_for, channel, data_dir_for, devtools_port_for, exe_name_for, home_var, identifier_for, is_test, kb_data_dir, DATA_DIR_ENV, label_for, live_board, product_name_for, quit_event, quit_event_for, slot, slot_of, LIVE_DEVTOOLS_PORT};
-pub use cards::{clean_auto_to, clean_labels, routed_small, Card, ONE_FAILED_KEY, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, CRITIQUE_KEY, MAX_LABELS, MAX_LABEL_LEN, MERGE_KEY, repro_open, REPRO_KEY, RESET_ON_IN_PROGRESS, REVIEW_KEY, ROUTE_KEY, SMALL_BY, SMALL_KEY, SMALL_OPT_OUT_KEY, SMALL_WAITING, SMALL_WENT_ON, TEST_KEY};
+pub use cards::{clean_auto_to, clean_labels, routed_small, Card, ONE_FAILED_KEY, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, CRITIQUE_KEY, MAX_LABELS, MAX_LABEL_LEN, MERGE_KEY, repro_open, REPRO_KEY, RESET_ON_IN_PROGRESS, REVIEW_KEY, ROUTE_KEY, SMALL_BY, SMALL_KEY, SMALL_OPT_OUT_KEY, SMALL_WAITING, SMALL_WENT_ON, TEST_KEY, WORD_BY};
 pub use cards::{CHECK_SIZE_KEY, RESET_ON_HUMAN_TEST};
 pub use cards::{planning_skip, skip_planning_line};
 pub use cards::{clean_changes_outputs, clean_proof, output_path_problem, OUTPUTS_KEY, PROOF_KEY, SAVED_KEY};

@@ -332,6 +332,8 @@ pub const SMALL_BY: &str = "the app (small-change auto-ship)";
 pub(crate) const HUGH: &str = "Hugh (board)";
 /// Who the app's moves for Hugh are recorded as.
 pub const AUTO_BY: &str = "the app (Hugh's Take it to)";
+/// Who a move into Ship it is by when the Router made it on Hugh's typed word (card #188).
+pub const WORD_BY: &str = "the router (on Hugh's word)";
 /// Columns Hugh can move a card into himself without turning its auto-progress off: starting
 /// it, or approving its plan. Any other move of his means he has taken it over.
 pub const AUTO_KEEPS: [&str; 2] = ["Planning", "In progress"];
@@ -1009,6 +1011,13 @@ impl Store {
         self.move_as(id, if_version, to, extra, How::Auto(why))
     }
 
+    /// The Router moves a card into Ship it on Hugh's typed word in its panel (card #188): the
+    /// same rules as his own move (a ship request), logged as the Router's with `why` (his words).
+    /// The ship record carries `"word": true`. The app checks his word before it calls this.
+    pub fn move_on_hughs_word(&mut self, id: &str, if_version: i64, why: &str) -> Result<MoveOutcome> {
+        self.move_as(id, if_version, "Ship it", Patch::new(), How::Word(why))
+    }
+
     /// The app moves a card Hugh had put in Blocked to Planning for him, because every card it
     /// waited on (`waited_on`) is ready (card #109, `Store::settle_waits`): the same rules as his
     /// own move, logged as the app's, its auto-progress kept, with `plan.waitedOn`. Its waits
@@ -1036,6 +1045,7 @@ impl Store {
             How::Hugh => HUGH,
             How::Auto(_) => AUTO_BY,
             How::Waits(_) => WAIT_BY,
+            How::Word(_) => WORD_BY,
         };
         let skip_default = self.skip_default(crate::SKIP_PLANNING_RULE_KEY);
         let tx = self.begin()?;
@@ -1071,6 +1081,9 @@ impl Store {
             let mut ship = json!({ "state": "requested", "requestedAt": at, "retries": card.retries() });
             if auto.is_some() {
                 ship["auto"] = json!(true);
+            }
+            if matches!(how, How::Word(_)) {
+                ship["word"] = json!(true);
             }
             patch.insert("ship".into(), ship);
             texts.push("Ship requested");
@@ -1126,6 +1139,7 @@ impl Store {
             How::Hugh => format!("Hugh moved it from {from} to {to}"),
             How::Auto(why) => format!("The app moved it from {from} to {to} for Hugh: {why}"),
             How::Waits(ns) => format!("The app moved it from {from} to {to} for Hugh: the cards it waited on are ready ({})", waits::nums(ns)),
+            How::Word(why) => format!("The Router moved it from {from} to {to} on Hugh's word: {why}"),
         };
         log_tx(&tx, id, &at, &line, Some(by))?;
         if let Some(w) = skipped {
@@ -1184,6 +1198,8 @@ enum How<'a> {
     Hugh,
     Auto(&'a str),
     Waits(&'a [i64]),
+    /// The Router, on Hugh's typed word in its panel (card #188).
+    Word(&'a str),
 }
 
 /// Whether a move of `card` to `to` skips Planning (card #162), and whose choice that is: a move

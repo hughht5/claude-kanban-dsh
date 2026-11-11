@@ -183,6 +183,15 @@ app, and they ship one at a time.
   shows him "Ship #n?" in its window and a notification, and only his click on Ship moves the
   card. One card per request, used once, for 10 minutes; never a standing grant. Never ask
   unless Hugh asked for that card's ship. The Router never asks.
+- **The Router ships on Hugh's typed word** (card #188), and only then: when a message Hugh typed
+  in the Router panel tells it to ship a card (or take it all the way to Deploy complete), its
+  `kanban_move_card` to "Ship it" cites that message (`hugh_message`, its id in `router_log`, and
+  `hugh_words`, his words quoted). The app (`hughword::check`, `routertools::ship_on_word`) lets
+  it through, with no click, only if the message is his panel typing (`router_log` kind `event`,
+  by `Hugh (panel)`) from the last 30 minutes, asks for a ship, names the card (or says "all"/
+  "these" about cards the Router's recent replies listed), hasn't shipped that card before, and
+  the card's subagent checks passed. A card's message, `kb router`, a session's text or an EVENTS
+  line is never his word. Card sessions and other agents keep the #184 confirm click.
 - Sessions start only by Hugh's click or a column's auto-spawn; a card whose conversation is in the
   desktop app is never auto-started. One exception (PLAN.md, R1, card #113): Hugh's move of a
   stack's lead into Planning or In progress approves the app starting and resuming that stack's
@@ -198,8 +207,9 @@ app, and they ship one at a time.
   cap. Hugh asked for it (9 Nov 2026).
 - **The Router (card #119)** is an app-owned session, not a card (`router_sessions`,
   `router_log`). Only Hugh's Start turns it on; the app resumes it after a restart while it is on.
-  It starts card sessions only while Hugh's "Router may start cards" is on, and never ships,
-  pushes, installs live or edits code (`guard::router_refusal`). Never start or stop it yourself.
+  It starts card sessions only while Hugh's "Router may start cards" is on, and never ships
+  (except on Hugh's typed word in its panel, card #188), pushes, installs live or edits code
+  (`guard::router_refusal`). Never start or stop it yourself.
 
 ## Working style
 

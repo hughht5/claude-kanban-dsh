@@ -18,6 +18,7 @@ mod goes_on;
 mod guard;
 #[cfg(test)]
 mod hang_tests;
+mod hughword;
 mod launch;
 // The merge lanes, one per listed repo (card #160).
 mod lane;

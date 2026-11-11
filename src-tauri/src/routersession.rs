@@ -661,8 +661,9 @@ pub fn hugh_changed_recently(store: &Store, card: &Card, now: chrono::DateTime<c
 /// Deploy complete.
 pub fn move_refused(from: &str, to: &str, may_start: bool) -> Option<String> {
     const FREE: [&str; 4] = ["Planning", "In progress", "Human test", "Blocked"];
+    // Card #188: the Router's ship on Hugh's typed word goes through `routertools::ship_on_word`.
     if to == "Ship it" {
-        return Some("only Hugh moves a card into Ship it".into());
+        return Some("only Hugh moves a card into Ship it, or you on his typed word in the Router panel (hugh_message and hugh_words)".into());
     }
     if ["Ship it", "Deploy complete"].contains(&from) {
         return Some(format!("a card in {from} is Hugh's ship; the Router doesn't move it"));

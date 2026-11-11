@@ -2449,3 +2449,35 @@ Hugh, 11 Nov: "Agents and router should open automatically on start." UI only.
 - **`ui/startup.js`** (loaded last, after `agents-feed.js` and `router.js`): once the page has loaded, `openPanesAtStart()` opens the Agents drawer (`agentsPane.open({focus:false})`, so the focus stays on the board and its keys work) and then the Router panel (`openRouterPanel()`), the drawer floating to its left as card #167 lays them out. It opens nothing already open and never swaps out a session the pane already shows. Each panel's ✕ still closes it; nothing is remembered, so every start (and every page reload) opens them again.
 - **The Router's toasts are held while its panel is open** (`router_panel_opened`, final-test F7), so with the panel open from the start they show in the panel, not as notifications, until Hugh closes it.
 - **Tests:** `tools/ui-tests/startup.test.mjs`.
+
+## The Router ships on Hugh's typed word (11 Nov 2026, card #188, branch `card-188`)
+
+- **The proof is his typing.** Every message Hugh types in the Router panel (`router_send`, so
+  `routersession::send`) is already kept in `router_log` as kind `event` by `Hugh (panel)`; its
+  `seq` is the message's id. Nothing else writes that pair: `kb router` is `Hugh (kb)`, a card's
+  `kanban_router` message is `the app`, the app's events are `the app`, the Router's own lines are
+  `the router`. `kanban_router_log` with `hugh: true` lists his messages with their ids.
+- **The move.** The Router's `kanban_move_card` to "Ship it" goes to `routertools::ship_on_word`
+  (its schema drops `for_hugh` and adds `hugh_message` and `hugh_words`). `ship_on_word_refused`
+  checks: the card's version, In progress or Human test, not a stack's child (a lead only when
+  every child is ready), `hughword::check` (the message is his panel typing, at most 30 minutes
+  old (`WORD_FOR_MS`), holds the quote, has ship/deploy/"all the way" and no "don't ship", and
+  names the card's number, or a group word ("all", "these", "both", ...) with the card named in
+  the Router's last 5 replies; not used for this card before, by the marker "message m<id>)" in
+  the card's log), then the card session's subagent gates (`agents::move_refused`; from In
+  progress, those of the move to Human test, so its review and test must have passed). A refusal is
+  logged on the card. Then `Store::move_on_hughs_word` (new `How::Word`, by `WORD_BY` "the router
+  (on Hugh's word)", ship record `"word": true`), the log line "Router shipped it on Hugh's word:
+  '<quote>' (<time>, message m<id>)", a Router decision line, and `dispatch::after_router_move`
+  (the ship starts, or waits its turn).
+- **Take it all the way.** Covered by the same move: the Router ships the card once its tester has
+  passed, within the 30 minutes; after that it tells Hugh the card is ready.
+- **Unchanged:** with no matching message the move is refused as before; card sessions and other
+  agents keep #184's confirm click; `routersession::move_refused` still refuses Ship it on the
+  Router's ordinary path.
+- **Prompts:** rule 1 of `prompts/router.md` (and the private copy), `api.rs`'s
+  `ROUTER_INSTRUCTIONS`, the move tool's description (`ROUTER_MOVE_DESCRIPTION`).
+- **Tests:** `hughword::tests` (no message, a matching one, from a card or session, another card,
+  all/these, the time limit, no quote or ship word or "don't ship", once per card, numbers) and
+  `routertools::tests::a_ship_on_hughs_word_*` (the store path: gates, columns, the move and its
+  log).

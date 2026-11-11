@@ -1106,3 +1106,7 @@ No data: the split is kept only in the page's localStorage (`rpane.split.router`
 ## The Agents drawer and the Router panel open at start (11 Nov 2026, card #189)
 
 No data: nothing is saved, so closing either panel lasts until the next start. `git -C ~\claude-kanban-dsh revert --no-edit <the card #189 commit>`, then stage the live update. Files: `ui\startup.js` (new), `ui\index.html` (its script tag), `ui\agents-feed.js` (the drawer's `open({focus:false})`), `tools\ui-tests\startup.test.mjs` (new), `README.md`, `HANDOVER.md`.
+
+## The Router ships on Hugh's typed word (11 Nov 2026, card #188)
+
+No data: nothing new is stored; Hugh's panel messages were already in `router_log`, and the log lines stay. A ship made this way is an ordinary ship request (`ship.word: true`). `git -C ~\claude-kanban-dsh revert --no-edit <the card #188 commit>`, then stage the live update. Files: `src-tauri\src\hughword.rs` (new), `src-tauri\src\routertools.rs` (`ship_on_word`, the move tool's schema, `kanban_router_log` `hugh`), `src-tauri\src\routersession.rs` (the refusal's text), `src-tauri\src\main.rs` (`mod hughword`), `src-tauri\src\api.rs` (the Router's instructions), `crates\store\src\cards.rs` and `lib.rs` (`move_on_hughs_word`, `How::Word`, `WORD_BY`), `prompts\router.md`, `AGENTS.md`, `README.md`, `HANDOVER.md`, `PLAN.md` (decision 36), `ACCEPTANCE.md` (4.6b). In the private prompts repo, revert its `card-188` commit.
