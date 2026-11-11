@@ -4,8 +4,8 @@
 // cardId "router". Its own commands: router_status, router_start, router_stop, router_send,
 // router_feed, router_opened, and the "router-changed" event.
 //
-// A "Router" button in the header (with a state dot) opens a panel docked on the right of the
-// board: the digest of what happened while it was closed, the live log, then the Router's Chat
+// The Agents drawer's Router tab (or the "Router asks" pill) opens a panel docked on the right of
+// the board (the header's own Router button went in card #186): the digest of what happened while it was closed, the live log, then the Router's Chat
 // and Terminal. The board narrows to make room, and a card panel opens to its left.
 //
 // The session pane (card #129): the same panel opens any running session, the way it opens the
