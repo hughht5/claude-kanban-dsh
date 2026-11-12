@@ -520,7 +520,8 @@ mod tests {
         assert_eq!(update_fields(&a(&["--skip-plan-review", "on"])).unwrap(), json!({ "skipPlanReview": true }));
         assert_eq!(flow_default_args(&a(&[])).unwrap(), json!({}));
         assert_eq!(flow_default_args(&a(&["--skip-plan-review", "on", "--skip-planning", "off"])).unwrap(), json!({ "set": { "skipPlanReview": true, "skipPlanning": false } }));
-        assert!(flow_default_args(&a(&["--skip-plan-review", "default"])).is_err());
+        assert_eq!(flow_default_args(&a(&["--skip-plan-review", "default"])).unwrap_err(), "--skip-plan-review takes on or off");
+        assert_eq!(flow_default_args(&a(&["--skip-plan-review", "maybe"])).unwrap_err(), "--skip-plan-review takes on or off");
         assert!(flow_default_args(&a(&["--critic", "on"])).is_err());
         assert!(USAGE.contains("kb flow-defaults") && USAGE.contains("--skip-plan-review on|off|default"));
         // Card #162: a retired or unknown subagent is refused with a plain message, not dropped.
@@ -654,9 +655,9 @@ fn flow_default_args(args: &[String]) -> Result<serde_json::Value, String> {
             "--skip-human-test" => "skipHumanTest",
             other => return Err(format!("flow-defaults takes --skip-planning, --skip-plan-review and --skip-human-test, not {other}")),
         };
-        match on_off_default(a, it.next())? {
-            serde_json::Value::Null => return Err(format!("{a} takes on or off")),
-            v => set.insert(key.into(), v),
+        match on_off_default(a, it.next()) {
+            Ok(v) if v.is_boolean() => set.insert(key.into(), v),
+            _ => return Err(format!("{a} takes on or off")),
         };
     }
     Ok(if set.is_empty() { json!({}) } else { json!({ "set": set }) })
