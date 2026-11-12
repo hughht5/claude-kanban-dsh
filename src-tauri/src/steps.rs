@@ -287,7 +287,8 @@ pub fn cut(tasks: Vec<Task>, since: Option<DateTime<Utc>>) -> Vec<Task> {
 pub fn cut_column(column: &str) -> Option<&'static str> {
     match column {
         "Backlog" => None,
-        "Planning" => Some("Planning"),
+        // Card #195: a plan waiting for Hugh shows the plan's own steps.
+        "Planning" | "Plan review" => Some("Planning"),
         _ => Some("In progress"),
     }
 }

@@ -20,7 +20,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Lead columns in which Hugh's approval of the stack holds (R1).
-pub const STARTED: [&str; 3] = ["Planning", "In progress", "Human test"];
+/// Card #195: and Plan review, where the lead's own plan waits for Hugh while its children go on.
+pub const STARTED: [&str; 4] = ["Planning", "Plan review", "In progress", "Human test"];
 /// A lead's session effort when the card has no effortOverride: it only integrates.
 pub const LEAD_EFFORT: &str = "low";
 /// Who the app's own stack moves and messages are by.

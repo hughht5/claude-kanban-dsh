@@ -336,7 +336,7 @@ pub const AUTO_BY: &str = "the app (Hugh's Take it to)";
 pub const WORD_BY: &str = "the router (on Hugh's word)";
 /// Columns Hugh can move a card into himself without turning its auto-progress off: starting
 /// it, or approving its plan. Any other move of his means he has taken it over.
-pub const AUTO_KEEPS: [&str; 2] = ["Planning", "In progress"];
+pub const AUTO_KEEPS: [&str; 3] = ["Planning", "Plan review", "In progress"];
 
 /// Checks a card's `autoTo`: one of `AUTO_TARGETS` (any case, trimmed), or `null` / `""` for
 /// none (`None`).

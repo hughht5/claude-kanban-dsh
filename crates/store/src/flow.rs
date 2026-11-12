@@ -102,6 +102,16 @@ impl Card {
         self.fields.get(key).and_then(Value::as_bool)
     }
 
+    /// Has this card's build ever started (card #195)? Its plan critique record says so
+    /// (`started`, set on every move into In progress), or, with no record, a subagent test field
+    /// (set on every move into In progress since card #76), as `critic::gate` reads it.
+    pub fn build_started(&self) -> bool {
+        match self.fields.get("critique") {
+            Some(r) => r.get("started").and_then(Value::as_bool) == Some(true),
+            None => self.fields.contains_key("test"),
+        }
+    }
+
     /// Did this card's last move into Planning go to In progress instead (card #162)?
     pub fn planning_skipped(&self) -> bool {
         self.fields.get("plan").and_then(|p| p.get("state")).and_then(Value::as_str) == Some(PLAN_SKIPPED)
@@ -144,11 +154,22 @@ impl Store {
     }
 
     /// Whether a card session's or the Router's move of `card` to `to` stops in Plan review
-    /// instead (card #195), and whose choice that is: a move from Planning into In progress or
-    /// later, on a card that doesn't skip Plan review, with no Take it to (Hugh's "go on by
-    /// itself" approves the plan too), that isn't a stack's child (its lead's approval covers it).
+    /// instead (card #195), and whose choice that is: a move into In progress or later from
+    /// Planning, or from Blocked or Backlog on a card that was planned (it has been in Planning)
+    /// and whose build never started (so a detour through Blocked can't skip the review), on a card that doesn't skip Plan review, with no
+    /// Take it to (Hugh's "go on by itself" approves the plan too), that isn't a stack's child (its
+    /// lead's approval covers it). From Blocked or Backlog a card that skips Planning has no plan
+    /// to review, so it goes on.
     pub fn plan_review_stop(&self, card: &Card, to: &str) -> Option<Whose> {
-        if card.column != "Planning" || !PAST_PLAN_REVIEW.contains(&to) || card.stack_of().is_some() || card.auto_to().is_some() {
+        if !PAST_PLAN_REVIEW.contains(&to) || card.stack_of().is_some() || card.auto_to().is_some() {
+            return None;
+        }
+        let before = match card.column.as_str() {
+            "Planning" => true,
+            "Blocked" | "Backlog" => !card.build_started() && !self.skips_planning(card) && self.arrival(&card.id, "Planning").ok().flatten().is_some(),
+            _ => false,
+        };
+        if !before {
             return None;
         }
         let (skip, whose) = self.skip_of(card, SKIP_PLAN_REVIEW_KEY);

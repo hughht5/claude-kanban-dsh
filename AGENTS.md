@@ -173,6 +173,10 @@ app, and they ship one at a time.
 - Never sign in to a cloud account as a user from a session. Don't change system security settings. Installs only from official
   sources, recorded in `INSTALLED.md` with their uninstall.
 - **Leave the session cap** (`sessions.max_running`) as Hugh set it.
+- **Only Hugh moves a card on from Plan review** (card #195): a finished plan waits there for his
+  approval (his move to In progress) or his notes (his move back to Planning). A card session's or
+  the Router's move on from Planning stops there unless he set the card, or his default, to skip
+  Plan review (`skipPlanReview`, `sessions.skip_plan_review`), or set its Take it to.
 - **Only Hugh moves a card into Ship it, or the app for him when he set the card to go on by
   itself (Take it to), or turned on small-change auto-ship for that repo** (`autoTo`; the repo list
   `sessions.small_goes_on_repos`, card #104). Card sessions never merge or push to `main` unless

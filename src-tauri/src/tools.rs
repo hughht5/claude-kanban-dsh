@@ -413,12 +413,13 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
                 return Err(format!("refused: {why}"));
             }
             // Hugh's rules hold card sessions to the subagent review and test; his own sessions'
-            // moves aren't.
-            if let Some(why) = held.then(|| crate::agents::move_refused(&store, &c, to)).flatten() {
-                let _ = store.add_log(&c.id, &format!("Refused a move to {to} by {by}: its subagent checks haven't passed"), "the app");
+            // moves aren't. Checked against where it really goes (card #195: Plan review).
+            let goes = dispatch::move_goes_to(&store, &c, to, &by);
+            if let Some(why) = held.then(|| crate::agents::move_refused(&store, &c, goes)).flatten() {
+                let _ = store.add_log(&c.id, &format!("Refused a move to {goes} by {by}: its subagent checks haven't passed"), "the app");
                 return Err(format!("refused: {why}"));
             }
-            if let Some(why) = held.then(|| dispatch::wait_move_refused(&store, &c, to)).flatten() {
+            if let Some(why) = held.then(|| dispatch::wait_move_refused(&store, &c, goes)).flatten() {
                 let _ = store.add_log(&c.id, &format!("Refused a move to {to} by {by}: it waits on cards that aren't ready"), "the app");
                 return Err(format!("refused: {why}"));
             }

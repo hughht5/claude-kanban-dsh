@@ -642,7 +642,6 @@ fn update_fields(args: &[String]) -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Object(out))
 }
 
-/// `kb search <words> [--card n] [--limit n]`: the words are everything else, in order.
 /// `kb flow-defaults`'s arguments (card #195): `--skip-planning`, `--skip-plan-review` and
 /// `--skip-human-test`, each on or off, as kanban_flow_defaults's `set`. None reads them.
 fn flow_default_args(args: &[String]) -> Result<serde_json::Value, String> {
@@ -663,6 +662,7 @@ fn flow_default_args(args: &[String]) -> Result<serde_json::Value, String> {
     Ok(if set.is_empty() { json!({}) } else { json!({ "set": set }) })
 }
 
+/// `kb search <words> [--card n] [--limit n]`: the words are everything else, in order.
 fn search_args(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut words = Vec::new();
     let (mut card, mut limit) = (None, None);

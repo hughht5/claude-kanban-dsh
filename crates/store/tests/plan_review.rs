@@ -82,8 +82,12 @@ fn migration_18_adds_the_column_with_a_backup_changes_no_card_and_runs_twice() {
     assert_eq!(order(&path), want, "idempotent");
 }
 
+/// A card in Plan review is plain data on the board: a board at a newer version than a build knows
+/// is opened as it is, with the card still there (`Store::migrate` never goes down). An older
+/// build's page draws a column it doesn't know in Backlog (`colOf` in ui/board.js); this test
+/// can't run an older build, so it checks the data side only.
 #[test]
-fn an_older_build_opens_a_board_with_a_card_in_plan_review() {
+fn a_board_with_a_card_in_plan_review_opens_at_a_newer_version_as_it_is() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("board.db");
     {
@@ -156,4 +160,25 @@ fn hughs_move_out_of_plan_review_approves_or_sends_back() {
     let c = s.move_by_hugh(&back.card.id, back.card.version, PLAN_REVIEW, Patch::new()).unwrap().card;
     let on = s.move_by_hugh(&c.id, c.version, "In progress", Patch::new()).unwrap();
     assert_eq!(on.card.column, "In progress");
+}
+
+/// The review's finding: a detour through Blocked (or Backlog) can't skip Plan review for a card
+/// whose build never started; once Hugh's move put it in In progress, a later Blocked is free.
+#[test]
+fn a_detour_through_blocked_still_stops_in_plan_review() {
+    let (_d, mut s) = board();
+    let c = s.create(None, patch(json!({ "title": "T", "column": "Planning", "critique": { "state": "passed" } })), "test").unwrap();
+    let b = s.update(&c.id, c.version, &patch(json!({ "column": "Blocked" })), "card #1's session").unwrap();
+    assert!(s.plan_review_stop(&b, "In progress").is_some(), "planned, never built");
+    let r = s.move_by_hugh(&b.id, b.version, PLAN_REVIEW, Patch::new()).unwrap().card;
+    let r = s.update(&r.id, r.version, &patch(json!({ "column": "Backlog" })), "card #1's session").unwrap();
+    assert!(s.plan_review_stop(&r, "In progress").is_some(), "from Backlog too");
+    // Hugh approves: the build starts, and a later Blocked goes back to the build freely.
+    let on = s.move_by_hugh(&r.id, r.version, "In progress", Patch::new()).unwrap().card;
+    assert!(on.build_started());
+    let b = s.update(&on.id, on.version, &patch(json!({ "column": "Blocked" })), "card #1's session").unwrap();
+    assert!(s.plan_review_stop(&b, "In progress").is_none());
+    // A card that skips Planning has no plan to review from Blocked or Backlog.
+    let k = s.create(None, patch(json!({ "title": "K", "column": "Blocked", "skipPlanning": true })), "Hugh (board)").unwrap();
+    assert!(s.plan_review_stop(&k, "In progress").is_none());
 }
