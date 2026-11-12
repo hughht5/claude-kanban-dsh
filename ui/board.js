@@ -1,4 +1,4 @@
-const COLUMNS=["Backlog","Blocked","Planning","In progress","Human test","Ship it","Deploy complete","Done"];
+const COLUMNS=["Backlog","Blocked","Planning","Plan review","In progress","Human test","Ship it","Deploy complete","Done"]; // Plan review: card #195
 // The columns drawn on the board. Done isn't one (card #83): a card that reaches it is archived
 // at once, and shows in the Archive column instead.
 const BOARD_COLS=COLUMNS.filter(c=>c!=="Done");

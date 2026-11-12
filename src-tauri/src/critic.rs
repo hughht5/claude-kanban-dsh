@@ -55,7 +55,8 @@ pub const AGENT: Agent = Agent {
 const BEFORE_BUILD: [&str; 3] = ["Backlog", "Planning", "Blocked"];
 /// Into In progress, or straight on past it (which would skip the build's start, so a stale
 /// test or review pass can't carry an unchecked plan through).
-const INTO_BUILD: [&str; 3] = ["In progress", "Human test", "Deploy complete"];
+/// Card #195: and into Plan review, where a finished plan waits for Hugh.
+const INTO_BUILD: [&str; 4] = ["Plan review", "In progress", "Human test", "Deploy complete"];
 
 /// Why a card's session may not move `card` to `to`, if the plan critique holds it: into In
 /// progress (or past it) from Backlog, Planning or Blocked only once the critique passed. From
@@ -206,6 +207,9 @@ mod tests {
         let why = crate::agents::move_refused(&s, &card(json!({ "title": "T" }), "Planning"), "In progress").unwrap();
         assert!(why.contains("plan critique") && !why.contains("subagent review"), "{why}");
         assert!(crate::agents::move_refused(&s, &card(json!({ "title": "T", "critique": { "state": "passed" } }), "Planning"), "In progress").is_none());
+        // Card #195: the move into Plan review is held for the critique the same way.
+        assert!(crate::agents::move_refused(&s, &card(json!({ "title": "T" }), "Planning"), "Plan review").unwrap().contains("plan critique"));
+        assert!(crate::agents::move_refused(&s, &card(json!({ "title": "T", "critique": { "state": "passed" } }), "Planning"), "Plan review").is_none());
     }
 
     #[test]

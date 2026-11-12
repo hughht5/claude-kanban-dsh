@@ -78,7 +78,7 @@ pub use sessions::{SessionRow, MID_TURN, RESUME_OFFER_KEY};
 pub use ships::{ship_goes_first, ship_lane, ship_started, QUEUED as SHIP_QUEUED};
 pub use stacks::{children_reviewed as stack_children_reviewed, lead_missing, lead_missing_in_stack, merged as stack_merged, own_build as stack_own_build, OWN_BUILD_KEY as STACK_OWN_BUILD_KEY, stack_ready, stack_stage, Joined, StackMove, READY as STACK_READY, STACK_FIELDS, STACK_HELD_KEY, STACK_RULE_KEY};
 pub use subagents::{clean_subagents, subagent, Subagent, MIGRATION_BY as UNSTAMP_BY, RETIRED as RETIRED_SUBAGENTS, ROUTER_RULE_KEY, SUBAGENTS, SUBAGENTS_KEY};
-pub use flow::{clean_skip, Arrival, Whose, FLOW_FIELDS, PLAN_SKIPPED, SKIPS, SKIP_HUMAN_TEST_KEY, SKIP_HUMAN_TEST_RULE_KEY, SKIP_PLANNING_KEY, SKIP_PLANNING_RULE_KEY};
+pub use flow::{clean_skip, is_skip, skip_rule, Arrival, Whose, FLOW_FIELDS, PAST_PLAN_REVIEW, PLAN_REVIEW, PLAN_SKIPPED, SKIPS, SKIP_HUMAN_TEST_KEY, SKIP_HUMAN_TEST_RULE_KEY, SKIP_PLANNING_KEY, SKIP_PLANNING_RULE_KEY, SKIP_PLAN_REVIEW_KEY, SKIP_PLAN_REVIEW_RULE_KEY};
 pub use start_queue::{StartQueue, WaitingStart, DEFAULT_CAP as DEFAULT_SESSION_CAP, MAX_CAP as MAX_SESSION_CAP};
 pub use templates::{Template, TemplateInput};
 // Time in each column (card #111).
@@ -88,10 +88,12 @@ pub use testapp::{take_refused, Ask, Ended, Take, TestAppQueue, Turn, Waiting, I
 pub use testapp::{card_slot, channel_slot, lowest_free, slot_channel, slot_label, slot_refused, LineStep, SlotClaim, SlotLine, SlotWait, MAX_SLOTS as MAX_TEST_SLOTS, TEST_APP_KEY};
 pub use waits::{clean_blocked_by, is_met, wait_path, Wait, WaitKind, WaitOutcome, BLOCKED_KEY, LEAD_NOTE, MAX_WAITS, MET_OTHER_REPO, MET_SAME_REPO, WAITED_KEY, WAIT_BY};
 
-pub const COLUMNS: [&str; 8] = [
+pub const COLUMNS: [&str; 9] = [
     "Backlog",
     "Blocked",
     "Planning",
+    // Card #195: Hugh reviews the plan here; no session runs.
+    "Plan review",
     "In progress",
     "Human test",
     "Ship it",
@@ -99,7 +101,7 @@ pub const COLUMNS: [&str; 8] = [
     "Done",
 ];
 
-const MIGRATIONS: [&str; 17] = [
+const MIGRATIONS: [&str; 18] = [
     include_str!("schema.sql"),
     include_str!("schema2.sql"),
     include_str!("schema3.sql"),
@@ -123,6 +125,8 @@ const MIGRATIONS: [&str; 17] = [
     // Card #162: a card's subagents hold only Hugh's overrides (its work is in Rust: see
     // `UNSTAMP_MIGRATION`).
     include_str!("schema17.sql"),
+    // Card #195: the Plan review column.
+    include_str!("schema18.sql"),
 ];
 
 /// The migration whose work is done in Rust after its SQL, in the same transaction (card #162):

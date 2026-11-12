@@ -2518,3 +2518,44 @@ Hugh, 11 Nov: "Agents and router should open automatically on start." UI only.
   stack lead to child (overlay, and the child's own panel) and back, the review to the card's chat
   and back, stepping the review, forward, a new view dropping forward, pane, drawer and Settings,
   an archived card skipped, typed text kept, the keys and buttons, one step per click.
+
+## Plan review (12 Nov 2026, card #195, branch `card-195`)
+
+Hugh (12 Nov): a column for his review of a plan, between Planning and In progress.
+
+- **The column:** `COLUMNS` (store `lib.rs`, `ui/board.js`) has "Plan review" after Planning.
+  **Migration 18** (`schema18.sql`) moves the later columns up one and inserts it at position 3:
+  mode `none`, no auto-spawn, no prompt, `on_enter` `suspend` (the planning session stops when its
+  held move lands there; the conversation is kept). No card changes. Idempotent; an older build
+  opens the board and draws a card there in Backlog (`colOf`).
+- **The stop:** `Store::plan_review_stop` (flow.rs): a move from Planning into In progress, Human
+  test or Deploy complete stops in Plan review unless the card skips it (`skipPlanReview`, default
+  `sessions.skip_plan_review`, off), has Take it to (`autoTo`, his approval), or is a stack's child
+  (its lead's approval). `dispatch::plan_review_stop` applies it to `session_move_to` (a card
+  session's held move, another session's move, the Router's) but never to Hugh's own (`hughs_own`)
+  or the app's small-card go-on (`router::BY`, card #98: Hugh's own rule still starts a small card
+  building). The log says "Stopped in Plan review on its way to ...". Skip Planning still goes
+  Backlog to In progress, so it skips Plan review too.
+- **Out of it:** `dispatch::plan_review_gate` is first in `agents::GATES`: a card session or the
+  Router moves a card out of Plan review only back (Planning, Backlog, Blocked, Done).
+  `routersession::move_refused` refuses the Router's move out of it and lets Planning to Plan
+  review through. `critic::INTO_BUILD` has Plan review, so the plan critique holds the move into it.
+  Hugh's move to In progress approves (`move_message` adds `plan_review_note`, and the critic's
+  build notes go with it, `build_notes_for`); his move back to Planning is a fresh plan request
+  with a note to read his notes.
+- **Flow:** `skipPlanReview` is the third skip in `SKIPS` and `FLOW_FIELDS` (card field, Settings
+  default, `CARD_FLOW_SKIPS` in `ui/subagents.js`, `kb update --skip-plan-review`,
+  `skips_changed_note`, `after_default_change` tells the cards in Planning that follow it).
+- **For agents:** `kanban_flow_defaults` (`control.rs`, outside a card session only; `kb
+  flow-defaults [--skip-planning on|off] [--skip-plan-review on|off] [--skip-human-test on|off]`)
+  reads and sets the three skip defaults as Settings would (logged as Hugh's session, with
+  `after_default_change`). Per card, Hugh's own sessions already set the skips with
+  `kanban_update_card`.
+- **UI:** a card in Plan review shows "Plan to review" (`ui/needs.js`, `w-review`); the column is
+  in the time views (`ui/times.js`).
+- **Prompts** (private repo, branch `card-195`): `planning.md` (*Plan review*), `in-progress.md`
+  (step 1a, build the approved plan), `router.md` (job 2), the kanban skill's Project #2 table
+  (Plan review maps to In progress). The bundled `prompts/planning.md` says the same in short.
+- **Tests:** `crates/store/tests/plan_review.rs` (the column, migration 18 with backup and twice,
+  an older build, the three-way skip, the stop rules, Hugh's moves out); `dispatch.rs`,
+  `routersession.rs`, `critic.rs` and `control.rs` unit tests; `kb` flag tests.

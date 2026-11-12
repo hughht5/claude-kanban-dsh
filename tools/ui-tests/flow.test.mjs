@@ -70,7 +70,7 @@ test("the Card flow box: each option is a switch showing what holds, and a click
   assert.deepEqual(state("tester"), ["switch", "false", "off", "Reset"]);
   assert.deepEqual(state("critic"), ["switch", "false", "default", "Default"], "the default here is off");
   assert.deepEqual(state("reviewer"), ["switch", "true", "default", "Default"]);
-  assert.equal(box.querySelectorAll(".flow-tog[data-flow]").length, 7, "two skips and five subagents");
+  assert.equal(box.querySelectorAll(".flow-tog[data-flow]").length, 8, "three skips (card #195: Plan review) and five subagents");
   assert.match(box.querySelector(".meta").textContent, /Now: Skip Human test; subagents off: card-critic, card-tester\./);
   // One click each: only that key; Reset sends null (Default).
   sw("critic").querySelector(".flow-knob").click();
@@ -125,15 +125,16 @@ test("Add card sends only what isn't Default", async () => {
   assert.equal(updates.length, 0, "the form saves nothing until Add");
 });
 
-test("Settings › Sessions: the two skip defaults sit with the subagent defaults, off unless turned on", async () => {
+test("Settings › Sessions: the three skip defaults sit with the subagent defaults, off unless turned on", async () => {
   const { b, sets } = board();
   b.run(`openSettings("sessions")`);
   await tick();
   const box = b.document.querySelector(".st-subagents");
   assert.equal(box.querySelector("h4").textContent, "Card flow defaults");
   const rules = box.querySelectorAll("[data-rule]").map((x) => x.dataset.rule);
-  assert.deepEqual(rules.slice(0, 2), ["sessions.skip_planning", "sessions.skip_human_test"]);
-  assert.equal(rules.length, 7);
+  assert.deepEqual(rules.slice(0, 3), ["sessions.skip_planning", "sessions.skip_plan_review", "sessions.skip_human_test"]);
+  assert.equal(rules.length, 8);
+  assert.ok(!box.querySelector('[data-rule="sessions.skip_plan_review"] input').hasAttribute("checked"), "Plan review is on by default (its skip off)");
   const skipP = box.querySelector('[data-rule="sessions.skip_planning"]');
   assert.match(skipP.querySelector("label").textContent, /Skip Planning/);
   assert.ok(!skipP.querySelector("input").hasAttribute("checked"), "off");

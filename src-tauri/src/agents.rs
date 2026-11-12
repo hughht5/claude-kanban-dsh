@@ -84,6 +84,8 @@ pub type Gate = fn(&Store, &Card, &str) -> Option<String>;
 
 /// The rules a card session's move is held to, in the order a refusal names them. One line each.
 pub const GATES: &[Gate] = &[
+    // Card #195: only Hugh moves a card on from Plan review.
+    crate::dispatch::plan_review_gate,
     crate::critic::gate,
     crate::repro::gate,
     crate::reviewer::gate,

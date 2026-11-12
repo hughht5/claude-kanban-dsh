@@ -671,6 +671,13 @@ pub fn move_refused(from: &str, to: &str, may_start: bool) -> Option<String> {
     if ["Deploy complete", "Done"].contains(&to) {
         return Some(format!("the Router doesn't move cards into {to}"));
     }
+    // Card #195: a plan in Plan review waits for Hugh; the Router may put a finished plan there.
+    if from == "Plan review" {
+        return Some("a card in Plan review waits for Hugh to approve its plan; only he moves it on (or back to Planning)".into());
+    }
+    if from == "Planning" && to == "Plan review" {
+        return None;
+    }
     if from == "Backlog" && ["Planning", "In progress"].contains(&to) {
         return (!may_start).then(|| format!("starting a card (Backlog to {to}) needs Hugh's \"Router may start cards\" setting, which is off"));
     }
@@ -1008,6 +1015,16 @@ mod tests {
         assert_eq!(m.lines().filter(|l| l.starts_with("- MOVED")).count(), MAX_EVENT_LINES);
         assert!(m.contains("and 15 more events"));
         assert!(m.len() < 2000);
+    }
+
+    // Card #195: the Router may put a finished plan in Plan review, never move it on.
+    #[test]
+    fn the_router_never_moves_a_plan_on_from_plan_review() {
+        assert_eq!(move_refused("Planning", "Plan review", false), None);
+        for to in ["In progress", "Human test", "Planning", "Blocked"] {
+            let why = move_refused("Plan review", to, true).expect("refused");
+            assert!(why.contains("Plan review"), "{why}");
+        }
     }
 
     #[test]

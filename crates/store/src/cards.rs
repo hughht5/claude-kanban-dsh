@@ -468,7 +468,7 @@ pub(crate) fn apply(card: &mut Card, patch: &Patch) -> Result<Vec<String>> {
                 }
             }
             // Card #162: skip Planning or Human test: true, false, or null for the default.
-            crate::SKIP_PLANNING_KEY | crate::SKIP_HUMAN_TEST_KEY => {
+            s if crate::flow::is_skip(s) => {
                 let new = crate::clean_skip(k, v)?;
                 if card.fields.get(k) != new.as_ref() {
                     match new {
@@ -867,7 +867,7 @@ impl Store {
         if let Some(own) = crate::subagents::for_new_card(chosen.as_ref())? {
             fields.insert(crate::SUBAGENTS_KEY.into(), own);
         }
-        for key in [crate::SKIP_PLANNING_KEY, crate::SKIP_HUMAN_TEST_KEY] {
+        for (key, _) in crate::SKIPS {
             if let Some(v) = fields.remove(key) {
                 if let Some(x) = crate::clean_skip(key, &v)? {
                     fields.insert(key.into(), x);

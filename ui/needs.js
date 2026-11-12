@@ -154,7 +154,7 @@ async function loadUsage(){
 // reply that ends in a question or says the plan is ready), or by its own fields: Blocked with a
 // reason, a stack card asking a question, a ship that needs him, or Human test not yet passed.
 // An unread reply that is a plain statement keeps only its dot.
-const WAIT_LABEL={question:"Asks you",permission:"Permission",failed:"Failed",reply:"Replied",plan:"Plan ready",asks:"Asks you",blocked:"Blocked",ship:"Ship",test:"To test"};
+const WAIT_LABEL={question:"Asks you",permission:"Permission",failed:"Failed",reply:"Replied",plan:"Plan ready",review:"Plan to review",asks:"Asks you",blocked:"Blocked",ship:"Ship",test:"To test"};
 // Secrets hidden in the page too, by the same rules as the server's needs::redact (keep the two
 // alike): the card's own fields (a blocked reason, a stack card's question and choices, a ship's
 // detail) never pass the server. A link keeps its host and first path segment; tokens, key/value
@@ -191,6 +191,8 @@ function waitFor(c){
     return{kind:ch.length?"asks":"blocked",text:reason,options:ch,more:0};
   }
   if(col==="Ship it"&&shipState(c)==="needs-hugh")return{kind:"ship",text:waitStr(c.ship&&c.ship.detail)||"it needs you to ship it",options:[],more:0};
+  // Card #195: a finished plan waits in Plan review for Hugh to approve it.
+  if(col==="Plan review")return{kind:"review",text:"approve it (move to In progress) or send it back to Planning",options:[],more:0};
   if(col==="Human test"&&c.passed!==true){
     // Card #103's estimate of how long it takes to check, when that card is in.
     let t="";if(typeof checkSizeText==="function"){const v=hookTry(checkSizeText,c);if(typeof v==="string")t=v.trim()}

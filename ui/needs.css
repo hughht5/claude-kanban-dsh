@@ -4,7 +4,7 @@
 .wait b,.wrow b{font-weight:600;color:var(--warn)}
 .wait .opt,.wrow .opt{color:var(--muted)}
 .wait.w-failed,.wrow.w-failed{border-left-color:var(--bad)} .w-failed b{color:var(--bad)}
-.wait.w-reply,.wait.w-plan,.wrow.w-reply,.wrow.w-plan{border-left-color:var(--accent)} .w-reply b,.w-plan b{color:var(--accent)}
+.wait.w-reply,.wait.w-plan,.wait.w-review,.wrow.w-reply,.wrow.w-plan,.wrow.w-review{border-left-color:var(--accent)} .w-reply b,.w-plan b,.w-review b{color:var(--accent)}
 .wait.w-test,.wrow.w-test{border-left-color:var(--info)} .w-test b{color:var(--info)}
 .wait.w-blocked,.wrow.w-blocked{border-left-color:var(--muted)} .w-blocked b{color:var(--fg)}
 .waitbox .wrow{display:block;font-size:13px;line-height:1.45;border-left:3px solid var(--warn);padding-left:8px;overflow-wrap:anywhere}

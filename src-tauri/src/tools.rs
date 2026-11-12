@@ -60,7 +60,7 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card } } },
         { "name": "kanban_list_cards", "description": "List the board's cards (number, title, column, labels, summary, nextStep, blockedBy and waitedOn, and for stacks: stack, stackOf, passed).",
           "inputSchema": { "type": "object", "properties": { "column": { "type": "string" }, "include_archived": { "type": "boolean" } } } },
-        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} proof is a list of {{path, label}} by full Windows path: the screenshots and reports that prove the change, shown in Human test. blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning and skipHumanTest (true, false, or null for the default in Settings) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
+        { "name": "kanban_update_card", "description": format!("Change fields on a card. Allowed: {}. {DONE_WHEN_HINT} proof is a list of {{path, label}} by full Windows path: the screenshots and reports that prove the change, shown in Human test. blockedBy is the card numbers it waits on, like [12, 40] (null for none): a card waiting in Blocked, put there by Hugh, starts by itself once they are ready. Pass if_version to refuse the write if the card changed since you read it. The card's flow is Hugh's alone: only his own sessions outside the app and kb may set skipPlanning, skipPlanReview (card #195: false stops a finished plan in Plan review for him) and skipHumanTest (true, false, or null for the default in Settings; kanban_flow_defaults reads and sets those defaults) and subagents ({{\"critic\": false}}, a key null for its default); a card's session or the Router can't.", UPDATABLE.join(", ")),
           "inputSchema": { "type": "object", "properties": { "card": card, "if_version": { "type": "integer" }, "fields": { "type": "object" } }, "required": ["fields"] } },
         { "name": "kanban_add_log", "description": "Add a line to a card's log.",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
@@ -359,7 +359,7 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             // Card #162: the flow is Hugh's alone, so only a caller with no session at all (kb or
             // his own sessions outside the app) sets it; a session the app doesn't know can't.
             if let Some(bad) = not_updatable_by(fields, !hugh) {
-                let only_hugh = if kanban_store::FLOW_FIELDS.contains(&bad.as_str()) { " The card's flow (skipPlanning, skipHumanTest, subagents) is Hugh's alone: ask him." } else { "" };
+                let only_hugh = if kanban_store::FLOW_FIELDS.contains(&bad.as_str()) { " The card's flow (skipPlanning, skipPlanReview, skipHumanTest, subagents) is Hugh's alone: ask him." } else { "" };
                 return Err(format!("\"{bad}\" can't be set this way (allowed: {}).{only_hugh}", UPDATABLE.join(", ")));
             }
             if let Some(ch) = fields.get("choices") {
@@ -426,10 +426,18 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
                 store
                     .queue(&c.id, "move", &json!({ "column": to, "reason": reason }).to_string())
                     .map_err(|e| e.to_string())?;
-                json!(format!("Queued: card #{} moves to {to} when your turn ends. Finish your turn as normal.", c.number))
+                // Card #195: say where it will really go.
+                if dispatch::plan_review_stop(&store, &c, to, &by).is_some() {
+                    json!(format!("Queued: card #{} moves to Plan review when your turn ends (not {to}: its plan waits there for Hugh to approve, and your session stops there; its conversation is kept). Finish your turn as normal, ending with the plan for Hugh.", c.number))
+                } else {
+                    json!(format!("Queued: card #{} moves to {to} when your turn ends. Finish your turn as normal.", c.number))
+                }
             } else {
                 let went = dispatch::session_move_to(app, &mut store, &c, to, reason, &by)?;
-                if went != to {
+                if went == kanban_store::PLAN_REVIEW && to != went {
+                    // Card #195: a finished plan waits for Hugh.
+                    json!(format!("Moved card #{} to Plan review: its plan waits there for Hugh to approve (his move to In progress).", c.number))
+                } else if went != to {
                     // Card #162: Hugh has Planning skipped for it.
                     json!(format!("Moved card #{} to {went}: Hugh has Planning skipped for it, so it went straight to In progress.", c.number))
                 } else {

@@ -17,6 +17,8 @@ pub const CONTROL: &[&str] = &[
     "kanban_session_switch",
     "kanban_session_keys",
     "kanban_search",
+    // Card #195: the board's flow defaults (Settings > Sessions), for Hugh's own agents.
+    "kanban_flow_defaults",
 ];
 
 pub fn schemas() -> Value {
@@ -38,6 +40,8 @@ pub fn schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "keys": { "type": "array", "items": {} } }, "required": ["card", "keys"] } },
         { "name": "kanban_search", "description": "Search every card's session history (the last 90 days, archived cards included): prompts, replies and tool calls. Every word of 3 or more letters must match; \"quote\" a phrase. Secrets and sign-in links are stored masked. For Hugh's own sessions only: card sessions don't get it.",
           "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "card": { "type": "integer", "description": "Only this card's sessions." }, "limit": { "type": "integer", "description": "How many of the newest matches to take (default and most 2000)." } }, "required": ["query"] } },
+        { "name": "kanban_flow_defaults", "description": "The board's flow defaults (Settings > Sessions), for Hugh's own sessions only, when he asked: whether a card skips Planning, Plan review (card #195: a finished plan waits there for Hugh to approve) and Human test, unless the card sets its own (kanban_update_card's skipPlanning, skipPlanReview, skipHumanTest). With no `set` it reads them. `set` changes some, as Hugh's Settings toggle would: true is on (skip it), false is off. Card sessions and the Router don't get it.",
+          "inputSchema": { "type": "object", "properties": { "set": { "type": "object", "properties": { "skipPlanning": { "type": "boolean" }, "skipPlanReview": { "type": "boolean" }, "skipHumanTest": { "type": "boolean" } }, "additionalProperties": false } } } },
     ])
 }
 
@@ -197,6 +201,7 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
             json!(format!("Pressed {} key(s) in card #{n}'s terminal.", keys.len()))
         }
         "kanban_search" => crate::search::tool(app, args)?,
+        "kanban_flow_defaults" => flow_defaults(app, args)?,
         _ => return Err(format!("no tool called {name}")),
     })
 }
@@ -217,5 +222,70 @@ mod tests {
     fn control_tools_are_all_listed() {
         let names: Vec<String> = schemas().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
         assert_eq!(names, CONTROL.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    }
+}
+
+/// The by of a flow default changed through `kanban_flow_defaults` (card #195).
+pub const FLOW_DEFAULTS_BY: &str = "Hugh (his session outside the app)";
+
+/// `kanban_flow_defaults` (card #195): reads the three skip defaults, after setting those in
+/// `set` (each on or off), logged as Hugh's, with the same follow-up as his Settings toggle.
+fn flow_defaults(app: &AppHandle, args: &Value) -> Result<Value, String> {
+    let want = flow_defaults_wanted(args)?;
+    let mut changed = Vec::new();
+    {
+        let board = app.state::<Board>();
+        let mut store = board.0.lock().map_err(|e| e.to_string())?;
+        for (rule, on) in &want {
+            let (_, now) = store.set_page_setting_logged(rule, if *on { "on" } else { "off" }, FLOW_DEFAULTS_BY).map_err(|e| e.to_string())?;
+            if now {
+                changed.push(*rule);
+            }
+        }
+    }
+    for rule in &changed {
+        let _ = tauri::Emitter::emit(app, "settings-changed", rule.to_string());
+        crate::dispatch::after_default_change(app, rule);
+    }
+    let board = app.state::<Board>();
+    let store = board.0.lock().map_err(|e| e.to_string())?;
+    let mut out = serde_json::Map::new();
+    for (key, rule) in kanban_store::SKIPS {
+        out.insert(key.into(), json!(store.skip_default(rule)));
+    }
+    out.insert("changed".into(), json!(changed.iter().map(|r| kanban_store::SKIPS.iter().find(|(_, x)| x == r).map(|(k, _)| *k).unwrap_or(r)).collect::<Vec<_>>()));
+    Ok(Value::Object(out))
+}
+
+/// The defaults `kanban_flow_defaults`'s `set` asks for, as (setting, on), checked first so a bad
+/// key changes nothing.
+pub fn flow_defaults_wanted(args: &Value) -> Result<Vec<(&'static str, bool)>, String> {
+    let Some(set) = args.get("set").filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
+    let set = set.as_object().ok_or("`set` is an object, like {\"skipPlanReview\": true}")?;
+    let mut out = Vec::new();
+    for (k, v) in set {
+        let rule = kanban_store::skip_rule(k).ok_or_else(|| format!("`set` takes skipPlanning, skipPlanReview and skipHumanTest, not {k}"))?;
+        let on = v.as_bool().ok_or_else(|| format!("{k} is true (skip it) or false"))?;
+        out.push((rule, on));
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod flow_default_tests {
+    use super::*;
+
+    #[test]
+    fn set_takes_the_three_skips_as_booleans_and_nothing_else() {
+        assert!(flow_defaults_wanted(&json!({})).unwrap().is_empty());
+        assert_eq!(
+            flow_defaults_wanted(&json!({ "set": { "skipPlanReview": true, "skipHumanTest": false } })).unwrap(),
+            vec![(kanban_store::SKIP_HUMAN_TEST_RULE_KEY, false), (kanban_store::SKIP_PLAN_REVIEW_RULE_KEY, true)]
+        );
+        assert!(flow_defaults_wanted(&json!({ "set": { "skipPlanReview": "on" } })).is_err());
+        assert!(flow_defaults_wanted(&json!({ "set": { "critic": false } })).is_err());
+        assert!(flow_defaults_wanted(&json!({ "set": [1] })).is_err());
+        assert!(CONTROL.contains(&"kanban_flow_defaults"));
+        assert!(schemas().as_array().unwrap().iter().any(|t| t["name"] == "kanban_flow_defaults"));
     }
 }

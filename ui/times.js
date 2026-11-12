@@ -9,7 +9,7 @@
 //   at most once a minute, and after a failure waits a minute too.
 // - The column the card is in now keeps counting: once a minute only its time's text is updated,
 //   so focus, the fold and any tooltip stay put.
-const TIMES_MAIN=["Planning","In progress","Human test"]; // the rows Hugh named; the rest fold away
+const TIMES_MAIN=["Planning","Plan review","In progress","Human test"]; // the rows Hugh named; the rest fold away
 const TIMES_ASK_EVERY=60*1000;
 let timesCache=null;   // {id, version, data, at}: the last card's times, and when they came
 let timesWant=null;    // "id@version" being fetched
@@ -128,7 +128,7 @@ setInterval(timesTick,60*1000);
 // over the visits that finished in the last N days (column_medians), not averages. Backlog,
 // Deploy complete and Done are left out: a card waits there, it isn't worked on.
 const TIMES_BAR_SKIP=["Backlog","Deploy complete","Done","Archive"];
-const TIMES_BAR_TONE={"Planning":"var(--muted)","In progress":"var(--accent)","Human test":"var(--warn)","Ship it":"var(--info)",
+const TIMES_BAR_TONE={"Planning":"var(--muted)","Plan review":"var(--warn)","In progress":"var(--accent)","Human test":"var(--warn)","Ship it":"var(--info)",
   "Blocked":"color-mix(in srgb,var(--muted) 55%,var(--panel))"};
 function timesBarHtml(){
   if(!Array.isArray(colMedians))return`<div class="tbar-ttl">Median time in each column</div><div class="quiet tbar-none">${colMediansFailed?"Times not available":"Reading the times…"}</div>`;

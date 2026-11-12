@@ -9,6 +9,10 @@
 //!   app moves it on into Ship it for Hugh (`dispatch::auto_progress`), as "Take it to: Deploy
 //!   complete" does. Hugh's own drag into Human test never skips, and "Take it to: Human test"
 //!   wins (it stops there for him).
+//! - `skipPlanReview` (card #195): a card session's or the Router's move from Planning into In
+//!   progress (or later) goes there as asked, instead of stopping in Plan review for Hugh to
+//!   approve the plan (`plan_review_stop`). Off by default: a plan waits for Hugh. Skipping
+//!   Planning skips Plan review too (Backlog straight to In progress).
 //!
 //! Each is three-way on the card: true, false, or absent (follow the default as it is now). A
 //! stack's child ignores both: its lead's flow plans and ships it. Only Hugh sets them: his card
@@ -28,10 +32,35 @@ pub const SKIP_HUMAN_TEST_KEY: &str = "skipHumanTest";
 pub const SKIP_PLANNING_RULE_KEY: &str = "sessions.skip_planning";
 /// The board's default for skipping Human test: "on" or "off" (the default).
 pub const SKIP_HUMAN_TEST_RULE_KEY: &str = "sessions.skip_human_test";
-/// The two skip options, each with its board default.
-pub const SKIPS: [(&str, &str); 2] = [(SKIP_PLANNING_KEY, SKIP_PLANNING_RULE_KEY), (SKIP_HUMAN_TEST_KEY, SKIP_HUMAN_TEST_RULE_KEY)];
-/// The card fields only Hugh sets: the two skips and the subagents.
-pub const FLOW_FIELDS: [&str; 3] = [SKIP_PLANNING_KEY, SKIP_HUMAN_TEST_KEY, SUBAGENTS_KEY];
+/// The card field (card #195): true skips Plan review for this card, false never does, absent
+/// follows the default.
+pub const SKIP_PLAN_REVIEW_KEY: &str = "skipPlanReview";
+/// The board's default for skipping Plan review: "on" or "off" (the default).
+pub const SKIP_PLAN_REVIEW_RULE_KEY: &str = "sessions.skip_plan_review";
+/// The column a finished plan waits in for Hugh (card #195).
+pub const PLAN_REVIEW: &str = "Plan review";
+/// The skip options, each with its board default, in the order the flow shows them.
+pub const SKIPS: [(&str, &str); 3] = [
+    (SKIP_PLANNING_KEY, SKIP_PLANNING_RULE_KEY),
+    (SKIP_PLAN_REVIEW_KEY, SKIP_PLAN_REVIEW_RULE_KEY),
+    (SKIP_HUMAN_TEST_KEY, SKIP_HUMAN_TEST_RULE_KEY),
+];
+/// The card fields only Hugh sets: the skips and the subagents.
+pub const FLOW_FIELDS: [&str; 4] = [SKIP_PLANNING_KEY, SKIP_PLAN_REVIEW_KEY, SKIP_HUMAN_TEST_KEY, SUBAGENTS_KEY];
+
+/// Is `key` one of the skip fields?
+pub fn is_skip(key: &str) -> bool {
+    SKIPS.iter().any(|(k, _)| *k == key)
+}
+
+/// The board-default setting for skip field `key`, if it is one.
+pub fn skip_rule(key: &str) -> Option<&'static str> {
+    SKIPS.iter().find(|(k, _)| *k == key).map(|(_, r)| *r)
+}
+
+/// The columns a move from Planning stops in Plan review on its way to (card #195): into the
+/// build or straight past it.
+pub const PAST_PLAN_REVIEW: [&str; 3] = ["In progress", "Human test", "Deploy complete"];
 /// The state of a card's `plan` record when its move into Planning went to In progress instead.
 pub const PLAN_SKIPPED: &str = "skipped";
 
@@ -109,6 +138,23 @@ impl Store {
         self.skip_of(card, SKIP_PLANNING_KEY).0
     }
 
+    /// Does `card` skip Plan review (card #195): its own choice, else the default?
+    pub fn skips_plan_review(&self, card: &Card) -> bool {
+        self.skip_of(card, SKIP_PLAN_REVIEW_KEY).0
+    }
+
+    /// Whether a card session's or the Router's move of `card` to `to` stops in Plan review
+    /// instead (card #195), and whose choice that is: a move from Planning into In progress or
+    /// later, on a card that doesn't skip Plan review, with no Take it to (Hugh's "go on by
+    /// itself" approves the plan too), that isn't a stack's child (its lead's approval covers it).
+    pub fn plan_review_stop(&self, card: &Card, to: &str) -> Option<Whose> {
+        if card.column != "Planning" || !PAST_PLAN_REVIEW.contains(&to) || card.stack_of().is_some() || card.auto_to().is_some() {
+            return None;
+        }
+        let (skip, whose) = self.skip_of(card, SKIP_PLAN_REVIEW_KEY);
+        (!skip).then_some(whose)
+    }
+
     /// Does `card` go on from Human test to Ship it by itself (when a session's move or the stack
     /// rules put it there)?
     pub fn skips_human_test(&self, card: &Card) -> bool {
@@ -116,7 +162,7 @@ impl Store {
     }
 
     /// The card's flow as it holds now (`kanban_get_card`'s and `kb card`'s `flow`): for each of
-    /// skipPlanning, skipHumanTest and the five subagents, its value, whether it is the card's own
+    /// skipPlanning, skipPlanReview, skipHumanTest and the subagents, its value, whether it is the card's own
     /// or the default, and the default itself.
     pub fn flow_of(&self, card: &Card) -> Value {
         let mut out = Map::new();
@@ -131,7 +177,7 @@ impl Store {
         }
         out.insert(SUBAGENTS_KEY.into(), Value::Object(subs));
         if card.stack_of().is_some() {
-            out.insert("note".into(), json!("A stack's card never skips Planning or Human test: its lead's flow plans and ships it."));
+            out.insert("note".into(), json!("A stack's card never skips Planning or Human test, and never stops in Plan review: its lead's flow plans, approves and ships it."));
         }
         Value::Object(out)
     }
@@ -172,6 +218,8 @@ mod tests {
         for bad in [json!("on"), json!(1), json!({}), json!([])] {
             assert!(clean_skip(SKIP_HUMAN_TEST_KEY, &bad).is_err(), "{bad}");
         }
-        assert_eq!(FLOW_FIELDS, ["skipPlanning", "skipHumanTest", "subagents"]);
+        assert_eq!(FLOW_FIELDS, ["skipPlanning", "skipPlanReview", "skipHumanTest", "subagents"]);
+        assert!(is_skip(SKIP_PLAN_REVIEW_KEY) && !is_skip(SUBAGENTS_KEY));
+        assert_eq!(skip_rule(SKIP_PLAN_REVIEW_KEY), Some(SKIP_PLAN_REVIEW_RULE_KEY));
     }
 }

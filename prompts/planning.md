@@ -89,7 +89,9 @@ session runs on the column's defaults, with no route and no restart.
 7. If a decision is the owner's (scope, a trade-off, anything the card doesn't settle), ask it in
    your message, put the question in `nextStep`, and leave the card in Planning. If something
    outside the card blocks it, move it to Blocked with the reason in `blockedReason`. Otherwise tell
-   the owner the plan is ready: they move the card to In progress to start the build.
+   the owner the plan is ready, and move the card to In progress as the last thing in your turn:
+   it stops in Plan review (unless the owner set the card to skip it), where the owner approves the
+   plan by moving it to In progress, or sends it back to Planning with notes. Nothing runs there.
 
 ## Check the plan with a subagent
 

@@ -27,8 +27,13 @@ through the running app (a card session's own card when <n> is left out):
                                        --blockedBy 12,40 sets the cards it waits on; --blockedBy null clears them
                                        the card's flow, only from outside a card session (Hugh's own):
                                        --skip-planning on|off|default  --skip-human-test on|off|default
+                                       --skip-plan-review on|off|default (off: a finished plan waits in
+                                       Plan review for Hugh to approve)
                                        --subagent critic=on|off|default (router, critic, reproducer,
                                        reviewer, tester; give it once for each)
+  kb flow-defaults [--skip-planning on|off] [--skip-plan-review on|off] [--skip-human-test on|off]
+                                       the board's flow defaults (Settings > Sessions); with flags, set
+                                       them as Hugh's Settings toggle would (outside a card session only)
   kb log <n> "<text>"                  add a log line
   kb move <n> "<column>" [--reason r]  move a card (your own card's move waits for your turn to end)
   kb move <n> "Ship it" --for-hugh "<his words>"
@@ -288,6 +293,7 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
         "keys" => ("kanban_session_keys", json!({ "card": num(0).ok_or("keys needs a card number")?, "keys": args.iter().skip(1).map(|k| match k.strip_prefix("text:") { Some(t) => json!({ "text": t }), None => json!(k) }).collect::<Vec<_>>() })),
         "testapp" => return testapp(args).map(Some),
         "search" => ("kanban_search", search_args(args)?),
+        "flow-defaults" => ("kanban_flow_defaults", flow_default_args(args)?),
         "notify" => ("kanban_notify", json!({ "card": num(0).ok_or("notify needs a card number")?, "text": args.get(1).ok_or("notify needs the text")? })),
         "router" => ("kanban_router", router_args(args)?),
         _ => return Ok(None),
@@ -510,6 +516,13 @@ mod tests {
         assert_eq!(f, json!({ "skipPlanning": true, "skipHumanTest": null, "subagents": { "critic": false, "tester": true }, "summary": "s" }));
         assert_eq!(update_fields(&a(&["--subagent", "router=default"])).unwrap(), json!({ "subagents": { "router": null } }));
         assert_eq!(update_fields(&a(&["--skip-planning", "off"])).unwrap(), json!({ "skipPlanning": false }));
+        // Card #195.
+        assert_eq!(update_fields(&a(&["--skip-plan-review", "on"])).unwrap(), json!({ "skipPlanReview": true }));
+        assert_eq!(flow_default_args(&a(&[])).unwrap(), json!({}));
+        assert_eq!(flow_default_args(&a(&["--skip-plan-review", "on", "--skip-planning", "off"])).unwrap(), json!({ "set": { "skipPlanReview": true, "skipPlanning": false } }));
+        assert!(flow_default_args(&a(&["--skip-plan-review", "default"])).is_err());
+        assert!(flow_default_args(&a(&["--critic", "on"])).is_err());
+        assert!(USAGE.contains("kb flow-defaults") && USAGE.contains("--skip-plan-review on|off|default"));
         // Card #162: a retired or unknown subagent is refused with a plain message, not dropped.
         let e = update_fields(&a(&["--subagent", "merger=off"])).unwrap_err();
         assert!(e.contains("card-merger is no longer a card subagent") && e.contains("router, critic, reproducer, reviewer, tester"), "{e}");
@@ -605,6 +618,10 @@ fn update_fields(args: &[String]) -> Result<serde_json::Value, String> {
             "--skip-human-test" => {
                 flow.insert("skipHumanTest".into(), on_off_default("--skip-human-test", it.next())?);
             }
+            // Card #195.
+            "--skip-plan-review" => {
+                flow.insert("skipPlanReview".into(), on_off_default("--skip-plan-review", it.next())?);
+            }
             "--subagent" => {
                 let v = it.next().ok_or("--subagent needs <name>=on|off|default, like critic=off")?;
                 let (name, value) = v.split_once('=').ok_or("--subagent needs <name>=on|off|default, like critic=off")?;
@@ -626,6 +643,26 @@ fn update_fields(args: &[String]) -> Result<serde_json::Value, String> {
 }
 
 /// `kb search <words> [--card n] [--limit n]`: the words are everything else, in order.
+/// `kb flow-defaults`'s arguments (card #195): `--skip-planning`, `--skip-plan-review` and
+/// `--skip-human-test`, each on or off, as kanban_flow_defaults's `set`. None reads them.
+fn flow_default_args(args: &[String]) -> Result<serde_json::Value, String> {
+    let mut set = serde_json::Map::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let key = match a.as_str() {
+            "--skip-planning" => "skipPlanning",
+            "--skip-plan-review" => "skipPlanReview",
+            "--skip-human-test" => "skipHumanTest",
+            other => return Err(format!("flow-defaults takes --skip-planning, --skip-plan-review and --skip-human-test, not {other}")),
+        };
+        match on_off_default(a, it.next())? {
+            serde_json::Value::Null => return Err(format!("{a} takes on or off")),
+            v => set.insert(key.into(), v),
+        };
+    }
+    Ok(if set.is_empty() { json!({}) } else { json!({ "set": set }) })
+}
+
 fn search_args(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut words = Vec::new();
     let (mut card, mut limit) = (None, None);

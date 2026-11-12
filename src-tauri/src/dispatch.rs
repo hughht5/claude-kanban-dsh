@@ -232,6 +232,9 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
     if from == "Human test" && to == "In progress" {
         text = format!("{text}\n\n{}", back_from_test());
     }
+    if let Some(note) = plan_review_note(from, to) {
+        text = format!("{text}\n\n{note}");
+    }
     if let Some(note) = subagents_note(store, card, to) {
         text = format!("{text}\n\n{note}");
     }
@@ -255,11 +258,24 @@ pub fn move_message(store: &Store, card: &Card, from: &str, new_session: bool) -
     dry(card, with_worktree_note(store, card, text))
 }
 
+/// What a card's session is told when Hugh moves its card out of Plan review (card #195): his
+/// move to In progress approves the plan; his move back to Planning sends it back with notes.
+pub fn plan_review_note(from: &str, to: &str) -> Option<&'static str> {
+    if from != kanban_store::PLAN_REVIEW {
+        return None;
+    }
+    match to {
+        "In progress" => Some("Hugh approved the plan in Plan review: build the plan in the card's summary as approved. If his message or the card's log adds notes, they are part of the approval."),
+        "Planning" => Some("Hugh sent the plan back from Plan review. His notes are in his message in this chat or the card's latest log lines: change the plan in the summary for them (a changed plan needs a fresh plan critique, where the critic is on), then move the card on again (kanban_move_card to In progress): it stops in Plan review for him."),
+        _ => None,
+    }
+}
+
 /// The plan critic's build notes (card #144) for a card that has just come into In progress
-/// from before its build (Planning or Backlog): not from Human test or Blocked, where the build
-/// had already had them.
+/// from before its build (Planning, Plan review or Backlog): not from Human test or Blocked,
+/// where the build had already had them.
 pub fn build_notes_for(card: &Card, from: &str) -> Option<String> {
-    (card.column == "In progress" && matches!(from, "Planning" | "Backlog")).then(|| crate::critic::build_notes(card)).flatten()
+    (card.column == "In progress" && matches!(from, "Planning" | "Plan review" | "Backlog")).then(|| crate::critic::build_notes(card)).flatten()
 }
 
 /// What a card's session in `column` is told about the subagents run there that Hugh has off on
@@ -835,7 +851,7 @@ pub fn flow_changed(before: Option<&Card>, after: &Card) -> Vec<&'static str> {
 /// The log line for Hugh's change of a skip option (card #162), as the card now holds it.
 pub fn skip_line(store: &Store, card: &Card, key: &str) -> String {
     let name = skip_name(key);
-    let rule = if key == kanban_store::SKIP_PLANNING_KEY { kanban_store::SKIP_PLANNING_RULE_KEY } else { kanban_store::SKIP_HUMAN_TEST_RULE_KEY };
+    let rule = kanban_store::skip_rule(key).unwrap_or(kanban_store::SKIP_HUMAN_TEST_RULE_KEY);
     match card.skip_choice(key) {
         Some(b) => format!("Hugh set {name}: {} for this card.", on_off(b)),
         None => format!("Hugh set {name} back to the default in Settings ({}).", on_off(store.skip_default(rule))),
@@ -843,7 +859,11 @@ pub fn skip_line(store: &Store, card: &Card, key: &str) -> String {
 }
 
 fn skip_name(key: &str) -> &'static str {
-    if key == kanban_store::SKIP_PLANNING_KEY { "Skip Planning" } else { "Skip Human test" }
+    match key {
+        kanban_store::SKIP_PLANNING_KEY => "Skip Planning",
+        kanban_store::SKIP_PLAN_REVIEW_KEY => "Skip Plan review",
+        _ => "Skip Human test",
+    }
 }
 
 fn on_off(b: bool) -> &'static str {
@@ -863,17 +883,20 @@ pub fn flow_log_lines(store: &Store, card: &Card, changed: &[&str]) -> Vec<Strin
 /// (card #162). None when neither changed.
 pub fn skips_changed_note(store: &Store, card: &Card, changed: &[&str]) -> Option<String> {
     let mut lines = Vec::new();
-    for key in [kanban_store::SKIP_PLANNING_KEY, kanban_store::SKIP_HUMAN_TEST_KEY] {
+    for (key, _) in kanban_store::SKIPS {
         if !changed.contains(&key) {
             continue;
         }
         let (on, whose) = store.skip_of(card, key);
         let state = format!("{} ({})", on_off(on), whose_choice(whose));
-        let what = match (key == kanban_store::SKIP_PLANNING_KEY, on) {
-            (true, true) => "A move into Planning from Backlog or Blocked goes straight to In progress, with no plan or plan critique. A move back into Planning from a later column still plans it.",
-            (true, false) => "It is planned in Planning as usual.",
-            (false, true) => "When you move it to Human test (after its subagent checks pass, with the hand-over as usual), the app moves it into Ship it for him and sends you the Ship it prompt: that is his approval to ship it with no human test, so make your own testing count. Take it to: Human test still stops it there for him.",
-            (false, false) => "It stops in Human test for him as usual.",
+        let what = match (key, on) {
+            (kanban_store::SKIP_PLANNING_KEY, true) => "A move into Planning from Backlog or Blocked goes straight to In progress, with no plan or plan critique. A move back into Planning from a later column still plans it.",
+            (kanban_store::SKIP_PLANNING_KEY, false) => "It is planned in Planning as usual.",
+            // Card #195.
+            (kanban_store::SKIP_PLAN_REVIEW_KEY, true) => "When its plan is ready (and its critique passed), your move to In progress goes straight there: it doesn't stop in Plan review for Hugh.",
+            (kanban_store::SKIP_PLAN_REVIEW_KEY, false) => "When its plan is ready, your move to In progress stops in Plan review: the plan waits there for Hugh to approve.",
+            (_, true) => "When you move it to Human test (after its subagent checks pass, with the hand-over as usual), the app moves it into Ship it for him and sends you the Ship it prompt: that is his approval to ship it with no human test, so make your own testing count. Take it to: Human test still stops it there for him.",
+            (_, false) => "It stops in Human test for him as usual.",
         };
         lines.push(format!("- {}: {state}. {what}", skip_name(key)));
     }
@@ -892,7 +915,9 @@ pub fn skips_changed_note(store: &Store, card: &Card, changed: &[&str]) -> Optio
 pub fn after_default_change(app: &AppHandle, key: &str) {
     let sub = kanban_store::SUBAGENTS.iter().find(|s| s.setting == key);
     let skip_ht = key == kanban_store::SKIP_HUMAN_TEST_RULE_KEY;
-    if sub.is_none() && !skip_ht {
+    // Card #195: a card in Planning that follows the Plan review default hears where its plan goes.
+    let skip_pr = key == kanban_store::SKIP_PLAN_REVIEW_RULE_KEY;
+    if sub.is_none() && !skip_ht && !skip_pr {
         return;
     }
     let board = app.state::<Board>();
@@ -916,6 +941,17 @@ pub fn after_default_change(app: &AppHandle, key: &str) {
                 (
                     format!("Hugh changed the default for {} in Settings > Sessions: it is {} now, and this card follows the default. {}", s.name, on_off(on), what),
                     format!("Told its session: Hugh turned {} {} by default in Settings", s.name, on_off(on)),
+                )
+            }
+            None if skip_pr => {
+                if c.skip_choice(kanban_store::SKIP_PLAN_REVIEW_KEY).is_some() || c.stack_of().is_some() || c.auto_to().is_some() || c.column != "Planning" {
+                    continue;
+                }
+                let on = store.skip_default(kanban_store::SKIP_PLAN_REVIEW_RULE_KEY);
+                let what = if on { "When its plan is ready, your move to In progress goes straight there, with no stop in Plan review" } else { "When its plan is ready, your move to In progress stops in Plan review for Hugh to approve" };
+                (
+                    format!("Hugh changed the default for Skip Plan review in Settings > Sessions: it is {} now, and this card follows the default. {what}.", on_off(on)),
+                    format!("Told its session: Hugh turned Skip Plan review {} by default in Settings", on_off(on)),
                 )
             }
             None => {
@@ -1027,6 +1063,10 @@ pub fn session_move(app: &AppHandle, store: &mut Store, card: &Card, to: &str, r
 pub fn session_move_to(app: &AppHandle, store: &mut Store, card: &Card, to: &str, reason: &str, by: &str) -> Result<String, String> {
     let skipped = kanban_store::planning_skip(card, to, store.skip_default(kanban_store::SKIP_PLANNING_RULE_KEY));
     let to = if skipped.is_some() { "In progress" } else { to };
+    // Card #195: a finished plan waits in Plan review for Hugh.
+    let review = plan_review_stop(store, card, to, by);
+    let asked = to;
+    let to = if review.is_some() { kanban_store::PLAN_REVIEW } else { to };
     if let Some(why) = stack_move_refused(store, card, to) {
         let _ = store.add_log(&card.id, &format!("Refused a move to {to} by {by}: {why}"), "the app");
         return Err(why);
@@ -1043,6 +1083,9 @@ pub fn session_move_to(app: &AppHandle, store: &mut Store, card: &Card, to: &str
     if let Some(w) = skipped {
         let _ = store.add_log(&card.id, &kanban_store::skip_planning_line(w), by);
     }
+    if let Some(w) = review {
+        let _ = store.add_log(&card.id, &plan_review_line(asked, w), by);
+    }
     after_stack_move(app, store, &card.id, by);
     auto_progress(app, store, &card.id);
     // A stack's child (card #113): in Human test it is ready to merge, so its lead is woken;
@@ -1056,6 +1099,38 @@ pub fn session_move_to(app: &AppHandle, store: &mut Store, card: &Card, to: &str
         }
     }
     Ok(to.to_string())
+}
+
+/// Whether a move of `card` to `to` by `by` stops in Plan review instead (card #195,
+/// `Store::plan_review_stop`), and whose choice that is. A card session's, the Router's and
+/// another session's move do; Hugh's own (his board, his `kb`, his sessions outside the app)
+/// never do, nor does the app's own small-card go-on (Hugh's rule, card #98).
+pub fn plan_review_stop(store: &Store, card: &Card, to: &str, by: &str) -> Option<kanban_store::Whose> {
+    if hughs_own(by) || by == crate::router::BY {
+        return None;
+    }
+    store.plan_review_stop(card, to)
+}
+
+/// The log line for a move that stopped in Plan review (card #195).
+pub fn plan_review_line(asked: &str, w: kanban_store::Whose) -> String {
+    let whose = match w {
+        kanban_store::Whose::Card => "this card's own choice",
+        kanban_store::Whose::Default => "the default in Settings",
+    };
+    format!("Stopped in Plan review on its way to {asked}: the plan waits for Hugh ({whose}). His move to In progress approves it; his move back to Planning sends it back with his notes")
+}
+
+/// Why a card session or the Router may not move `card` out of Plan review to `to` (card #195):
+/// only Hugh approves a plan. Back to Planning, Backlog or Blocked is free, as is Done.
+pub fn plan_review_gate(_store: &Store, card: &Card, to: &str) -> Option<String> {
+    if card.column != kanban_store::PLAN_REVIEW || ["Planning", "Backlog", "Blocked", "Done"].contains(&to) {
+        return None;
+    }
+    Some(format!(
+        "card #{} is in Plan review: its plan waits for Hugh. Only his move to In progress approves it (or his move back to Planning, with his notes). Don't move it on; say in your message that the plan is ready for him.",
+        card.number
+    ))
 }
 
 /// Is `card` built, for a join: in Human test or later, or with a PR.
@@ -1949,6 +2024,44 @@ mod tests {
         assert!(m.contains("- blockedBy: #12, #40. This card waits on those cards."), "{m}");
         let c = card(json!({ "title": "T" }), "In progress");
         assert!(edit_message(&c, &["blockedBy"]).unwrap().contains("(cleared)"));
+    }
+
+    // Card #195: a session's or the Router's move on from Planning stops in Plan review; Hugh's
+    // own moves and the app's small-card go-on don't. Out of it, only back.
+    #[test]
+    fn a_finished_plan_stops_in_plan_review_and_only_hugh_moves_it_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(dir.path().join("b.db")).unwrap();
+        let p = |v: Value| v.as_object().cloned().unwrap();
+        let c = s.create(None, p(json!({ "title": "T", "column": "Planning" })), "t").unwrap();
+        for by in ["card #4's session", kanban_store::ROUTER_BY, crate::tools::UNKNOWN_BY] {
+            assert!(plan_review_stop(&s, &c, "In progress", by).is_some(), "{by}");
+        }
+        for by in ["Hugh (board)", crate::tools::OUTSIDE_BY, crate::router::BY] {
+            assert!(plan_review_stop(&s, &c, "In progress", by).is_none(), "{by}");
+        }
+        assert!(plan_review_line("In progress", kanban_store::Whose::Default).contains("the default in Settings"));
+        // In Plan review: back is free, on is Hugh's.
+        let r = s.move_by_hugh(&c.id, c.version, kanban_store::PLAN_REVIEW, Patch::new()).unwrap().card;
+        for to in ["Planning", "Backlog", "Blocked", "Done"] {
+            assert!(plan_review_gate(&s, &r, to).is_none(), "{to}");
+        }
+        for to in ["In progress", "Human test", "Deploy complete"] {
+            let why = plan_review_gate(&s, &r, to).expect("held");
+            assert!(why.contains("Plan review") && why.contains("Hugh"), "{why}");
+            assert!(crate::agents::move_refused(&s, &r, to).is_some(), "{to}");
+        }
+        assert!(plan_review_gate(&s, &c, "In progress").is_none(), "only a card in Plan review");
+        // The messages for Hugh's moves out of it.
+        assert!(plan_review_note(kanban_store::PLAN_REVIEW, "In progress").unwrap().contains("approved"));
+        assert!(plan_review_note(kanban_store::PLAN_REVIEW, "Planning").unwrap().contains("sent the plan back"));
+        assert!(plan_review_note("Planning", "In progress").is_none());
+        let on = s.move_by_hugh(&r.id, r.version, "In progress", Patch::new()).unwrap().card;
+        assert!(move_message(&s, &on, kanban_store::PLAN_REVIEW, false).contains("Hugh approved the plan"));
+        // The flow note when Hugh changes the card's skip.
+        let k = s.update(&on.id, on.version, &p(json!({ "skipPlanReview": true })), "Hugh (board)").unwrap();
+        assert_eq!(skip_line(&s, &k, kanban_store::SKIP_PLAN_REVIEW_KEY), "Hugh set Skip Plan review: on for this card.");
+        assert!(skips_changed_note(&s, &k, &[kanban_store::SKIP_PLAN_REVIEW_KEY]).unwrap().contains("Skip Plan review: on"));
     }
 
     // Card #109: a card Hugh put in Blocked is moved to Planning once the cards it waited on are

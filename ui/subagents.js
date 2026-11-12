@@ -1,6 +1,6 @@
 // A card's flow (cards #151 and #162): Hugh's per-card choice of the app's five subagents (card #162 took the card-merger off: every
 // ship merges in its repo's merge lane, and an old card's `merger` is ignored) and of
-// skipping Planning or Human test. Each has a default in Settings > Sessions, and each card is
+// skipping Planning, Plan review (card #195) or Human test. Each has a default in Settings > Sessions, and each card is
 // three-way: Default (follows Settings as it changes), On or Off (the card's own), shown as a
 // switch with Default or Reset beside it (card #178). A card's
 // `subagents` holds only its own overrides ({critic: false}); `skipPlanning` and `skipHumanTest`
@@ -27,6 +27,9 @@ const SUBS=window.NEW_CARD_SUBAGENTS;
 window.CARD_FLOW_SKIPS=[
   {card:"skipPlanning",key:"sessions.skip_planning",label:"Skip Planning",chip:"No plan",offChip:"Planning on",
    help:"A move into Planning from Backlog or Blocked (your drag, Add card's Take it to, a blocked card starting by itself, the Router) goes straight to In progress instead: no plan request, no Planning session and no plan critique. The session is told to read the card, make its worktree if it has none, write a short approach into the summary, and build. Your own move into Planning from a later column still plans it. A stack's cards are planned by their lead, whatever this says. Default off."},
+  // Card #195: Plan review, between Planning and In progress.
+  {card:"skipPlanReview",key:"sessions.skip_plan_review",label:"Skip Plan review",chip:"No plan review",offChip:"Plan review on",
+   help:"When the card's session (or the Router) moves it on from Planning, after its plan critique passed, it goes straight to In progress instead of waiting in Plan review for you to approve the plan. Off (the default): a finished plan waits in Plan review, with no session running, until you move it to In progress (approve) or back to Planning (send it back with your notes). Skip Planning skips Plan review too; Take it to approves the plan; a stack's cards go with their lead. Your own moves never stop there."},
   {card:"skipHumanTest",key:"sessions.skip_human_test",label:"Skip Human test",chip:"No human test",offChip:"Human test on",
    help:"When the card's session (or the stack rules) moves it into Human test, after its subagent checks passed, the app moves it on into Ship it for you, as Take it to: Deploy complete does: that is your approval to ship it with no human test. It waits its turn in the ship queue like any ship, and a stack waits until every card in it is ready. Your own drag into Human test never skips, and Take it to: Human test still stops it there. A stack's cards go with their lead. Default off."},
 ];
