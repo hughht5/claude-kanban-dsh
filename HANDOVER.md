@@ -2536,10 +2536,11 @@ Hugh (12 Nov): a column for his review of a plan, between Planning and In progre
   or the app's small-card go-on (`router::BY`, card #98: Hugh's own rule still starts a small card
   building). The log says "Stopped in Plan review on its way to ...". Skip Planning still goes
   Backlog to In progress, so it skips Plan review too.
-- **Out of it:** `dispatch::plan_review_gate` is first in `agents::GATES`: a card session or the
-  Router moves a card out of Plan review only back (Planning, Backlog, Blocked, Done).
-  `routersession::move_refused` refuses the Router's move out of it and lets Planning to Plan
-  review through. `critic::INTO_BUILD` has Plan review, so the plan critique holds the move into it.
+- **Out of it:** `dispatch::plan_review_gate` is first in `agents::GATES`: a card session moves a
+  card out of Plan review only back (Planning, Backlog, Blocked, Done). The Router can't move it
+  out at all (`routersession::move_refused`, which lets Planning to Plan review through). A planned
+  card whose build never started stops in Plan review from Blocked or Backlog too, so a detour
+  can't skip it (`Card::build_started`). `critic::INTO_BUILD` has Plan review, so the plan critique holds the move into it.
   Hugh's move to In progress approves (`move_message` adds `plan_review_note`, and the critic's
   build notes go with it, `build_notes_for`); his move back to Planning is a fresh plan request
   with a note to read his notes.
