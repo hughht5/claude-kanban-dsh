@@ -2588,6 +2588,8 @@ way" from the Router, not a question to him.
   Router's log. `prompts/router.md` job 4 says: risky permission prompt, No with "redo it a safer
   way" and how, do not ask the owner, never Yes; interrupt a turn going wrong.
 - **Tests:** `sessions.rs` (`a_halt_presses_esc_only_where_it_means_no`,
-  `the_message_waits_for_the_prompt_not_the_permission_menu`), `control.rs` (the log line, the
+  `the_message_waits_for_the_prompt_not_the_permission_menu`, and on the real screens of Claude
+  Code 2.1.323, `fixtures/permission-prompt-screen.txt` and `fixtures/halted-prompt-screen.txt`),
+  `control.rs` (the log line, the
   schemas, one Esc only), `routertools.rs` (offered; hands off; no keys), `routersession.rs` (the
   prompt's words).

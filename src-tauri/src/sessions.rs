@@ -2228,6 +2228,19 @@ mod tests {
         assert!(!halted("nothing drawn yet"));
     }
 
+    /// Card #209, the real screens from Claude Code 2.1.323 in the test app: a Bash permission
+    /// prompt (no prompt box, "❯ 1. Yes"), and the screen after the No and an interrupt.
+    #[test]
+    fn the_real_permission_prompt_holds_the_message_and_the_real_prompt_lets_it_in() {
+        let menu = include_str!("../../fixtures/permission-prompt-screen.txt");
+        let after = include_str!("../../fixtures/halted-prompt-screen.txt");
+        assert!(permission_menu_showing(menu));
+        assert!(prompt_text(menu).is_none(), "the menu hides the prompt box");
+        assert!(!halted(menu));
+        assert!(after.contains("Interrupted · What should Claude do instead?"));
+        assert!(halted(after));
+    }
+
     /// Card #95: the ring counts every byte the session has put out, also after it wraps, so a
     /// terminal can tell which live chunks its snapshot already holds.
     #[test]
