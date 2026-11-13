@@ -1077,7 +1077,9 @@ mod tests {
     fn the_prompt_holds_the_rules_and_stays_short() {
         for must in ["Ship it", "poll", "kanban_get_card", "data", "dry", "if_version", "Hugh", "card-merger", "integrate", "kanban_archive_card", "Done pile",
             // Card #131: asking to archive is not a move into Done.
-            "Asking with kanban_archive_card is not a move"] {
+            "Asking with kanban_archive_card is not a move",
+            // Card #209: a risky permission prompt gets No and "redo it a safer way", not the owner.
+            "kanban_session_deny", "redo it a safer way", "Do not ask the owner", "Never answer Yes", "kanban_session_interrupt"] {
             assert!(PROMPT.contains(must), "router.md says {must}");
         }
         assert!(PROMPT.len() < 9000, "the system prompt is {} characters", PROMPT.len());

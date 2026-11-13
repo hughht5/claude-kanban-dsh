@@ -16,6 +16,9 @@ pub const CONTROL: &[&str] = &[
     "kanban_session_read",
     "kanban_session_switch",
     "kanban_session_keys",
+    // Card #209: No to a permission prompt, or an interrupt, then a message at once.
+    "kanban_session_deny",
+    "kanban_session_interrupt",
     "kanban_search",
     // Card #195: the board's flow defaults (Settings > Sessions), for Hugh's own agents.
     "kanban_flow_defaults",
@@ -38,11 +41,76 @@ pub fn schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "model": { "type": "string" }, "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"] } }, "required": ["card"] } },
         { "name": "kanban_session_keys", "description": "Press keys in the card's terminal, to answer a prompt the session is stuck on (a trust or permission question). Keys: enter, up, down, left, right, esc, tab, space, ctrl-c, or {\"text\": \"...\"} to type text.",
           "inputSchema": { "type": "object", "properties": { "card": card, "keys": { "type": "array", "items": {} } }, "required": ["card", "keys"] } },
+        { "name": "kanban_session_deny", "description": DENY_DESCRIPTION,
+          "inputSchema": { "type": "object", "properties": { "card": card, "reason": { "type": "string", "description": "Typed into the session at once, after the No: why, and what to do instead (for example: redo it a safer way)." } }, "required": ["card", "reason"] } },
+        { "name": "kanban_session_interrupt", "description": INTERRUPT_DESCRIPTION,
+          "inputSchema": { "type": "object", "properties": { "card": card, "message": { "type": "string", "description": "Typed into the session at once, after the interrupt." } }, "required": ["card"] } },
         { "name": "kanban_search", "description": "Search every card's session history (the last 90 days, archived cards included): prompts, replies and tool calls. Every word of 3 or more letters must match; \"quote\" a phrase. Secrets and sign-in links are stored masked. For Hugh's own sessions only: card sessions don't get it.",
           "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "card": { "type": "integer", "description": "Only this card's sessions." }, "limit": { "type": "integer", "description": "How many of the newest matches to take (default and most 2000)." } }, "required": ["query"] } },
         { "name": "kanban_flow_defaults", "description": "The board's flow defaults (Settings > Sessions), for Hugh's own sessions only, when he asked: whether a card skips Planning, Plan review (card #195: a finished plan waits there for Hugh to approve) and Human test, unless the card sets its own (kanban_update_card's skipPlanning, skipPlanReview, skipHumanTest). With no `set` it reads them. `set` changes some, as Hugh's Settings toggle would: true is on (skip it), false is off. Card sessions and the Router don't get it.",
           "inputSchema": { "type": "object", "properties": { "set": { "type": "object", "properties": { "skipPlanning": { "type": "boolean" }, "skipPlanReview": { "type": "boolean" }, "skipHumanTest": { "type": "boolean" } }, "additionalProperties": false } } } },
     ])
+}
+
+pub const DENY_DESCRIPTION: &str = "Answer No to the card session's open permission prompt (a tool it asks to run), as Esc does in its terminal, then type `reason` into it at once. It never answers Yes. Refused unless the session is at a permission prompt; a question dialog is Hugh's. Logged on the card.";
+pub const INTERRUPT_DESCRIPTION: &str = "Interrupt the card session's running turn, as Esc does in its terminal, then type `message` into it at once (if given). Refused unless it is on a turn; at a permission prompt use kanban_session_deny. Logged on the card.";
+
+/// Who `halt` logs on the card for an outside caller (`kb mcp`).
+pub const OUTSIDE_BY: &str = "Hugh's session outside the app";
+
+/// Card #209: `kanban_session_deny` and `kanban_session_interrupt`. One Esc
+/// (`Sessions::halt`), a line on the card, then the message, sent as `kanban_session_send`
+/// sends one; the session is idle by then, so it is typed at once. `by` is who it is logged as;
+/// `as_app`: the words are recorded as the app's (the Router's), so the chat draws them apart.
+pub fn halt(app: &AppHandle, args: &Value, kind: crate::sessions::Halt, by: &str, as_app: bool) -> Result<Value, String> {
+    use crate::sessions::Halt;
+    let (id, n) = card_id(app, args)?;
+    let text = match kind {
+        Halt::Deny => Some(args.get("reason").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).ok_or("pass `reason`: why, and what to do instead; it is typed into the session")?),
+        Halt::Interrupt => args.get("message").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()),
+    };
+    let live = app.state::<Arc<Sessions>>();
+    let asked = live.waits().get(&id).and_then(|w| w.prompt.clone());
+    let row = live.halt(&id, kind).map_err(|e| format!("refused: card #{n}: {e}"))?;
+    if let Some(r) = &row {
+        if let Ok(mut store) = app.state::<Board>().0.lock() {
+            let _ = store.session_state(r, "idle");
+        }
+        let _ = tauri::Emitter::emit(app, "activity", json!({ "card": id.clone(), "state": "idle" }));
+        let _ = tauri::Emitter::emit(app, "needs-changed", id.clone());
+    }
+    let line = halt_log_line(kind, asked.as_deref(), text);
+    if let Ok(mut store) = app.state::<Board>().0.lock() {
+        let _ = store.add_log(&id, &kanban_store::mask_secrets(&line), by);
+        if let (true, Some(t)) = (as_app, text) {
+            let _ = store.note_app_message(&id, t);
+        }
+    }
+    if let Some(t) = text {
+        crate::session_send(app.clone(), app.state::<Board>(), id.clone(), t.to_string(), None).map_err(err)?;
+    }
+    let _ = tauri::Emitter::emit(app, "session-changed", id);
+    let did = if kind == Halt::Deny { "answered No to its permission prompt" } else { "interrupted its turn" };
+    Ok(json!(match (row.is_some(), text.is_some()) {
+        (true, true) => format!("Card #{n}: {did}; the message is typed now."),
+        (true, false) => format!("Card #{n}: {did}; it is idle at its prompt."),
+        (false, true) => format!("Card #{n}: pressed Esc, but its prompt hasn't come back yet; the message waits and is typed once its turn is seen to end. Check with kanban_session_status."),
+        (false, false) => format!("Card #{n}: pressed Esc, but its prompt hasn't come back yet. Check with kanban_session_status."),
+    }))
+}
+
+/// The card's log line for a `halt`: what was turned down, and the message that follows.
+pub fn halt_log_line(kind: crate::sessions::Halt, asked: Option<&str>, text: Option<&str>) -> String {
+    let cut = |t: &str| crate::transcript::cut_words(t, 200);
+    let head = match (kind, asked) {
+        (crate::sessions::Halt::Deny, Some(a)) => format!("Answered No to the session's permission prompt ({})", cut(a)),
+        (crate::sessions::Halt::Deny, None) => "Answered No to the session's permission prompt".to_string(),
+        (crate::sessions::Halt::Interrupt, _) => "Interrupted the session's turn".to_string(),
+    };
+    match text {
+        Some(t) => format!("{head}, then told it: {}", cut(t)),
+        None => head,
+    }
 }
 
 fn err(e: impl serde::Serialize) -> String {
@@ -200,6 +268,8 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> 
             }
             json!(format!("Pressed {} key(s) in card #{n}'s terminal.", keys.len()))
         }
+        "kanban_session_deny" => halt(app, args, crate::sessions::Halt::Deny, OUTSIDE_BY, false)?,
+        "kanban_session_interrupt" => halt(app, args, crate::sessions::Halt::Interrupt, OUTSIDE_BY, false)?,
         "kanban_search" => crate::search::tool(app, args)?,
         "kanban_flow_defaults" => flow_defaults(app, args)?,
         _ => return Err(format!("no tool called {name}")),
@@ -216,6 +286,31 @@ mod tests {
         assert_eq!(key_bytes(&json!("Enter")).unwrap(), b"\r");
         assert_eq!(key_bytes(&json!({ "text": "yes" })).unwrap(), b"yes");
         assert!(key_bytes(&json!("f13")).is_err());
+    }
+
+    /// Card #209: what goes on the card's log for a No and for an interrupt.
+    #[test]
+    fn a_halt_is_logged_with_what_it_turned_down_and_what_followed() {
+        use crate::sessions::Halt;
+        assert_eq!(halt_log_line(Halt::Deny, Some("Bash: rm -rf target"), Some("redo it a safer way")), "Answered No to the session's permission prompt (Bash: rm -rf target), then told it: redo it a safer way");
+        assert_eq!(halt_log_line(Halt::Deny, None, Some("no")), "Answered No to the session's permission prompt, then told it: no");
+        assert_eq!(halt_log_line(Halt::Interrupt, Some("ignored"), None), "Interrupted the session's turn");
+        assert!(halt_log_line(Halt::Interrupt, None, Some(&"word ".repeat(200))).len() < 300);
+    }
+
+    /// Card #209: deny needs its reason; both are offered with their schemas, never a Yes.
+    #[test]
+    fn deny_and_interrupt_are_offered_and_never_say_yes() {
+        let s = schemas();
+        let t = |n: &str| s.as_array().unwrap().iter().find(|t| t["name"] == n).cloned().unwrap();
+        assert_eq!(t("kanban_session_deny")["inputSchema"]["required"], json!(["card", "reason"]));
+        assert_eq!(t("kanban_session_interrupt")["inputSchema"]["required"], json!(["card"]));
+        assert!(DENY_DESCRIPTION.contains("never answers Yes"));
+        // The one way in is a single Esc: the code presses nothing else.
+        let src = include_str!("sessions.rs");
+        let body = src.split("pub fn halt(&self").nth(1).unwrap().split("Ok(Some(row_id))").next().unwrap();
+        assert_eq!(body.matches("self.input(").count(), 1, "{body}");
+        assert!(body.contains(r#"self.input(card_id, b"\x1b")"#), "{body}");
     }
 
     #[test]

@@ -182,6 +182,51 @@ pub fn takes_typing(c: TypeCheck) -> bool {
     }
 }
 
+/// What the Router (or Hugh's own agent) stops in a card session (card #209), both with one Esc,
+/// which never answers Yes: a permission prompt is answered No ("No, and tell Claude what to do
+/// differently"), a running turn is interrupted. One Esc only: two open Claude Code's rewind menu.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Halt {
+    Deny,
+    Interrupt,
+}
+
+/// How long `halt` waits for Claude's prompt to come back after the Esc.
+pub const HALT_WAIT: Duration = Duration::from_secs(6);
+
+/// Why `halt` won't press Esc in a session now, if it won't (card #209). Deny: only at a tool's
+/// permission prompt, never a question dialog (that is Hugh's to answer). Interrupt: only on a
+/// running turn; at a permission prompt, Deny says what it does.
+pub fn halt_refused(kind: Halt, state: &str, ready: bool, running: bool, question: bool) -> Option<String> {
+    if !running {
+        return Some("its session isn't running".into());
+    }
+    if !ready {
+        return Some("its session is still starting".into());
+    }
+    if state == "permission" && question {
+        return Some("it is asking a question (a dialog for Hugh), not for permission to run a tool: leave it to Hugh".into());
+    }
+    match kind {
+        Halt::Deny if state != "permission" => Some(format!("it isn't at a permission prompt (it is {state})")),
+        Halt::Interrupt if state == "permission" => Some("it is at a permission prompt: answer it No with kanban_session_deny".into()),
+        Halt::Interrupt if state != "working" => Some(format!("it isn't on a turn (it is {state})")),
+        _ => None,
+    }
+}
+
+/// Whether Claude Code's permission menu shows on `screen` ("Do you want to ...?" over
+/// "1. Yes").
+pub fn permission_menu_showing(screen: &str) -> bool {
+    screen.contains("Do you want to") && screen.lines().any(|l| l.trim_start().trim_start_matches('❯').trim_start().starts_with("1. Yes"))
+}
+
+/// Whether the session took the Esc: its prompt box is back and no permission menu shows. Only
+/// then is anything typed: Enter on the menu would answer it (its first option is Yes).
+pub fn halted(screen: &str) -> bool {
+    prompt_text(screen).is_some() && !permission_menu_showing(screen)
+}
+
 /// How many times a message typed at the prompt is typed before the app gives up on it.
 pub const TYPE_TRIES: u8 = 3;
 /// How long a typed message may go untaken before it is typed again.
@@ -766,6 +811,19 @@ impl Ring {
     fn snapshot(&self) -> (Vec<u8>, u64) {
         (self.buf.iter().copied().collect(), self.total)
     }
+}
+
+/// The session's turn is over with no hook (`turn_ended`, `halt`): it is idle at its prompt.
+fn end_turn(l: &mut Live) {
+    l.state = "idle".into();
+    l.state_since = Instant::now();
+    l.state_at = chrono::Utc::now();
+    l.turn_since = None;
+    l.turn_at = None;
+    l.question = None;
+    l.waits.left("idle");
+    l.testing.turn_ended();
+    l.running.turn_ended();
 }
 
 struct Live {
@@ -1396,16 +1454,48 @@ impl Sessions {
         if !ended_by(&l.state, l.state_at, ended) {
             return None;
         }
-        l.state = "idle".into();
-        l.state_since = Instant::now();
-        l.state_at = chrono::Utc::now();
-        l.turn_since = None;
-        l.turn_at = None;
-        l.question = None;
-        l.waits.left("idle");
-        l.testing.turn_ended();
-        l.running.turn_ended();
+        end_turn(l);
         Some((card_id.clone(), l.state.clone()))
+    }
+
+    /// Card #209: answers No to the card session's permission prompt, or interrupts its turn,
+    /// with one Esc (`Halt`), never anything that could answer Yes. Then waits up to `HALT_WAIT`
+    /// for Claude's prompt to come back (`halted`) and marks the session idle, so a message sent
+    /// next is typed at once. Returns the session's row id once the prompt is back; None if it
+    /// didn't come back, and then nothing is typed until its turn is seen to end. Err if it
+    /// won't press Esc (`halt_refused`).
+    pub fn halt(&self, card_id: &str, kind: Halt) -> Result<Option<String>, String> {
+        let (row_id, seq) = {
+            let live = self.live.lock().map_err(|e| e.to_string())?;
+            let l = live.get(card_id).ok_or("its session isn't running")?;
+            let running = l.alive.load(Ordering::SeqCst) && !l.stopping;
+            if let Some(why) = halt_refused(kind, &l.state, l.ready, running, l.question.is_some()) {
+                return Err(why);
+            }
+            (l.row.id.clone(), l.waits.seq)
+        };
+        self.input(card_id, b"\x1b")?;
+        let deadline = Instant::now() + HALT_WAIT;
+        loop {
+            std::thread::sleep(Duration::from_millis(300));
+            if self.screen_text(card_id).is_some_and(|s| halted(&s)) {
+                break;
+            }
+            if Instant::now() > deadline {
+                return Ok(None);
+            }
+        }
+        let mut live = self.live.lock().map_err(|e| e.to_string())?;
+        let Some(l) = live.get_mut(card_id).filter(|l| l.row.id == row_id) else { return Ok(None) };
+        // Still the prompt or turn it was pressed for: no hook came since (a new prompt would).
+        let same = match kind {
+            Halt::Deny => l.state == "permission" && l.waits.seq == seq && l.question.is_none(),
+            Halt::Interrupt => l.state == "working",
+        };
+        if same {
+            end_turn(l);
+        }
+        Ok(Some(row_id))
     }
 
     /// The statusLine draws only once Claude's prompt is up (after any trust question), so its
@@ -2105,6 +2195,38 @@ fn chrono_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Card #209: No only at a tool's permission prompt, an interrupt only on a running turn;
+    /// never a question dialog (Hugh's), a stopped or starting session.
+    #[test]
+    fn a_halt_presses_esc_only_where_it_means_no() {
+        assert_eq!(halt_refused(Halt::Deny, "permission", true, true, false), None);
+        assert_eq!(halt_refused(Halt::Interrupt, "working", true, true, false), None);
+        assert!(halt_refused(Halt::Deny, "permission", true, true, true).unwrap().contains("question"));
+        assert!(halt_refused(Halt::Interrupt, "permission", true, true, true).unwrap().contains("question"));
+        assert!(halt_refused(Halt::Deny, "working", true, true, false).unwrap().contains("isn't at a permission prompt"));
+        assert!(halt_refused(Halt::Deny, "idle", true, true, false).is_some());
+        assert!(halt_refused(Halt::Interrupt, "permission", true, true, false).unwrap().contains("kanban_session_deny"));
+        assert!(halt_refused(Halt::Interrupt, "idle", true, true, false).unwrap().contains("isn't on a turn"));
+        assert!(halt_refused(Halt::Deny, "permission", false, true, false).unwrap().contains("starting"));
+        assert!(halt_refused(Halt::Interrupt, "working", true, false, false).unwrap().contains("isn't running"));
+    }
+
+    /// Card #209: a message goes in after the Esc only once Claude's prompt box is back and no
+    /// permission menu shows: Enter on the menu would answer it, and its first option is Yes.
+    #[test]
+    fn the_message_waits_for_the_prompt_not_the_permission_menu() {
+        let rule = "─".repeat(40);
+        let menu = format!(" Bash command\n\n   rm -rf C:\\temp\\x\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again\n   3. No, and tell Claude what to do differently (esc)\n");
+        let prompt = format!("⎿  Interrupted · What should Claude do instead?\n\n{rule}\n❯ \n{rule}\n  ? for shortcuts\n");
+        assert!(permission_menu_showing(&menu));
+        assert!(!halted(&menu));
+        assert!(halted(&prompt));
+        assert!(!permission_menu_showing(&prompt));
+        // A menu drawn over a box still on screen is still the menu.
+        assert!(!halted(&format!("{prompt}{menu}")));
+        assert!(!halted("nothing drawn yet"));
+    }
 
     /// Card #95: the ring counts every byte the session has put out, also after it wraps, so a
     /// terminal can tell which live chunks its snapshot already holds.

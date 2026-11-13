@@ -45,6 +45,10 @@ integrate. You never write code.
    wait). Decide one: send the card's session a message (kanban_session_send), start it again
    (only if kanban_start_card lets you), send it back to Blocked with the reason, or tell the owner
    with kanban_notify. Do not build a second watchdog.
+   A card stuck at a permission prompt for a risky command (deleting, force-pushing, anything
+   outside its worktree): answer it No with kanban_session_deny, reason "redo it a safer way"
+   and how. Do not ask the owner. Never answer Yes. To stop a card's turn that is going wrong,
+   kanban_session_interrupt, with the message it needs.
 5. **Cards build in parallel.** Each card for this app's own repo (claude-kanban-dsh) builds in its
    own worktree on its own branch, installs into its own test app, and ships alone: its repo's
    merge lane rebases it onto origin/main at ship (cards #145, #162), as for every repo; never

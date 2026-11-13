@@ -78,6 +78,8 @@ card sessions (only from outside a card session):
   kb read <n> [--last k] [--tools]     the last k messages of the card's conversation
   kb switch <n> [--model m] [--effort e]   change model/effort on the running session
   kb keys <n> <key>...                 press keys in its terminal (enter, up, down, esc, tab, text:yes)
+  kb deny <n> "<reason>"               answer No to its permission prompt (Esc), then type the reason
+  kb interrupt <n> ["<message>"]       interrupt its turn (Esc), then type the message, if any
   kb search <words> [--card n] [--limit n]   search every card's session history (the last 90 days)
   kb mcp                               an MCP server on stdin/stdout for Claude Code (all of the above as tools)
 options:
@@ -291,6 +293,8 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
         "read" => ("kanban_session_read", json!({ "card": num(0).ok_or("read needs a card number")?, "last": opt("--last").and_then(|v| v.parse::<i64>().ok()), "include_tools": args.iter().any(|a| a == "--tools").then_some(true) })),
         "switch" => ("kanban_session_switch", json!({ "card": num(0).ok_or("switch needs a card number")?, "model": opt("--model"), "effort": opt("--effort") })),
         "keys" => ("kanban_session_keys", json!({ "card": num(0).ok_or("keys needs a card number")?, "keys": args.iter().skip(1).map(|k| match k.strip_prefix("text:") { Some(t) => json!({ "text": t }), None => json!(k) }).collect::<Vec<_>>() })),
+        "deny" => ("kanban_session_deny", json!({ "card": num(0).ok_or("deny needs a card number")?, "reason": args.get(1).ok_or("deny needs the reason, typed into the session after the No")? })),
+        "interrupt" => ("kanban_session_interrupt", json!({ "card": num(0).ok_or("interrupt needs a card number")?, "message": args.get(1) })),
         "testapp" => return testapp(args).map(Some),
         "search" => ("kanban_search", search_args(args)?),
         "flow-defaults" => ("kanban_flow_defaults", flow_default_args(args)?),

@@ -2112,7 +2112,8 @@ or any session with `kanban_router`. The decisions below are the router's after 
   complete, never into Deploy complete or Done). `kanban_start_card` (setting on, the card's own
   `worktreePath`, through the cap and queue), `kanban_router_log`, a compact `kanban_list_cards`
   (no summaries), and `kanban_session_send/status/read` (a send that would resume a stopped
-  session needs the setting). No `kanban_set_passed`, `kanban_ship_result` or ship request.
+  session needs the setting), and `kanban_session_deny/interrupt` (card #209, below). No
+  `kanban_set_passed`, `kanban_ship_result` or ship request.
 - **The Done pile (card #131).** `kanban_archive_card {card, if_version, reason, evidence?}` never
   archives: after `card_for_write` it calls `Store::ask_archive` (`crates/store/src/archive_ask.rs`),
   which writes `archiveAsk` = {reason, evidence, at, by, column}. Refused in Ship it, for a stack's
@@ -2560,3 +2561,33 @@ Hugh (12 Nov): a column for his review of a plan, between Planning and In progre
 - **Tests:** `crates/store/tests/plan_review.rs` (the column, migration 18 with backup and twice,
   an older build, the three-way skip, the stop rules, Hugh's moves out); `dispatch.rs`,
   `routersession.rs`, `critic.rs` and `control.rs` unit tests; `kb` flag tests.
+
+## The Router answers No, or interrupts, then sends its message (13 Nov 2026, card #209, branch `card-209`)
+
+Hugh: a card stuck at a permission prompt for a risky command gets No and "redo it a safer
+way" from the Router, not a question to him.
+
+- **Tools** (`control.rs`, in `CONTROL`, so `kb mcp` has them too, and in the Router's
+  `SESSION_TOOLS`): `kanban_session_deny {card, reason}` and `kanban_session_interrupt {card,
+  message?}`. `control::halt` reads the prompt's text (`waits`), calls `Sessions::halt`, logs a
+  line on the card (`halt_log_line`: what it turned down, then what it said; by "the router" or
+  "Hugh's session outside the app"), then sends the text as `kanban_session_send` does
+  (`session_send`; the Router's recorded as the app's, `note_app_message`). `kb deny <n> "<reason>"`
+  and `kb interrupt <n> ["<message>"]`.
+- **One Esc, never Yes** (`sessions.rs`): `halt_refused` allows Deny only in state "permission"
+  with no question dialog (an AskUserQuestion is Hugh's), Interrupt only in "working"; never a
+  starting or stopped session. `halt` writes one `` (two would open Claude Code's rewind
+  menu), then polls the screen for up to `HALT_WAIT` (6 s) until `halted`: the prompt box is back
+  (`prompt_text`) and no permission menu shows (`permission_menu_showing`: "Do you want to" over
+  "1. Yes"). Only then, and only if the state is still the one it pressed for (same `waits.seq`),
+  it ends the turn (`end_turn`, shared with `turn_ended`), so the message is typed within a few
+  seconds (`type_mid_turn`, `SETTLED`). If the prompt doesn't come back, the state stays and the
+  message waits: nothing is typed into a permission menu, where Enter would pick Yes.
+- **Router rules** (`routertools.rs`): both go through `hands_off` (Hugh has the card open or
+  changed it under 2 minutes ago: he may be answering it himself), and a decision line in the
+  Router's log. `prompts/router.md` job 4 says: risky permission prompt, No with "redo it a safer
+  way" and how, do not ask the owner, never Yes; interrupt a turn going wrong.
+- **Tests:** `sessions.rs` (`a_halt_presses_esc_only_where_it_means_no`,
+  `the_message_waits_for_the_prompt_not_the_permission_menu`), `control.rs` (the log line, the
+  schemas, one Esc only), `routertools.rs` (offered; hands off; no keys), `routersession.rs` (the
+  prompt's words).

@@ -22,7 +22,7 @@ use tauri::{AppHandle, Manager};
 /// The card tools the Router is not offered.
 pub const NOT_FOR_ROUTER: [&str; 4] = ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_merge"];
 /// The session tools it is offered (of `control::CONTROL`).
-pub const SESSION_TOOLS: [&str; 3] = ["kanban_session_send", "kanban_session_status", "kanban_session_read"];
+pub const SESSION_TOOLS: [&str; 5] = ["kanban_session_send", "kanban_session_status", "kanban_session_read", "kanban_session_deny", "kanban_session_interrupt"];
 
 /// The Router's own tools.
 pub fn own_schemas() -> Value {
@@ -360,6 +360,24 @@ pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Valu
         "kanban_archive_card" => ask_archive(app, args),
         "kanban_router_log" => router_log(app, args),
         "kanban_session_status" | "kanban_session_read" => crate::control::call(app, name, args),
+        // Card #209: No to a card's permission prompt, or an interrupt, then its message at once.
+        // Never Yes. Hands off a card Hugh has open or just changed: he may be answering it.
+        "kanban_session_deny" | "kanban_session_interrupt" => {
+            {
+                let board = app.state::<Board>();
+                let store = board.0.lock().map_err(|e| e.to_string())?;
+                let c = store.get_by_number(number(args)?).map_err(|e| e.to_string())?;
+                if let Some(why) = routersession::hands_off(app, &store, &c) {
+                    return Err(format!("refused: {why}"));
+                }
+            }
+            let kind = if name == "kanban_session_deny" { crate::sessions::Halt::Deny } else { crate::sessions::Halt::Interrupt };
+            let out = crate::control::halt(app, args, kind, ROUTER_BY, true)?;
+            let n = args.get("card").and_then(Value::as_i64).unwrap_or(0);
+            let did = if kind == crate::sessions::Halt::Deny { "Answered No to" } else { "Interrupted" };
+            log_decision(app, Some(n), &format!("{did} #{n}'s session: {}", args.get("reason").or(args.get("message")).and_then(Value::as_str).unwrap_or("")));
+            Ok(out)
+        }
         "kanban_session_send" => {
             let (id, live) = {
                 let board = app.state::<Board>();
@@ -581,7 +599,9 @@ mod tests {
     #[test]
     fn the_router_is_offered_its_tools_and_never_a_ship() {
         let names: Vec<String> = tool_list().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
-        for t in ["kanban_get_card", "kanban_list_cards", "kanban_move_card", "kanban_update_card", "kanban_create_card", "kanban_start_card", "kanban_router_log", "kanban_session_send", "kanban_notify", "kanban_archive_card"] {
+        for t in ["kanban_get_card", "kanban_list_cards", "kanban_move_card", "kanban_update_card", "kanban_create_card", "kanban_start_card", "kanban_router_log", "kanban_session_send", "kanban_notify", "kanban_archive_card",
+            // Card #209: No to a permission prompt, and an interrupt.
+            "kanban_session_deny", "kanban_session_interrupt"] {
             assert!(names.iter().any(|n| n == t), "{t}");
         }
         for t in ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_session_start", "kanban_session_stop", "kanban_session_keys", "kanban_search"] {
@@ -595,6 +615,17 @@ mod tests {
         for k in ["card", "if_version", "reason"] {
             assert!(req.contains(&k), "{k}");
         }
+    }
+
+    /// Card #209: the Router's No and interrupt go through Hugh's hands-off rule, and never
+    /// through the keys tool (which could press Yes).
+    #[test]
+    fn the_routers_halt_keeps_hands_off_and_presses_only_esc() {
+        let src = include_str!("routertools.rs");
+        let arm = src.split("\"kanban_session_deny\" | \"kanban_session_interrupt\" => {").nth(1).unwrap().split("log_decision(app, Some(n)").next().unwrap();
+        assert!(arm.contains("routersession::hands_off(app"), "{arm}");
+        assert!(arm.contains("crate::control::halt(app"), "{arm}");
+        assert!(!arm.contains("kanban_session_keys") && !arm.contains(".input("), "{arm}");
     }
 
     #[test]
