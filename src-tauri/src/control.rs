@@ -70,7 +70,13 @@ pub fn halt(app: &AppHandle, args: &Value, kind: crate::sessions::Halt, by: &str
         Halt::Interrupt => args.get("message").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()),
     };
     let live = app.state::<Arc<Sessions>>();
+    // What it asks to run: the call once the transcript is read, else the command on screen
+    // (the notification's own text says only "Claude needs your permission").
     let asked = live.waits().get(&id).and_then(|w| w.prompt.clone());
+    let asked = match (kind, live.screen_text(&id).as_deref().and_then(crate::sessions::menu_command)) {
+        (Halt::Deny, Some(cmd)) if asked.as_deref().map_or(true, |a| a.starts_with("Claude needs")) => Some(cmd),
+        _ => asked,
+    };
     let row = live.halt(&id, kind).map_err(|e| format!("refused: card #{n}: {e}"))?;
     if let Some(r) = &row {
         if let Ok(mut store) = app.state::<Board>().0.lock() {
@@ -86,6 +92,8 @@ pub fn halt(app: &AppHandle, args: &Value, kind: crate::sessions::Halt, by: &str
             let _ = store.note_app_message(&id, t);
         }
     }
+    // The open board reloads the card, so the line shows at once.
+    let _ = tauri::Emitter::emit(app, "cards-changed", ());
     if let Some(t) = text {
         crate::session_send(app.clone(), app.state::<Board>(), id.clone(), t.to_string(), None).map_err(err)?;
     }
@@ -311,6 +319,10 @@ mod tests {
         let body = src.split("pub fn halt(&self").nth(1).unwrap().split("Ok(Some(row_id))").next().unwrap();
         assert_eq!(body.matches("self.input(").count(), 1, "{body}");
         assert!(body.contains(r#"self.input(card_id, b"\x1b")"#), "{body}");
+        // The card-tester's find: the log line shows on the open board at once.
+        let me = include_str!("control.rs");
+        let halt = me.split("pub fn halt(app").nth(1).unwrap().split("pub fn halt_log_line").next().unwrap();
+        assert!(halt.contains(r#"emit(app, "cards-changed""#), "{halt}");
     }
 
     #[test]

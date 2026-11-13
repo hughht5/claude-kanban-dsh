@@ -221,6 +221,20 @@ pub fn permission_menu_showing(screen: &str) -> bool {
     screen.contains("Do you want to") && screen.lines().any(|l| l.trim_start().trim_start_matches('❯').trim_start().starts_with("1. Yes"))
 }
 
+/// The command a permission menu on `screen` asks to run: the lines between its two dashed
+/// rules (╌), joined. None if no menu shows.
+pub fn menu_command(screen: &str) -> Option<String> {
+    if !permission_menu_showing(screen) {
+        return None;
+    }
+    let rule = |l: &str| l.trim().chars().count() >= 20 && l.trim().chars().all(|c| c == '╌');
+    let lines: Vec<&str> = screen.lines().collect();
+    let a = lines.iter().position(|l| rule(l))?;
+    let b = a + 1 + lines[a + 1..].iter().position(|l| rule(l))?;
+    let cmd = lines[a + 1..b].iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+    (!cmd.is_empty()).then_some(cmd)
+}
+
 /// Whether the session took the Esc: its prompt box is back and no permission menu shows. Only
 /// then is anything typed: Enter on the menu would answer it (its first option is Yes).
 pub fn halted(screen: &str) -> bool {
@@ -2239,6 +2253,8 @@ mod tests {
         assert!(!halted(menu));
         assert!(after.contains("Interrupted · What should Claude do instead?"));
         assert!(halted(after));
+        assert_eq!(menu_command(menu).as_deref(), Some("mkdir -p /tmp/card209-probe/a"));
+        assert_eq!(menu_command(after), None);
     }
 
     /// Card #95: the ring counts every byte the session has put out, also after it wraps, so a
