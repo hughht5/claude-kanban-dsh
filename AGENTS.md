@@ -224,7 +224,8 @@ app, and they ship one at a time.
 
 The app's card-critic and card-tester held these rules in their prompts (`src-tauri/src/critic.rs`,
 `tester.rs`; cards #76, #97, #105), and the app's gates enforced them. An agent working here without
-those subagents follows them itself. Each rule names the cards whose failures it comes from.
+those subagents follows them itself. A rule names the cards whose failures it comes from; a rule
+with no card is taken straight from the critic's or the tester's prompt.
 
 **A plan, before the build**
 
@@ -237,14 +238,13 @@ those subagents follows them itself. Each rule names the cards whose failures it
 - **Every claim about existing code has its `file:line`, read today, not remembered** (#128 CSS
   that can't work as written, #129 a flag nothing clears, #130 a wrong column count).
 - **Every check can be run with the tools that exist.** Name the harness, the stub or the command.
-  A check that a broken build would also pass is not a check, and no check takes Hugh's focus
-  (#125, #126, #127, #130).
+  A check that a broken build would also pass is not a check (#125, #126, #127, #130).
 - **3 to 7 done-when checks, each one outcome a tester can see pass or fail, in the order a tester
   would try them.** Every deliverable has one (#126, #127).
 - **Each check names where it can be tried:** the card's test app, and what must be on there (a
-  running session, the Router). If there is no such place, the plan makes one or says the check
-  is NOT TESTED. A check that can only be true after the ship is a Deploy complete step, not a
-  done-when check (#129, #131, #153, #168).
+  running session, the Router). If there is no such place, the plan has a step that makes one,
+  or asks Hugh for it in a `HUGH:` line. A check that can only be true after the ship is a Deploy
+  complete step, not a done-when check (#129, #131, #153, #168).
 - **The plan says what happens when the thing fails or is missing:** a refused write, a failed
   start, an empty column, a move back (#131, #132).
 - **A question that is Hugh's** (scope, work the card didn't ask for, a trade-off the card doesn't
@@ -252,9 +252,9 @@ those subagents follows them itself. Each rule names the cards whose failures it
 
 **Proof, before hand-over**
 
-- **Run it; don't read it.** Use the real thing on the card's own test app: the commands, the
-  tests, `kb`, the API, `tools/cdp.mjs`. Reading the code or the diff is not a test. Try the
-  obvious failure case for each deliverable as well.
+- **Run it; don't read it.** Reading the code or the diff is not a test: each deliverable is run,
+  with the tools the Hard rules allow (card #172). For each deliverable the hand-over also names
+  one failure case that was run (a wrong input, a missing file, a refused move) and what it did.
 - **The tester did not build it.** It is briefed with the card, the commit and how to try the
   change, not your conclusions, and it fixes nothing: no edits, commits, card moves or config.
 - **Test the build you mean.** `tools/cdp.mjs` prints the test app's build commit: if it is not the
@@ -263,17 +263,19 @@ those subagents follows them itself. Each rule names the cards whose failures it
   beside each the command or file that proves it, word for word: a check that says "the log shows
   X" is proved by that log line, a screenshot asked for is taken (#95, #135). A count is compared
   with the real thing's count (#94). A docs line says what the build does (#89, #136).
-- **A check that could not be tried is a FAIL.** Fix the place first (start the part that is off)
-  or report it as NOT TESTED. Never pass it from the builder's own record, and a run that was
-  stopped early has not passed (#129, #148, #153, #168).
+- **A check that could not be tried is a FAIL,** and the card is not handed over as tested. Make
+  the place (start the part that is off) and run the check again. If only Hugh can make it, the
+  check stays a FAIL and the hand-over says what he must start. Never pass it from the builder's
+  own record, and a run that was stopped early has not passed (#129, #148, #153, #168).
 - **A run with no verdict did not happen.** A test, review or merge run counts only if its last
   lines are `VERDICT: PASS`, or `VERDICT: FAIL` with one line per failure. No verdict line is never
   a pass: run it again (#133, #136, #144, #145, #147, #157, #158, #172).
-- **A fix on one surface checks its siblings.** Before hand-over, search for every other way in
-  that carries the same data or rule: logs and card fields, `kb`, the MCP tools, the API and the
-  UI, the resolved path as well as the written one, an older build, each mix of card states (held
-  with pinned). List them in the hand-over and test each (#107, #112, #125, #132). A rule written
-  in a prompt has the same words in the code that enforces it (#188).
+- **A fix on one surface checks its siblings.** The hand-over has one line for each of these,
+  with what was run and what it showed, or "not affected" and why: the logs; the card's fields
+  and face; `kb`; the MCP tools; the API; the UI; the resolved path as well as the written one; an
+  older build opening the same board; each mix of card states the change touches (held with
+  pinned) (#107, #112, #125, #132). A rule written in a prompt has the same words in the code
+  that enforces it: quote both (#188).
 - **When Hugh changes the design, rewrite the done-when checks in the same turn** (#131).
 - **After three failed test rounds, stop,** say what fails and ask Hugh.
 
