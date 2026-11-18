@@ -1298,6 +1298,24 @@ pub fn after_lead_verdict(app: &AppHandle, store: &mut Store, lead_id: &str, by:
     }
 }
 
+/// After a card was archived by a move into Done, for Hugh (`r`, from the store): his Archive
+/// all on the Done pile (card #131) and an agent's archive he asked for (card #223). The stack
+/// rules now, under the board's lock, written by `by`; then, on a thread that waits for the lock
+/// to be let go, the move's after-move (the Done column stops the card's session) and the
+/// sessions of the children archived with a lead stopped (archived in place, which no
+/// after-move reaches).
+pub fn after_archive(app: &AppHandle, store: &mut Store, r: &kanban_store::ArchiveResult, by: &str) {
+    after_stack_move(app, store, &r.id, by);
+    let (a, id, from, kids) = (app.clone(), r.id.clone(), r.from.clone().unwrap_or_default(), r.children.clone());
+    std::thread::spawn(move || {
+        after_move(&a, &id, &from);
+        let live = a.state::<Arc<Sessions>>();
+        for k in kids.iter().filter(|k| live.is_live(k).is_some()) {
+            let _ = live.stop(&a, k);
+        }
+    });
+}
+
 /// After `card_id` moved (by anyone): applies the stack rules. A lead the rules moved hears
 /// why in its session; a child carried into a column that stops sessions (Done) has its
 /// session stopped. Children moved by the rules never get `after_move` (no session per child).

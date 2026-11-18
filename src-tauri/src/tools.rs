@@ -85,7 +85,7 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "state": { "type": "string", "enum": ["shipping", "shipped", "failed", "needs-hugh"] }, "detail": { "type": "string" } }, "required": ["state"] } },
         { "name": "kanban_notify", "description": "Tell Hugh something about a card (a Windows notification and a log line).",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
-        { "name": "kanban_archive_card", "description": "Archive a card, only when Hugh asked you to archive that card: put his words in `hugh_words`. It moves into Done, which archives it (a stack's lead takes its children), and its session stops; the card's log shows who archived it for Hugh and his words, and his Restore brings it back. Refused without his words, in Ship it, for a stack's child (archive its lead), for a lead with a card in Ship it, and for your own card (move it to Done with kanban_move_card).",
+        { "name": "kanban_archive_card", "description": "Archive a card, only when Hugh asked you to archive that card: put his words in `hugh_words`. It moves into Done, which archives it (a stack's lead takes its children), and its session stops; the card's log shows who archived it for Hugh and his words, and his Restore brings it back. Refused without his words, in Ship it, for a stack's child (archive its lead), for a lead with a card in Ship it, and for your own card or its stack's lead (move your own card to Done with kanban_move_card).",
           "inputSchema": { "type": "object", "properties": {
             "card": { "type": "integer", "description": "The card's number." },
             "hugh_words": { "type": "string", "description": "What Hugh said when he asked for this archive, quoted." },
@@ -153,22 +153,6 @@ fn archive_args(args: &Value) -> Result<(i64, &str), String> {
         return Err("refused: archive a card only when Hugh asked you to, with his words in `hugh_words`".into());
     }
     Ok((n, words))
-}
-
-/// After an agent archived a card for Hugh (card #223): what his Archive all does after its
-/// move into Done (`router_archive_approve`). The stack rules now, under the board's lock; then,
-/// once the lock is let go, the move's after-move (the card's session stops) and the sessions of
-/// the children archived with a lead (archived in place, which no after-move reaches) stopped.
-fn archived_for_hugh(app: &AppHandle, store: &mut Store, r: &kanban_store::ArchiveResult, by: &str) {
-    dispatch::after_stack_move(app, store, &r.id, by);
-    let (a, id, from, kids) = (app.clone(), r.id.clone(), r.from.clone().unwrap_or_default(), r.children.clone());
-    std::thread::spawn(move || {
-        dispatch::after_move(&a, &id, &from);
-        let live = a.state::<Arc<Sessions>>();
-        for k in kids.iter().filter(|k| live.is_live(k).is_some()) {
-            let _ = live.stop(&a, k);
-        }
-    });
 }
 
 /// Card #184: asks Hugh to ship card `c` for the agent `by`. Never moves it: the app shows him
@@ -634,22 +618,27 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             ask_ship(app, &mut store, &c, &by, reason)?
         }
         "kanban_archive_card" => {
+            // The Router never gets here: its own tool of this name only asks (routertools).
             let (n, words) = archive_args(args)?;
-            if as_router {
-                return Err("the Router asks to archive a card; it never archives".into());
-            }
             // A card's session, or Hugh's own (kb, his sessions outside the app); not a session
             // row the app can't place.
             if own.is_none() && !hugh {
                 return Err(format!("refused: {by} can't archive a card"));
             }
             let c = store.get_by_number(n).map_err(|e| e.to_string())?;
-            if own.as_deref() == Some(c.id.as_str()) {
-                return Err(format!("card #{n} is your own card: move it to Done with kanban_move_card instead (it goes when your turn ends)"));
+            if let Some(me) = own.as_deref().and_then(|id| store.get(id).ok()) {
+                // Its own card, or the stack its card is in (the lead takes its children with
+                // it): that would stop this very session partway through the call.
+                if me.id == c.id || me.stack_of() == Some(n) {
+                    let what = if me.id == c.id { "your own card".to_string() } else { format!("your card's stack lead (#{} is in it)", me.number) };
+                    return Err(format!("refused: card #{n} is {what}: archiving it would stop your own session. Move your own card to Done with kanban_move_card instead (it goes when your turn ends), or ask Hugh"));
+                }
             }
             let version = args.get("if_version").and_then(Value::as_i64);
             let r = store.archive_for_hugh(n, version, &by, words).map_err(|e| e.to_string())?;
-            archived_for_hugh(app, &mut store, &r, &by);
+            dispatch::after_archive(app, &mut store, &r, &kanban_store::asked_author(&by));
+            // A card the Router had asked to archive leaves the Done pile.
+            let _ = app.emit("router-changed", ());
             let with = match r.children.len() {
                 0 => String::new(),
                 1 => " and the 1 card of its stack".to_string(),

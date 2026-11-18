@@ -111,7 +111,7 @@ impl Store {
         if words.is_empty() {
             return Err(Error::Invalid("say what Hugh asked: put his words in hugh_words (only archive a card when Hugh asked for it)".into()));
         }
-        if agent == ROUTER_BY || agent.starts_with(ROUTER_BY) {
+        if agent.starts_with(ROUTER_BY) {
             return Err(Error::Invalid("the Router asks to archive a card (its kanban_archive_card); it never archives".into()));
         }
         if card.archived {
@@ -128,17 +128,22 @@ impl Store {
         let mut extra = Patch::new();
         extra.insert(ARCHIVED_FOR_KEY.into(), json!({ "by": agent, "words": words, "at": crate::now() }));
         let m = self.move_asked(&card.id, version, agent, &words, extra)?;
-        let children: Vec<String> = if m.card.is_lead() {
-            self.stack_children(&m.card)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|k| k.archived && k.fields.get("archivedWith").and_then(Value::as_i64) == Some(number))
-                .map(|k| k.id)
-                .collect()
-        } else {
-            vec![]
-        };
+        let children = self.archived_with(&m.card);
         Ok(ArchiveResult { id: card.id, number, done: true, why: None, from: Some(from), children })
+    }
+
+    /// The ids of the children archived with lead `lead` (`archivedWith`), read after the write,
+    /// so the app stops exactly their sessions. None for a card that leads no stack.
+    fn archived_with(&self, lead: &Card) -> Vec<String> {
+        if !lead.is_lead() {
+            return vec![];
+        }
+        self.stack_children(lead)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|k| k.archived && k.fields.get("archivedWith").and_then(Value::as_i64) == Some(lead.number))
+            .map(|k| k.id)
+            .collect()
     }
 
     /// The card's writes after `version`, as (version, by), oldest first.
@@ -220,18 +225,7 @@ impl Store {
         let from = card.column.clone();
         match self.move_by_hugh(&card.id, version, DONE, Patch::new()) {
             Ok(m) => {
-                // The children this move archived with it (`archivedWith`), read after the write,
-                // so the app stops exactly their sessions.
-                let children: Vec<String> = if m.card.is_lead() {
-                    self.stack_children(&m.card)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|k| k.archived && k.fields.get("archivedWith").and_then(Value::as_i64) == Some(card.number))
-                        .map(|k| k.id)
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let children = self.archived_with(&m.card);
                 let _ = self.add_router_log("event", Some(card.number), &format!("Hugh archived #{} as you asked (it was in {from})", card.number), crate::cards::HUGH);
                 ArchiveResult { id: card.id.clone(), number: card.number, done: true, why: None, from: Some(from), children }
             }

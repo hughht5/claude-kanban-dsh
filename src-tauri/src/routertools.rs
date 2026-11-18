@@ -19,10 +19,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-/// The card tools the Router is not offered. `kanban_archive_card` (card #223) is the card tools'
-/// real archive: the Router keeps its own tool of that name, which only asks (card #131), so its
-/// calls of that name still go to `ask_archive`.
-pub const NOT_FOR_ROUTER: [&str; 5] = ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_merge", "kanban_archive_card"];
+/// The card tools the Router is not offered.
+pub const NOT_FOR_ROUTER: [&str; 4] = ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_merge"];
 /// The session tools it is offered (of `control::CONTROL`).
 pub const SESSION_TOOLS: [&str; 3] = ["kanban_session_send", "kanban_session_status", "kanban_session_read"];
 
@@ -41,12 +39,16 @@ pub fn own_schemas() -> Value {
 
 /// What the Router is offered over MCP.
 pub fn tool_list() -> Value {
+    let own = own_schemas().as_array().cloned().unwrap_or_default();
     let mut out: Vec<Value> = crate::tools::schemas()
         .as_array()
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .filter(|t| !NOT_FOR_ROUTER.contains(&t["name"].as_str().unwrap_or("")))
+        // A card tool the Router has its own tool for (card #223: `kanban_archive_card`, which
+        // for the Router only asks, card #131) is offered once, as its own.
+        .filter(|t| !own.iter().any(|o| o["name"] == t["name"]))
         .map(|mut t| {
             // Its writes and moves need the card's version.
             let name = t["name"].as_str().unwrap_or("").to_string();
@@ -271,7 +273,7 @@ fn log_decision(app: &AppHandle, card: Option<i64>, text: &str) {
 pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Value, String> {
     let may_start = app.state::<Board>().0.lock().map(|s| s.router_may_start()).unwrap_or(false);
     match name {
-        n if (NOT_FOR_ROUTER.contains(&n) && n != "kanban_archive_card") || n == "kanban_request_ship" => Err("the Router doesn't mark tests passed or report ships: only Hugh tests and ships".into()),
+        n if NOT_FOR_ROUTER.contains(&n) || n == "kanban_request_ship" => Err("the Router doesn't mark tests passed or report ships: only Hugh tests and ships".into()),
         "kanban_get_card" | "kanban_stack_list" | "kanban_notify" => {
             if name != "kanban_stack_list" {
                 number(args)?;

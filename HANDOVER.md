@@ -2132,17 +2132,20 @@ or any session with `kanban_router`. The decisions below are the router's after 
   `kanban_archive_card {card, hugh_words, if_version?}` (`tools.rs`; the Router's tool of the
   same name, above, still only asks): a card's session, Hugh's sessions outside the app and `kb
   archive <n> --asked-by-hugh "<his words>"`; a session row the app can't place is refused, and
-  so is the caller's own card (its session moves it to Done with `kanban_move_card`, queued till
-  its turn ends). `Store::archive_for_hugh` (`archive_ask.rs`): words required (one line, cut to
-  `ASK_TEXT_MAX`), the version, not archived, `archive_refused`, then `move_asked`
-  (`How::Asked`) into Done with `archivedFor` = {by, words, at} (secret-checked; `restore_patch`
-  clears it). Author `"<agent>, for Hugh"` (`asked_author`); log line `Archived by <agent> for
-  Hugh (it was in <col>): he asked "<words>"`. After it, `tools::archived_for_hugh` does what
-  `router_archive_approve` does: `after_stack_move`, then `after_move` (the Done column stops the
-  session) and `Sessions::stop` for a lead's live children. Subagents are already denied the tool
-  (`agents::CARD_TOOLS`, both server names); the Router is not offered it (`NOT_FOR_ROUTER`, its
-  calls of that name still reach `ask_archive`). Tests: `crates/store/tests/archive_for_hugh.rs`,
-  `tools.rs` and `kb` argument tests.
+  so is the caller's own card or its stack's lead (either would stop the calling session
+  mid-call; its own card goes to Done with `kanban_move_card`, queued till its turn ends).
+  `if_version` is optional, so `kb archive` needs no read first. `Store::archive_for_hugh`
+  (`archive_ask.rs`): words required (one line, cut to `ASK_TEXT_MAX`), the version, not
+  archived, `archive_refused`, then `move_asked` (`How::Asked`) into Done with `archivedFor` =
+  {by, words, at} (secret-checked; `restore_patch` clears it). Author `"<agent>, for Hugh"`
+  (`asked_author`); log line `Archived by <agent> for Hugh (it was in <col>): he asked
+  "<words>"`. After it, `dispatch::after_archive` (shared with `router_archive_approve`):
+  `after_stack_move`, then `after_move` (the Done column stops the session) and
+  `Sessions::stop` for a lead's live children (`Store::archived_with`); `router-changed` too, so
+  a card in the Done pile leaves it. Subagents are already denied the tool (`agents::CARD_TOOLS`,
+  both server names); the Router's list (`routertools::tool_list`) drops any card tool it has
+  its own of, so it sees only its ask. Tests: `crates/store/tests/archive_for_hugh.rs`,
+  `tools.rs`, `routertools.rs` and `kb` argument tests.
 - **Verdicts.** `agents::own_or_named`: for the Router's session the card is the one the report
   (or the brief's `CARD:` line, for #104's work snapshot) names. Used by `record_check`, the
   merger, the reproducer and the card-router.

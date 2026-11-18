@@ -745,23 +745,14 @@ fn router_archive_approve(app: AppHandle, board: State<Board>, items: Vec<PileIt
     let pairs: Vec<(String, i64)> = items.into_iter().map(|i| (i.id, i.version)).collect();
     let mut store = board.0.lock().map_err(CmdError::other)?;
     let out = store.approve_archive(&pairs);
-    // The stack rules after the move, as for Hugh's drag (hugh_move).
+    // The stack rules after the move, as for Hugh's drag (hugh_move), then the after-move and
+    // the children's sessions stopped once the board is let go.
     for r in out.iter().filter(|r| r.done) {
-        dispatch::after_stack_move(&app, &mut store, &r.id, HUGH);
+        dispatch::after_archive(&app, &mut store, r, HUGH);
     }
     drop(store);
     changed(&app);
     let _ = app.emit("router-changed", ());
-    for r in out.iter().filter(|r| r.done) {
-        let (a, id, from, kids) = (app.clone(), r.id.clone(), r.from.clone().unwrap_or_default(), r.children.clone());
-        std::thread::spawn(move || {
-            dispatch::after_move(&a, &id, &from);
-            let live = a.state::<Arc<sessions::Sessions>>();
-            for k in kids.iter().filter(|k| live.is_live(k).is_some()) {
-                let _ = live.stop(&a, k);
-            }
-        });
-    }
     Ok(serde_json::to_value(out).unwrap_or(json!([])))
 }
 
