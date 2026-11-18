@@ -42,13 +42,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use app_messages::{split_app_parts, MsgPart};
-pub use archive_ask::{archive_refused, lifts_decline, ArchiveResult, ARCHIVE_ASK_KEY, ARCHIVE_DECLINED_KEY, ASK_TEXT_MAX};
+pub use archive_ask::{archive_refused, lifts_decline, ArchiveResult, ARCHIVED_FOR_KEY, ARCHIVE_ASK_KEY, ARCHIVE_DECLINED_KEY, ASK_TEXT_MAX};
 pub use move_in::{import_if_asked, Imported, IMPORT_DONE, IMPORT_REQUEST};
 pub use config::PRIVATE_DIR_KEY;
 pub use channel::{app_name, app_name_for, channel, data_dir_for, devtools_port_for, exe_name_for, home_var, identifier_for, is_test, kb_data_dir, DATA_DIR_ENV, label_for, live_board, product_name_for, quit_event, quit_event_for, slot, slot_of, LIVE_DEVTOOLS_PORT};
 pub use cards::{clean_auto_to, clean_labels, routed_small, Card, ONE_FAILED_KEY, LogEntry, MoveOutcome, Patch, AUTO_BY, AUTO_KEEPS, AUTO_KEY, AUTO_TARGETS, CRITIQUE_KEY, MAX_LABELS, MAX_LABEL_LEN, MERGE_KEY, repro_open, REPRO_KEY, RESET_ON_IN_PROGRESS, REVIEW_KEY, ROUTE_KEY, SMALL_BY, SMALL_KEY, SMALL_OPT_OUT_KEY, SMALL_WAITING, SMALL_WENT_ON, TEST_KEY, WORD_BY};
 pub use cards::{CHECK_SIZE_KEY, RESET_ON_HUMAN_TEST};
-pub use cards::{planning_skip, skip_planning_line};
+pub use cards::{asked_author, planning_skip, skip_planning_line};
 pub use cards::{clean_changes_outputs, clean_proof, output_path_problem, OUTPUTS_KEY, PROOF_KEY, SAVED_KEY};
 pub use columns::{ColumnCfg, Pending};
 pub use config::{default_profiles, page_default, profile_for, Profile, CRITIC_RULE_KEY, EFFORTS, MAX_RUNNING_DEFAULT, MAX_RUNNING_KEY, IDLE_PAUSE_DEFAULT, IDLE_PAUSE_KEY, PAGE_SETTINGS, PROFILES_KEY, REPRO_RULE_KEY, REVIEW_RULE_KEY, RULE_KEYS, SMALL_GO_ON_KEY, STUCK_CHECK_DEFAULT, STUCK_CHECK_KEY, TEST_RULE_KEY, check_small_repos, SettingChange, SmallRepo, SMALL_REPOS_KEY};

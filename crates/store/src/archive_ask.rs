@@ -94,7 +94,53 @@ fn cut(s: &str) -> String {
     out
 }
 
+/// Card #223: who archived a card for Hugh and his words, {by, words, at}, kept on the card.
+pub const ARCHIVED_FOR_KEY: &str = "archivedFor";
+
 impl Store {
+    /// An agent archives card `number` because Hugh asked it to (card #223): a card's session,
+    /// Hugh's session outside the app, or his `kb`, never the Router (it only asks). The same
+    /// rules as his Archive all (`archive_refused`: not in Ship it, not a stack's child, a lead
+    /// with nothing in Ship it), then a move into Done, which archives it in the same write (a
+    /// lead taking its children), logged with his words and `archivedFor` on the card. `words`
+    /// is what Hugh said; it is required. Refused for a changed version (`if_version`) or a card
+    /// already archived. The app stops the card's and its children's sessions after.
+    pub fn archive_for_hugh(&mut self, number: i64, if_version: Option<i64>, agent: &str, words: &str) -> Result<ArchiveResult> {
+        let card = self.get_by_number(number)?;
+        let words = cut(&words.replace(['\r', '\n'], " "));
+        if words.is_empty() {
+            return Err(Error::Invalid("say what Hugh asked: put his words in hugh_words (only archive a card when Hugh asked for it)".into()));
+        }
+        if agent == ROUTER_BY || agent.starts_with(ROUTER_BY) {
+            return Err(Error::Invalid("the Router asks to archive a card (its kanban_archive_card); it never archives".into()));
+        }
+        if card.archived {
+            return Err(Error::Invalid(format!("card #{number} is archived already")));
+        }
+        let version = if_version.unwrap_or(card.version);
+        if card.version != version {
+            return Err(Error::Conflict { id: card.id.clone(), yours: version, current: card.version });
+        }
+        if let Some(why) = archive_refused(self, &card) {
+            return Err(Error::Invalid(why));
+        }
+        let from = card.column.clone();
+        let mut extra = Patch::new();
+        extra.insert(ARCHIVED_FOR_KEY.into(), json!({ "by": agent, "words": words, "at": crate::now() }));
+        let m = self.move_asked(&card.id, version, agent, &words, extra)?;
+        let children: Vec<String> = if m.card.is_lead() {
+            self.stack_children(&m.card)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|k| k.archived && k.fields.get("archivedWith").and_then(Value::as_i64) == Some(number))
+                .map(|k| k.id)
+                .collect()
+        } else {
+            vec![]
+        };
+        Ok(ArchiveResult { id: card.id, number, done: true, why: None, from: Some(from), children })
+    }
+
     /// The card's writes after `version`, as (version, by), oldest first.
     pub fn revisions_after(&self, card_id: &str, version: i64) -> Result<Vec<(i64, String)>> {
         let mut st = self.conn.prepare("SELECT version, COALESCE(by, '') FROM card_revisions WHERE card_id = ?1 AND version > ?2 ORDER BY seq")?;

@@ -647,6 +647,10 @@ pub(crate) fn restore_patch(card: &Card) -> Patch {
     let mut p = Patch::new();
     p.insert("archived".into(), json!(false));
     p.insert("archivedAt".into(), Value::Null);
+    // Card #223: who archived it for Hugh no longer holds once it is back.
+    if card.fields.contains_key(crate::ARCHIVED_FOR_KEY) {
+        p.insert(crate::ARCHIVED_FOR_KEY.into(), Value::Null);
+    }
     if card.column == DONE {
         p.insert("column".into(), json!(restore_column(card)));
         p.insert("archivedFrom".into(), Value::Null);
@@ -1018,6 +1022,13 @@ impl Store {
         self.move_as(id, if_version, "Ship it", Patch::new(), How::Word(why))
     }
 
+    /// An agent archives a card for Hugh because he asked it to (card #223): a move into Done,
+    /// which archives it (a lead taking its children), logged with his words. Only
+    /// `Store::archive_for_hugh` calls it, after the rules.
+    pub(crate) fn move_asked(&mut self, id: &str, if_version: i64, agent: &str, words: &str, extra: Patch) -> Result<MoveOutcome> {
+        self.move_as(id, if_version, DONE, extra, How::Asked(agent, words))
+    }
+
     /// The app moves a card Hugh had put in Blocked to Planning for him, because every card it
     /// waited on (`waited_on`) is ready (card #109, `Store::settle_waits`): the same rules as his
     /// own move, logged as the app's, its auto-progress kept, with `plan.waitedOn`. Its waits
@@ -1041,11 +1052,16 @@ impl Store {
             How::Auto(why) => Some(why),
             _ => None,
         };
+        let asked_by;
         let by = match how {
             How::Hugh => HUGH,
             How::Auto(_) => AUTO_BY,
             How::Waits(_) => WAIT_BY,
             How::Word(_) => WORD_BY,
+            How::Asked(agent, _) => {
+                asked_by = asked_author(agent);
+                asked_by.as_str()
+            }
         };
         let skip_default = self.skip_default(crate::SKIP_PLANNING_RULE_KEY);
         let tx = self.begin()?;
@@ -1140,6 +1156,7 @@ impl Store {
             How::Auto(why) => format!("The app moved it from {from} to {to} for Hugh: {why}"),
             How::Waits(ns) => format!("The app moved it from {from} to {to} for Hugh: the cards it waited on are ready ({})", waits::nums(ns)),
             How::Word(why) => format!("The Router moved it from {from} to {to} on Hugh's word: {why}"),
+            How::Asked(agent, words) => format!("Archived by {agent} for Hugh (it was in {from}): he asked \"{words}\""),
         };
         log_tx(&tx, id, &at, &line, Some(by))?;
         if let Some(w) = skipped {
@@ -1200,6 +1217,14 @@ enum How<'a> {
     Waits(&'a [i64]),
     /// The Router, on Hugh's typed word in its panel (card #188).
     Word(&'a str),
+    /// An agent (a card's session, Hugh's session outside the app, his `kb`) archiving a card
+    /// because Hugh asked it to (card #223): who, and his words.
+    Asked(&'a str, &'a str),
+}
+
+/// The author of an agent's archive for Hugh (card #223): who, then ", for Hugh".
+pub fn asked_author(agent: &str) -> String {
+    format!("{agent}, for Hugh")
 }
 
 /// Whether a move of `card` to `to` skips Planning (card #162), and whose choice that is: a move

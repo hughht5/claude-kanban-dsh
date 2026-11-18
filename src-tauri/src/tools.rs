@@ -85,6 +85,11 @@ fn base_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "card": card, "state": { "type": "string", "enum": ["shipping", "shipped", "failed", "needs-hugh"] }, "detail": { "type": "string" } }, "required": ["state"] } },
         { "name": "kanban_notify", "description": "Tell Hugh something about a card (a Windows notification and a log line).",
           "inputSchema": { "type": "object", "properties": { "card": card, "text": { "type": "string" } }, "required": ["text"] } },
+        { "name": "kanban_archive_card", "description": "Archive a card, only when Hugh asked you to archive that card: put his words in `hugh_words`. It moves into Done, which archives it (a stack's lead takes its children), and its session stops; the card's log shows who archived it for Hugh and his words, and his Restore brings it back. Refused without his words, in Ship it, for a stack's child (archive its lead), for a lead with a card in Ship it, and for your own card (move it to Done with kanban_move_card).",
+          "inputSchema": { "type": "object", "properties": {
+            "card": { "type": "integer", "description": "The card's number." },
+            "hugh_words": { "type": "string", "description": "What Hugh said when he asked for this archive, quoted." },
+            "if_version": { "type": "integer", "description": "Refuse if the card changed since you read it." } }, "required": ["card", "hugh_words"] } },
         { "name": "kanban_merge", "description": "Only in Ship it, for a card with a branch: ask your repo's merge lane for your ship's merge, after you committed your work. Every ship's merge goes through its repo's lane. The app finds the lane's checkout (your worktree's main checkout, else the repo's own-worktree checkout, else its repos.json folder). The lane rebases your branch onto the latest origin/main in its own worktree and runs the checks; your branch doesn't move. End your turn after it: the app sends you the verdict and what to do next. Refused (saying why) outside Ship it, before the ship started, with no branch or worktreePath, with uncommitted work, while a merge waits or runs, or when the app finds no checkout for the repo (then report needs-hugh with its reason).",
           "inputSchema": { "type": "object", "properties": { "branches": { "type": "array", "items": { "type": "string" }, "description": "Other branches of this ship, in order (a card Hugh dropped on this one)." }, "rules": { "type": "string", "description": "The repo's merge rules (how to resolve a version, a changelog, files that always conflict), in its own words." }, "checks": { "type": "string", "description": "The check commands to run (lint, typecheck, tests, build)." } } } },
         { "name": "kanban_router", "description": "Talk to the Router, the long-running session that routes and checks the board's cards (card #119). Pass text to send it a message (data for it, about your card), and/or replies: n to read its last n replies. Refused while the Router isn't running; nothing but Hugh starts it.",
@@ -137,6 +142,33 @@ pub fn ship_request_allowed(args: &Value) -> Result<(), String> {
         return Err("say which card: pass its number as `card`".into());
     }
     Ok(())
+}
+
+/// `kanban_archive_card`'s arguments (card #223): the card's number and Hugh's words, both
+/// required. The store checks the rest.
+fn archive_args(args: &Value) -> Result<(i64, &str), String> {
+    let n = args.get("card").and_then(Value::as_i64).ok_or("say which card: pass its number as `card`")?;
+    let words = args.get("hugh_words").and_then(Value::as_str).map(str::trim).unwrap_or("");
+    if words.is_empty() {
+        return Err("refused: archive a card only when Hugh asked you to, with his words in `hugh_words`".into());
+    }
+    Ok((n, words))
+}
+
+/// After an agent archived a card for Hugh (card #223): what his Archive all does after its
+/// move into Done (`router_archive_approve`). The stack rules now, under the board's lock; then,
+/// once the lock is let go, the move's after-move (the card's session stops) and the sessions of
+/// the children archived with a lead (archived in place, which no after-move reaches) stopped.
+fn archived_for_hugh(app: &AppHandle, store: &mut Store, r: &kanban_store::ArchiveResult, by: &str) {
+    dispatch::after_stack_move(app, store, &r.id, by);
+    let (a, id, from, kids) = (app.clone(), r.id.clone(), r.from.clone().unwrap_or_default(), r.children.clone());
+    std::thread::spawn(move || {
+        dispatch::after_move(&a, &id, &from);
+        let live = a.state::<Arc<Sessions>>();
+        for k in kids.iter().filter(|k| live.is_live(k).is_some()) {
+            let _ = live.stop(&a, k);
+        }
+    });
 }
 
 /// Card #184: asks Hugh to ship card `c` for the agent `by`. Never moves it: the app shows him
@@ -601,6 +633,30 @@ fn call_inner(app: &AppHandle, caller: Option<&str>, name: &str, args: &Value, a
             let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
             ask_ship(app, &mut store, &c, &by, reason)?
         }
+        "kanban_archive_card" => {
+            let (n, words) = archive_args(args)?;
+            if as_router {
+                return Err("the Router asks to archive a card; it never archives".into());
+            }
+            // A card's session, or Hugh's own (kb, his sessions outside the app); not a session
+            // row the app can't place.
+            if own.is_none() && !hugh {
+                return Err(format!("refused: {by} can't archive a card"));
+            }
+            let c = store.get_by_number(n).map_err(|e| e.to_string())?;
+            if own.as_deref() == Some(c.id.as_str()) {
+                return Err(format!("card #{n} is your own card: move it to Done with kanban_move_card instead (it goes when your turn ends)"));
+            }
+            let version = args.get("if_version").and_then(Value::as_i64);
+            let r = store.archive_for_hugh(n, version, &by, words).map_err(|e| e.to_string())?;
+            archived_for_hugh(app, &mut store, &r, &by);
+            let with = match r.children.len() {
+                0 => String::new(),
+                1 => " and the 1 card of its stack".to_string(),
+                k => format!(" and the {k} cards of its stack"),
+            };
+            json!(format!("Archived card #{n}{with} for Hugh (it was in {}). Its session stops; Hugh's Restore on the card brings it back.", r.from.as_deref().unwrap_or("?")))
+        }
         "kanban_notify" => {
             let c = target(&store, own.as_deref(), args)?;
             let text = args.get("text").and_then(Value::as_str).ok_or("pass the text")?;
@@ -627,6 +683,24 @@ mod tests {
             let f = json!({ k: { "reason": "x" } });
             assert_eq!(not_updatable(f.as_object().unwrap()).map(String::as_str), Some(k), "{k}");
         }
+    }
+
+    /// Card #223: kanban_archive_card archives, for card sessions, Hugh's sessions outside the
+    /// app and kb, only with the card and Hugh's words; the archive's author names the agent.
+    #[test]
+    fn archive_needs_the_card_and_hughs_words() {
+        assert!(archive_args(&json!({ "hugh_words": "archive it" })).unwrap_err().contains("card"));
+        assert!(archive_args(&json!({ "card": 12 })).unwrap_err().starts_with("refused"));
+        assert!(archive_args(&json!({ "card": 12, "hugh_words": "   " })).unwrap_err().starts_with("refused"));
+        assert_eq!(archive_args(&json!({ "card": 12, "hugh_words": " archive 12 " })).unwrap(), (12, "archive 12"));
+        let t = schemas().as_array().unwrap().iter().find(|t| t["name"] == "kanban_archive_card").cloned().expect("listed");
+        assert_eq!(t["inputSchema"]["required"], json!(["card", "hugh_words"]));
+        let d = t["description"].as_str().unwrap();
+        for must in ["only when Hugh asked", "hugh_words", "Ship it", "your own card", "Restore"] {
+            assert!(d.contains(must), "{must}");
+        }
+        assert!(!CLI_ONLY.contains(&"kanban_archive_card") && !CARD_SESSION_ONLY.contains(&"kanban_archive_card"));
+        assert_eq!(kanban_store::asked_author(OUTSIDE_BY), "a session outside the app, for Hugh");
     }
 
     #[test]

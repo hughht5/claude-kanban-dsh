@@ -19,8 +19,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-/// The card tools the Router is not offered.
-pub const NOT_FOR_ROUTER: [&str; 4] = ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_merge"];
+/// The card tools the Router is not offered. `kanban_archive_card` (card #223) is the card tools'
+/// real archive: the Router keeps its own tool of that name, which only asks (card #131), so its
+/// calls of that name still go to `ask_archive`.
+pub const NOT_FOR_ROUTER: [&str; 5] = ["kanban_set_passed", "kanban_ship_result", "kanban_router", "kanban_merge", "kanban_archive_card"];
 /// The session tools it is offered (of `control::CONTROL`).
 pub const SESSION_TOOLS: [&str; 3] = ["kanban_session_send", "kanban_session_status", "kanban_session_read"];
 
@@ -269,7 +271,7 @@ fn log_decision(app: &AppHandle, card: Option<i64>, text: &str) {
 pub fn call(app: &AppHandle, row: &str, name: &str, args: &Value) -> Result<Value, String> {
     let may_start = app.state::<Board>().0.lock().map(|s| s.router_may_start()).unwrap_or(false);
     match name {
-        n if NOT_FOR_ROUTER.contains(&n) || n == "kanban_request_ship" => Err("the Router doesn't mark tests passed or report ships: only Hugh tests and ships".into()),
+        n if (NOT_FOR_ROUTER.contains(&n) && n != "kanban_archive_card") || n == "kanban_request_ship" => Err("the Router doesn't mark tests passed or report ships: only Hugh tests and ships".into()),
         "kanban_get_card" | "kanban_stack_list" | "kanban_notify" => {
             if name != "kanban_stack_list" {
                 number(args)?;
@@ -589,6 +591,8 @@ mod tests {
         }
         let mv = tool_list().as_array().unwrap().iter().find(|t| t["name"] == "kanban_move_card").cloned().unwrap();
         assert!(mv["inputSchema"]["required"].as_array().unwrap().iter().any(|v| v == "if_version"));
+        // Card #223: one archive tool, its own ask, never the card tools' real archive.
+        assert_eq!(names.iter().filter(|n| *n == "kanban_archive_card").count(), 1);
         // Card #131: the archive ask needs the card's version and a reason.
         let ar = tool_list().as_array().unwrap().iter().find(|t| t["name"] == "kanban_archive_card").cloned().unwrap();
         let req: Vec<&str> = ar["inputSchema"]["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();

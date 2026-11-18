@@ -53,6 +53,10 @@ through the running app (a card session's own card when <n> is left out):
   kb ship-result <n> <state> [--detail d]   shipping | shipped | failed | needs-hugh
   kb ship <n> --asked-by-hugh [--reason r]   the same request as move --for-hugh (only when he
                                        asked; it never ships by itself)
+  kb archive <n> --asked-by-hugh "<his words>"
+                                       only when Hugh asked you to archive that card: it moves to
+                                       Done (archived; a lead takes its stack) and its session stops,
+                                       and its log keeps his words. Not in Ship it or a stack's child
   kb notify <n> "<text>"               tell Hugh
   kb testapp                           the test apps: each one's card, turn, line and install
   kb testapp take                      a card session: its own card's test app (Test, Test 2, ...) and a
@@ -284,6 +288,7 @@ fn through_app(cmd: &str, args: &[String]) -> Result<Option<ExitCode>, Box<dyn s
         "passed" => ("kanban_set_passed", json!({ "card": num(0).ok_or("passed needs a card number")?, "passed": !args.iter().any(|a| a == "--off") })),
         "ship-result" => ("kanban_ship_result", json!({ "card": num(0).ok_or("ship-result needs a card number")?, "state": args.get(1).ok_or("ship-result needs a state")?, "detail": opt("--detail") })),
         "ship" => ("kanban_request_ship", ship_args(args)?),
+        "archive" => ("kanban_archive_card", archive_args(args)?),
         "start" => ("kanban_session_start", json!({ "card": num(0).ok_or("start needs a card number")?, "mode": opt("--mode"), "message": opt("--message") })),
         "send" => ("kanban_session_send", json!({ "card": num(0).ok_or("send needs a card number")?, "text": args.get(1).ok_or("send needs the text")? })),
         "stop" => ("kanban_session_stop", json!({ "card": num(0).ok_or("stop needs a card number")? })),
@@ -448,6 +453,20 @@ fn move_args(args: &[String]) -> Result<serde_json::Value, String> {
     Ok(json!({ "card": n, "column": col, "reason": opt("--reason") }))
 }
 
+/// `kb archive <n> --asked-by-hugh "<his words>"` (card #223). Refused here without the flag and
+/// his words; the app checks them again, with the archive's rules.
+fn archive_args(args: &[String]) -> Result<serde_json::Value, String> {
+    let n = args.first().and_then(|a| a.parse::<i64>().ok()).ok_or("archive needs a card number")?;
+    let words = args
+        .iter()
+        .position(|a| a == "--asked-by-hugh")
+        .and_then(|i| args.get(i + 1))
+        .map(|w| w.trim())
+        .filter(|w| !w.is_empty() && !w.starts_with("--"))
+        .ok_or("refused: archive a card only when Hugh asked you to: kb archive <n> --asked-by-hugh \"<what he said>\"")?;
+    Ok(json!({ "card": n, "hugh_words": words }))
+}
+
 /// `kb ship <n> --asked-by-hugh`. Refused here without the flag; the app checks it again.
 fn ship_args(args: &[String]) -> Result<serde_json::Value, String> {
     let n = args.first().and_then(|a| a.parse::<i64>().ok()).ok_or("ship needs a card number")?;
@@ -554,6 +573,19 @@ mod tests {
         assert!(!USAGE.contains("reap") && !USAGE.contains("install-lock"), "hidden from the usage text");
         #[cfg(not(target_os = "macos"))]
         assert_eq!(unix_command("reap", &a(&["4242", "/f"])), 2, "only on macOS");
+    }
+
+    /// Card #223: `kb archive <n> --asked-by-hugh "<his words>"`, refused without either.
+    #[test]
+    fn archive_needs_the_flag_and_hughs_words() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(archive_args(&a(&["12", "--asked-by-hugh", " archive 12 "])).unwrap(), json!({ "card": 12, "hugh_words": "archive 12" }));
+        assert!(archive_args(&a(&["12"])).unwrap_err().starts_with("refused"));
+        assert!(archive_args(&a(&["12", "--asked-by-hugh"])).unwrap_err().starts_with("refused"));
+        assert!(archive_args(&a(&["12", "--asked-by-hugh", "  "])).unwrap_err().starts_with("refused"));
+        assert!(archive_args(&a(&["12", "--asked-by-hugh", "--json"])).unwrap_err().starts_with("refused"));
+        assert!(archive_args(&a(&["--asked-by-hugh", "x"])).unwrap_err().contains("card number"));
+        assert!(USAGE.contains("kb archive <n> --asked-by-hugh"));
     }
 
     #[test]
